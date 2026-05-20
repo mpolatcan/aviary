@@ -10,39 +10,81 @@ Running multiple agent CLIs locally is messy: separate terminals, separate auth,
 
 ## Architecture
 
-```
-+-----------------------------------+
-|  Tauri webview (xterm.js, vite)   |
-|    tabs <-> panes <-> terminals   |
-+----------------+------------------+
-                 | IPC (invoke / event)
-+----------------v------------------+
-|  Rust backend (tokio)             |
-|    Lifecycle   -- image + ctr     |
-|    DockerClient -- exec / streams |
-|    PtyRegistry  -- pane_id map    |
-+----------------+------------------+
-                 | unix:///var/run/docker.sock
-+----------------v------------------+
-|  aviary-runtime container         |
-|    claude / codex / antigravity   |
-|    tmux server (idle)             |
-+-----------------------------------+
+```mermaid
+flowchart TB
+    subgraph webview["Tauri webview"]
+        direction LR
+        UI["xterm.js · Vite · vanilla TS<br/>tabs ↔ panes ↔ terminals"]
+    end
+
+    subgraph backend["Rust backend (tokio)"]
+        direction LR
+        LC["Lifecycle<br/><sub>image + container</sub>"]
+        DC["DockerClient<br/><sub>exec / streams</sub>"]
+        PR["PtyRegistry<br/><sub>pane_id map</sub>"]
+    end
+
+    subgraph runtime["aviary-runtime container"]
+        direction LR
+        TMUX["tmux server<br/><sub>idle until first session</sub>"]
+        CLIS["claude · codex · antigravity"]
+        TMUX -. spawns .-> CLIS
+    end
+
+    webview <-- "IPC<br/>invoke / event" --> backend
+    backend <-- "unix:///var/run/docker.sock<br/>bollard" --> runtime
+
+    classDef layer fill:#1f1812,stroke:#c89a5c,color:#ead7b5
+    classDef box fill:#16110c,stroke:#3a2d20,color:#c2ad88
+    class webview,backend,runtime layer
+    class UI,LC,DC,PR,TMUX,CLIS box
 ```
 
-Boot sequence:
-1. App launch -> `Lifecycle::ensure_runtime` spawned in background.
-2. Pull `ghcr.io/mpolatcan/aviary-runtime:<version>` if missing (~10-20s first run).
-3. Create container with volume mounts under `~/Library/Application Support/aviary/`.
-4. Frontend listens on `aviary://lifecycle` events for state transitions.
-5. Once `running`, frontend calls `list_sessions` and restores existing tmux tabs.
+### Boot sequence
 
-Per-session lifecycle (when user clicks **+**):
-1. CLI picker modal (Claude / Codex / Antigravity).
-2. `create_session(name, cli)` -> `docker exec aviary-runtime tmux new-session -d -s <name> <cli>`.
-3. `attach_session(name, cols, rows)` -> bollard `exec` with `tty=true` running `tmux attach -t <name>`, returns `pane_id`.
-4. Output streamed to webview via `pty://data/<pane_id>` events.
-5. Webview keystrokes flow back via `pty_write`. Resize via `pty_resize`.
+```mermaid
+sequenceDiagram
+    autonumber
+    participant UI as Frontend
+    participant LC as Lifecycle
+    participant D as Docker
+    participant C as aviary-runtime
+
+    UI->>LC: ensure_runtime (spawn bg)
+    LC->>D: pull ghcr.io/mpolatcan/aviary-runtime:&lt;ver&gt;
+    Note right of D: ~10–20s first run only
+    LC->>D: create container + volume mounts
+    D->>C: start
+    LC-->>UI: emit aviary://lifecycle (running)
+    UI->>LC: list_sessions
+    LC-->>UI: existing tmux sessions
+    UI->>UI: restore tabs
+```
+
+### Per-session lifecycle (user clicks **+**)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant UI as Frontend
+    participant B as Backend
+    participant T as tmux (in container)
+
+    UI->>UI: CLI picker modal (claude / codex / antigravity)
+    UI->>B: create_session(name, cli)
+    B->>T: docker exec ... tmux new-session -d -s &lt;name&gt; &lt;cli&gt;
+    UI->>B: attach_session(name, cols, rows)
+    B->>T: bollard exec tty=true · tmux attach -t &lt;name&gt;
+    B-->>UI: pane_id
+    loop while attached
+        T-->>B: stdout chunks
+        B-->>UI: pty://data/&lt;pane_id&gt;
+        UI->>B: pty_write(paneId, data)
+        B->>T: stdin
+        UI->>B: pty_resize(paneId, cols, rows)
+        B->>T: TIOCSWINSZ
+    end
+```
 
 ## Runtime image
 
