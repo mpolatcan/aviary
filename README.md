@@ -19,25 +19,30 @@ flowchart TB
 
     subgraph backend["Rust backend (tokio)"]
         direction LR
-        LC["Lifecycle<br/><sub>image + container</sub>"]
-        DC["DockerClient<br/><sub>exec / streams</sub>"]
-        PR["PtyRegistry<br/><sub>pane_id map</sub>"]
+        LC["Lifecycle<br/>image + container"]
+        DC["DockerClient<br/>exec / streams"]
+        PR["PtyRegistry<br/>pane_id map"]
     end
 
     subgraph runtime["aviary-runtime container"]
         direction LR
-        TMUX["tmux server<br/><sub>idle until first session</sub>"]
+        TMUX["tmux server<br/>idle until first session"]
         CLIS["claude · codex · antigravity"]
         TMUX -. spawns .-> CLIS
     end
 
-    webview <-- "IPC<br/>invoke / event" --> backend
-    backend <-- "unix:///var/run/docker.sock<br/>bollard" --> runtime
+    webview <-- "IPC · invoke / event" --> backend
+    backend <-- "unix:///var/run/docker.sock · bollard" --> runtime
 
-    classDef layer fill:#1f1812,stroke:#c89a5c,color:#ead7b5
-    classDef box fill:#16110c,stroke:#3a2d20,color:#c2ad88
-    class webview,backend,runtime layer
-    class UI,LC,DC,PR,TMUX,CLIS box
+    classDef webviewBox fill:#e8f1ff,stroke:#3b6dba,stroke-width:1.5px,color:#1a2436
+    classDef backendBox fill:#fff4dc,stroke:#b6873a,stroke-width:1.5px,color:#2a1f10
+    classDef runtimeBox fill:#e6f3e1,stroke:#4f7d3a,stroke-width:1.5px,color:#1d2a17
+    classDef inner    fill:#ffffff,stroke:#6a6a6a,stroke-width:1px,color:#1c1c1c
+
+    class webview webviewBox
+    class backend backendBox
+    class runtime runtimeBox
+    class UI,LC,DC,PR,TMUX,CLIS inner
 ```
 
 ### Boot sequence
@@ -51,7 +56,7 @@ sequenceDiagram
     participant C as aviary-runtime
 
     UI->>LC: ensure_runtime (spawn bg)
-    LC->>D: pull ghcr.io/mpolatcan/aviary-runtime:&lt;ver&gt;
+    LC->>D: pull ghcr.io/mpolatcan/aviary-runtime:VER
     Note right of D: ~10–20s first run only
     LC->>D: create container + volume mounts
     D->>C: start
@@ -72,13 +77,13 @@ sequenceDiagram
 
     UI->>UI: CLI picker modal (claude / codex / antigravity)
     UI->>B: create_session(name, cli)
-    B->>T: docker exec ... tmux new-session -d -s &lt;name&gt; &lt;cli&gt;
+    B->>T: docker exec — tmux new-session -d -s NAME CLI
     UI->>B: attach_session(name, cols, rows)
-    B->>T: bollard exec tty=true · tmux attach -t &lt;name&gt;
+    B->>T: bollard exec tty=true — tmux attach -t NAME
     B-->>UI: pane_id
     loop while attached
         T-->>B: stdout chunks
-        B-->>UI: pty://data/&lt;pane_id&gt;
+        B-->>UI: pty://data/PANE_ID
         UI->>B: pty_write(paneId, data)
         B->>T: stdin
         UI->>B: pty_resize(paneId, cols, rows)
