@@ -1,8 +1,8 @@
-import { Terminal } from "@xterm/xterm";
+import { invoke } from "@tauri-apps/api/core";
+import { type UnlistenFn, listen } from "@tauri-apps/api/event";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
-import { invoke } from "@tauri-apps/api/core";
-import { listen, UnlistenFn } from "@tauri-apps/api/event";
+import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 
 export interface Pane {
@@ -77,8 +77,7 @@ export async function createPane(
   host.appendChild(el);
 
   const term = new Terminal({
-    fontFamily:
-      '"JetBrains Mono", "DM Mono", ui-monospace, "SF Mono", Menlo, monospace',
+    fontFamily: '"JetBrains Mono", "DM Mono", ui-monospace, "SF Mono", Menlo, monospace',
     fontSize: 13,
     fontWeight: 400,
     lineHeight: 1.25,
@@ -115,9 +114,7 @@ export async function createPane(
   });
 
   pane.unlistenExit = await listen<number>(`pty://exit/${paneId}`, () => {
-    term.write(
-      "\r\n\x1b[38;2;201;163;107m\x1b[3m  · specimen has departed ·\x1b[0m\r\n",
-    );
+    term.write("\r\n\x1b[38;2;201;163;107m\x1b[3m  · specimen has departed ·\x1b[0m\r\n");
   });
 
   term.onData((data) => {

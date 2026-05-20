@@ -98,7 +98,7 @@ impl Lifecycle {
                 Some("running") => ContainerState::Running,
                 Some("created") | Some("exited") | Some("paused") | Some("dead") => {
                     ContainerState::Stopped
-                }
+                },
                 Some("restarting") => ContainerState::Starting,
                 _ => ContainerState::Stopped,
             };

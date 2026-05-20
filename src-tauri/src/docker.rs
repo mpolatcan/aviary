@@ -118,8 +118,8 @@ impl DockerClient {
                     | bollard::container::LogOutput::StdErr { message }
                     | bollard::container::LogOutput::Console { message } => {
                         buf.push_str(&String::from_utf8_lossy(&message));
-                    }
-                    _ => {}
+                    },
+                    _ => {},
                 }
             }
             Ok(buf)
@@ -228,7 +228,7 @@ impl DockerClient {
                     output,
                     input,
                 })
-            }
+            },
             StartExecResults::Detached => Err(DockerError::ContainerDown(
                 "exec detached unexpectedly".into(),
             )),

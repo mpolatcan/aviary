@@ -1,21 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import {
-  Pane,
-  activatePane,
-  createPane,
-  deactivatePane,
-  destroyPane,
-} from "./terminal";
+import { type Pane, activatePane, createPane, deactivatePane, destroyPane } from "./terminal";
 
 type Cli = "claude" | "codex" | "antigravity";
 
-type ContainerState =
-  | "missing"
-  | "stopped"
-  | "starting"
-  | "running"
-  | "unreachable";
+type ContainerState = "missing" | "stopped" | "starting" | "running" | "unreachable";
 
 interface ContainerStatus {
   state: ContainerState;
@@ -32,10 +21,10 @@ interface SessionInfo {
 
 interface CliSpec {
   id: Cli;
-  common: string;       // English bird name
-  binomial: string;     // Latin binomial
-  order: string;        // Decorative — taxonomic order or plate number role
-  bird: string;         // SVG symbol id
+  common: string; // English bird name
+  binomial: string; // Latin binomial
+  order: string; // Decorative — taxonomic order or plate number role
+  bird: string; // SVG symbol id
 }
 
 const CLIS: CliSpec[] = [
@@ -62,16 +51,44 @@ const CLIS: CliSpec[] = [
   },
 ];
 
-const SPEC_BY_CLI: Record<Cli, CliSpec> = Object.fromEntries(
-  CLIS.map((c) => [c.id, c]),
-) as Record<Cli, CliSpec>;
+const SPEC_BY_CLI: Record<Cli, CliSpec> = Object.fromEntries(CLIS.map((c) => [c.id, c])) as Record<
+  Cli,
+  CliSpec
+>;
 
 // Roman numerals up to 50 (plate numbers)
 const ROMAN = [
   "",
-  "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X",
-  "XI", "XII", "XIII", "XIV", "XV", "XVI", "XVII", "XVIII", "XIX", "XX",
-  "XXI", "XXII", "XXIII", "XXIV", "XXV", "XXVI", "XXVII", "XXVIII", "XXIX", "XXX",
+  "I",
+  "II",
+  "III",
+  "IV",
+  "V",
+  "VI",
+  "VII",
+  "VIII",
+  "IX",
+  "X",
+  "XI",
+  "XII",
+  "XIII",
+  "XIV",
+  "XV",
+  "XVI",
+  "XVII",
+  "XVIII",
+  "XIX",
+  "XX",
+  "XXI",
+  "XXII",
+  "XXIII",
+  "XXIV",
+  "XXV",
+  "XXVI",
+  "XXVII",
+  "XXVIII",
+  "XXIX",
+  "XXX",
 ];
 function toRoman(n: number): string {
   return ROMAN[n] ?? String(n);
@@ -127,7 +144,7 @@ function renderStatus(status: ContainerStatus) {
 
 function updateActivePlate() {
   if (!activeName) {
-    statusSession.innerHTML = `specimen <em>—</em> none`;
+    statusSession.innerHTML = "specimen <em>—</em> none";
     statusPlate.textContent = "—";
     return;
   }
@@ -158,7 +175,7 @@ function renderTabs() {
     const meta = sessionMeta.get(name);
     const spec = meta ? SPEC_BY_CLI[meta.cli] : null;
     const tab = document.createElement("div");
-    tab.className = "tab" + (name === activeName ? " active" : "");
+    tab.className = `tab${name === activeName ? " active" : ""}`;
     tab.innerHTML = `
       <svg class="bird" aria-hidden="true"><use href="${spec?.bird ?? "#bird-owl"}"/></svg>
       <span class="latin">${spec?.binomial ?? name}</span>
@@ -286,12 +303,12 @@ function pickCli(): Promise<Cli | null> {
     };
     document.addEventListener("keydown", onKey);
 
-    overlay.querySelectorAll<HTMLButtonElement>(".cli-card").forEach((btn) => {
+    for (const btn of overlay.querySelectorAll<HTMLButtonElement>(".cli-card")) {
       btn.onclick = () => {
         cleanup();
         resolve(btn.dataset.cli as Cli);
       };
-    });
+    }
     overlay.querySelector<HTMLButtonElement>(".cancel")!.onclick = () => {
       cleanup();
       resolve(null);
@@ -327,8 +344,7 @@ async function bootstrapExistingSessions() {
     const sessions: SessionInfo[] = await invoke("list_sessions");
     for (const s of sessions) {
       // Best-effort CLI detection from session name prefix; fallback claude.
-      const guessed = (CLIS.find((c) => s.name.startsWith(c.id))?.id ??
-        "claude") as Cli;
+      const guessed = (CLIS.find((c) => s.name.startsWith(c.id))?.id ?? "claude") as Cli;
       await openSession(s.name, guessed);
     }
   } catch (e) {

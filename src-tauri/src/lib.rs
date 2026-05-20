@@ -18,9 +18,7 @@ const DEFAULT_CONTAINER: &str = "aviary-runtime";
 const DEFAULT_IMAGE: &str = "mutlupolatcan/aviary-runtime:0.1.0";
 
 #[tauri::command]
-async fn container_status(
-    state: tauri::State<'_, AppState>,
-) -> Result<ContainerStatus, String> {
+async fn container_status(state: tauri::State<'_, AppState>) -> Result<ContainerStatus, String> {
     Ok(state.lifecycle.status().await)
 }
 
@@ -65,20 +63,14 @@ async fn container_restart(
     state: tauri::State<'_, AppState>,
     app: tauri::AppHandle,
 ) -> Result<ContainerStatus, String> {
-    state
-        .lifecycle
-        .restart()
-        .await
-        .map_err(|e| e.to_string())?;
+    state.lifecycle.restart().await.map_err(|e| e.to_string())?;
     let status = state.lifecycle.status().await;
     let _ = app.emit("aviary://lifecycle", &status);
     Ok(status)
 }
 
 #[tauri::command]
-async fn list_sessions(
-    state: tauri::State<'_, AppState>,
-) -> Result<Vec<SessionInfo>, String> {
+async fn list_sessions(state: tauri::State<'_, AppState>) -> Result<Vec<SessionInfo>, String> {
     state
         .docker
         .list_tmux_sessions()
@@ -101,10 +93,7 @@ async fn create_session(
 }
 
 #[tauri::command]
-async fn kill_session(
-    name: String,
-    state: tauri::State<'_, AppState>,
-) -> Result<(), String> {
+async fn kill_session(name: String, state: tauri::State<'_, AppState>) -> Result<(), String> {
     // Drop local pane bookkeeping first so resize / write attempts mid-kill
     // cannot resurrect a half-dead pane.
     state.registry.detach_by_session(&name).await;
@@ -158,10 +147,7 @@ async fn pty_resize(
 }
 
 #[tauri::command]
-async fn detach_session(
-    pane_id: String,
-    state: tauri::State<'_, AppState>,
-) -> Result<(), String> {
+async fn detach_session(pane_id: String, state: tauri::State<'_, AppState>) -> Result<(), String> {
     state.registry.detach(&pane_id).await;
     Ok(())
 }
@@ -182,10 +168,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .setup(move |app| {
-            let app_data = app
-                .path()
-                .app_data_dir()
-                .expect("app_data_dir unavailable");
+            let app_data = app.path().app_data_dir().expect("app_data_dir unavailable");
             let config_dir = app_data.join("config");
             let workspace_dir = app_data.join("workspace");
 
@@ -210,11 +193,11 @@ pub fn run() {
                 match lifecycle.ensure_runtime().await {
                     Ok(status) => {
                         let _ = handle.emit("aviary://lifecycle", &status);
-                    }
+                    },
                     Err(e) => {
                         tracing::error!("ensure_runtime failed: {e}");
                         let _ = handle.emit("aviary://lifecycle-error", e.to_string());
-                    }
+                    },
                 }
             });
 

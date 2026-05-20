@@ -70,11 +70,11 @@ impl PtyRegistry {
                         };
                         let text = String::from_utf8_lossy(&bytes).to_string();
                         let _ = app_out.emit(&format!("pty://data/{}", pane_id_out), text);
-                    }
+                    },
                     Err(e) => {
                         tracing::warn!("output stream error: {e}");
                         break;
-                    }
+                    },
                 }
             }
             let _ = app_out.emit::<i32>(&format!("pty://exit/{}", pane_id_out), 0);
@@ -91,11 +91,11 @@ impl PtyRegistry {
                             break;
                         }
                         let _ = handles.input.flush().await;
-                    }
+                    },
                     InputMsg::Shutdown => {
                         let _ = handles.input.shutdown().await;
                         break;
-                    }
+                    },
                 }
             }
         });
