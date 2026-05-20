@@ -11,28 +11,28 @@ Running multiple agent CLIs locally is messy: separate terminals, separate auth,
 ## Architecture
 
 ```mermaid
-flowchart TB
+flowchart LR
     subgraph webview["Tauri webview"]
-        direction LR
-        UI["xterm.js · Vite · vanilla TS<br/>tabs ↔ panes ↔ terminals"]
+        direction TB
+        UI["xterm.js · Vite<br/>vanilla TS<br/>tabs ↔ panes ↔ terminals"]
     end
 
     subgraph backend["Rust backend (tokio)"]
-        direction LR
+        direction TB
         LC["Lifecycle<br/>image + container"]
         DC["DockerClient<br/>exec / streams"]
         PR["PtyRegistry<br/>pane_id map"]
     end
 
     subgraph runtime["aviary-runtime container"]
-        direction LR
+        direction TB
         TMUX["tmux server<br/>idle until first session"]
-        CLIS["claude · codex · antigravity"]
+        CLIS["claude · codex<br/>antigravity"]
         TMUX -. spawns .-> CLIS
     end
 
-    webview <-- "IPC · invoke / event" --> backend
-    backend <-- "unix:///var/run/docker.sock · bollard" --> runtime
+    webview <-- "IPC<br/>invoke / event" --> backend
+    backend <-- "/var/run/docker.sock<br/>bollard" --> runtime
 
     classDef webviewBox fill:#e8f1ff,stroke:#3b6dba,stroke-width:1.5px,color:#1a2436
     classDef backendBox fill:#fff4dc,stroke:#b6873a,stroke-width:1.5px,color:#2a1f10
@@ -105,15 +105,18 @@ Lives in `runtime/`. See `runtime/README.md` for build and publish instructions.
 ## Setup
 
 ```bash
-cd /Users/mutlu.polatcan/aviary
+git clone https://github.com/mpolatcan/aviary.git
+cd aviary
 npm install
 
-# Build runtime image locally (or wait for app to pull from registry)
-docker build -t ghcr.io/mpolatcan/aviary-runtime:0.1.0 runtime/
+# Build runtime image locally (or wait for app to pull from the registry on first launch)
+make image
 
 # Dev mode (hot reload frontend, rebuild Rust on change)
-npm run tauri dev
+make dev
 ```
+
+> See `make help` for the full target list (`build`, `check`, `fix`, `image-verify`, …).
 
 Override defaults:
 
@@ -127,19 +130,22 @@ Override defaults:
 ## Production build
 
 ```bash
-npm run tauri build
+make build
 ```
 
 Bundles a `.dmg` on macOS, `.AppImage`/`.deb` on Linux. Output at `src-tauri/target/release/bundle/`.
 
 ## Volume layout
 
-Aviary stores all state under the OS app-data dir.
+Aviary stores all state under the OS app-data dir, namespaced by the bundle identifier
+configured in `src-tauri/tauri.conf.json`.
 
-| Host path (macOS) | Container path | Purpose |
-|---|---|---|
-| `~/Library/Application Support/com.mutlupolatcan.aviary/config` | `/config` | Per-CLI auth state |
-| `~/Library/Application Support/com.mutlupolatcan.aviary/workspace` | `/workspace` | Project files |
+| Platform | Host path | Container path | Purpose |
+|---|---|---|---|
+| macOS   | `~/Library/Application Support/<bundle-id>/config`    | `/config`    | Per-CLI auth state |
+| macOS   | `~/Library/Application Support/<bundle-id>/workspace` | `/workspace` | Project files |
+| Linux   | `~/.local/share/<bundle-id>/config`                   | `/config`    | Per-CLI auth state |
+| Linux   | `~/.local/share/<bundle-id>/workspace`                | `/workspace` | Project files |
 
 ## Roadmap
 
