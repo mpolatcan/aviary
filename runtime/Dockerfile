@@ -1,4 +1,4 @@
-FROM node:20-slim
+FROM node:26-slim
 
 SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
 
