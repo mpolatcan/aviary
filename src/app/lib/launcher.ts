@@ -2,41 +2,45 @@ import { useState } from "react";
 import { create } from "zustand";
 import { MODE_SUPPORT } from "./catalog";
 import type { Cli, Mode } from "./ipc";
+import type { SplitDir } from "./tree";
 
 export interface LaunchChoice {
   cli: Cli;
   mode: Mode;
 }
 
-interface LauncherState {
-  open: boolean;
-  kicker: string;
-  resolver: ((c: LaunchChoice | null) => void) | null;
-  // Imperatively open the launcher dialog; resolves with the choice or null
-  // (cancelled). Mirrors the vanilla pickSession() promise so call sites read
-  // `const c = await openLauncher(...); if (c) ...`.
-  openLauncher: (kicker: string) => Promise<LaunchChoice | null>;
-  resolve: (c: LaunchChoice | null) => void;
+// Context carried while a launch popover is open. `session` present → the launch
+// splits that pane; absent → it opens a new tab.
+export interface LaunchCtx {
+  dir: SplitDir;
+  session?: string;
 }
 
-export const useLauncher = create<LauncherState>((set, get) => ({
-  open: false,
-  kicker: "",
-  resolver: null,
-  openLauncher: (kicker) =>
-    new Promise<LaunchChoice | null>((resolve) => {
-      // If one is already open, cancel it first.
-      get().resolver?.(null);
-      set({ open: true, kicker, resolver: resolve });
-    }),
-  resolve: (c) => {
-    get().resolver?.(c);
-    set({ open: false, resolver: null });
-  },
+// Every launch surface (new-tab "+", ⌘T, pane split controls, rail "+") opens
+// the SAME anchored popover. The store just tracks which one is open by key and
+// the split context, so a keyboard shortcut can open the popover its trigger
+// owns without a synthetic click. Keys:
+//   "newtab"          — the tab-bar "+" popover
+//   "split:<session>" — a pane head's popover
+//   "rail"            — the session rail's "+" popover
+interface LauncherState {
+  openKey: string | null;
+  ctx: LaunchCtx | null;
+  open: (key: string, ctx?: LaunchCtx) => void;
+  close: () => void;
+}
+
+export const useLauncher = create<LauncherState>((set) => ({
+  openKey: null,
+  ctx: null,
+  open: (openKey, ctx) => set({ openKey, ctx: ctx ?? null }),
+  close: () => set({ openKey: null, ctx: null }),
 }));
 
-// Controlled agent×mode selection shared by the dialog and the popover. Clamps
-// the mode to what the chosen agent supports (e.g. antigravity → standard only).
+export const splitKey = (session: string) => `split:${session}`;
+
+// Controlled agent×mode selection, one instance per open popover. Clamps the
+// mode to what the chosen agent supports (e.g. antigravity → standard only).
 export function useLaunchChoice(initialCli: Cli = "claude") {
   const [cli, setCliRaw] = useState<Cli>(initialCli);
   const [mode, setMode] = useState<Mode>("standard");

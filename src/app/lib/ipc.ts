@@ -24,9 +24,10 @@ export type Mode = "standard" | "auto" | "yolo";
 export const ipc = {
   containerStatus: () => invoke<ContainerStatus>("container_status"),
   listSessions: () => invoke<SessionInfo[]>("list_sessions"),
-  createSession: (name: string, cli: Cli, mode: Mode) =>
-    invoke<void>("create_session", { name, cli, mode }),
+  createSession: (name: string, cli: Cli, mode: Mode, alias: string) =>
+    invoke<void>("create_session", { name, cli, mode, alias }),
   killSession: (name: string) => invoke<void>("kill_session", { name }),
+  renameSession: (name: string, alias: string) => invoke<void>("rename_session", { name, alias }),
   attachSession: (name: string, cols: number, rows: number) =>
     invoke<string>("attach_session", { name, cols, rows }),
   ptyWrite: (paneId: string, data: string) => invoke<void>("pty_write", { paneId, data }),

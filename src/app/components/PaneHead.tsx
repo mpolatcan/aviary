@@ -1,8 +1,11 @@
 import { useState } from "react";
 import { MODE_BY_ID, SPEC_BY_CLI } from "../lib/catalog";
-import { useLauncher } from "../lib/launcher";
+import type { Cli, Mode } from "../lib/ipc";
+import { splitKey, useLauncher } from "../lib/launcher";
 import { useStore } from "../lib/store";
 import type { SplitDir } from "../lib/tree";
+import { LaunchPanel } from "./LaunchPanel";
+import { Popover, PopoverAnchor, PopoverContent } from "./ui/popover";
 
 const IconSplitRow = () => (
   <svg viewBox="0 0 16 16" aria-hidden="true">
@@ -59,17 +62,25 @@ export function PaneHead({ session }: { session: string }) {
   const splitSession = useStore((s) => s.splitSession);
   const closeSession = useStore((s) => s.closeSession);
   const renameSession = useStore((s) => s.renameSession);
-  const openLauncher = useLauncher((s) => s.openLauncher);
+  const openKey = useLauncher((s) => s.openKey);
+  const ctx = useLauncher((s) => s.ctx);
+  const openLaunch = useLauncher((s) => s.open);
+  const closeLaunch = useLauncher((s) => s.close);
   const [editing, setEditing] = useState(false);
 
   if (!meta) return null;
   const spec = SPEC_BY_CLI[meta.cli];
   const badge = MODE_BY_ID[meta.mode].badge;
+  const key = splitKey(session);
+  const isOpen = openKey === key;
 
-  // Split opens the launcher to pick the new pane's agent × mode.
-  const doSplit = async (dir: SplitDir) => {
-    const c = await openLauncher("Split");
-    if (c) await splitSession(session, dir, c.cli, c.mode);
+  // Both split buttons open the same anchored popover, differing only in the
+  // direction they stash in the launcher store (⌘\ does the same via geometry).
+  const armSplit = (dir: SplitDir) => openLaunch(key, { dir, session });
+  const launch = (cli: Cli, mode: Mode) => {
+    const dir = ctx?.dir ?? "row";
+    closeLaunch();
+    void splitSession(session, dir, cli, mode);
   };
 
   return (
@@ -116,29 +127,42 @@ export function PaneHead({ session }: { session: string }) {
       {badge && <span className={`mode-badge badge-${meta.mode}`}>{badge}</span>}
       <span className="pane-spacer" />
 
-      <button
-        type="button"
-        className="pane-ctl split-col"
-        title="Split below"
-        onClick={(e) => {
-          e.stopPropagation();
-          void doSplit("col");
-        }}
-      >
-        <IconSplitCol />
-      </button>
-      <button
-        type="button"
-        className="pane-ctl split-row"
-        title="Split (⌘\)"
-        aria-keyshortcuts="Meta+Backslash"
-        onClick={(e) => {
-          e.stopPropagation();
-          void doSplit("row");
-        }}
-      >
-        <IconSplitRow />
-      </button>
+      <Popover open={isOpen} onOpenChange={(o) => !o && closeLaunch()}>
+        <PopoverAnchor asChild>
+          {/* Stop mousedown bubbling to the pane-leaf focus handler: its
+              registry.focus() steals DOM focus as the popover opens, which trips
+              Radix's focus-outside dismiss and closes the popover instantly. */}
+          <span className="pane-ctl-group" onMouseDown={(e) => e.stopPropagation()}>
+            <button
+              type="button"
+              className="pane-ctl split-col"
+              title="Split below"
+              onClick={(e) => {
+                e.stopPropagation();
+                armSplit("col");
+              }}
+            >
+              <IconSplitCol />
+            </button>
+            <button
+              type="button"
+              className="pane-ctl split-row"
+              title="Split right (⌘\)"
+              aria-keyshortcuts="Meta+Backslash"
+              onClick={(e) => {
+                e.stopPropagation();
+                armSplit("row");
+              }}
+            >
+              <IconSplitRow />
+            </button>
+          </span>
+        </PopoverAnchor>
+        <PopoverContent align="end" className="modal-panel popover-launch">
+          {isOpen && <LaunchPanel kicker="Split — adds to this tab" onLaunch={launch} />}
+        </PopoverContent>
+      </Popover>
+
       <button
         type="button"
         className="pane-ctl close"

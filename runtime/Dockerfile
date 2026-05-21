@@ -25,6 +25,10 @@ RUN npm install -g @openai/codex
 ENV TMUX_TMPDIR=/tmp/aviary
 RUN mkdir -p /tmp/aviary && chmod 700 /tmp/aviary
 
+# Themed status bar matching Aviary's palette (replaces tmux's default green).
+# Loaded on tmux server start from $HOME/.tmux.conf.
+COPY tmux.conf /root/.tmux.conf
+
 # Declare this container a recognized sandbox so Claude Code's YOLO mode
 # (--dangerously-skip-permissions) runs as root instead of refusing. Aviary also
 # injects this per-pane via `tmux new-session -e`, so the running container does

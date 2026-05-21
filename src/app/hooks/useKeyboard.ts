@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { useLauncher } from "../lib/launcher";
+import { splitKey, useLauncher } from "../lib/launcher";
 import { useStore } from "../lib/store";
 import type { SplitDir } from "../lib/tree";
 
@@ -47,9 +47,7 @@ export function useKeyboard() {
       switch (e.key.toLowerCase()) {
         case "t":
           e.preventDefault();
-          void launcher.openLauncher("New tab").then((c) => {
-            if (c) void store.newPlate(c.cli, c.mode);
-          });
+          launcher.open("newtab");
           break;
         case "w":
           if (!ws?.focused) return;
@@ -60,9 +58,7 @@ export function useKeyboard() {
           if (!ws?.focused) return;
           e.preventDefault();
           const focused = ws.focused;
-          void launcher.openLauncher("Split").then((c) => {
-            if (c) void store.splitSession(focused, autoSplitDir(focused), c.cli, c.mode);
-          });
+          launcher.open(splitKey(focused), { dir: autoSplitDir(focused), session: focused });
           break;
         }
       }

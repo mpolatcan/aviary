@@ -1,28 +1,35 @@
-import { useState } from "react";
 import type { Cli, Mode } from "../lib/ipc";
-import { useLaunchChoice } from "../lib/launcher";
+import { useLauncher } from "../lib/launcher";
 import { useStore } from "../lib/store";
-import { LauncherBody } from "./LauncherBody";
-import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
+import { LaunchPanel } from "./LaunchPanel";
+import { Popover, PopoverAnchor, PopoverContent } from "./ui/popover";
 
-// New-tab quick-launch: a popover anchored to the "+" button. Pick agent ×
-// mode, hit Open. The fuller dialog (LauncherDialog) backs splits / ⌘T.
+const KEY = "newtab";
+
+// New-tab launcher: the same anchored popover every other surface uses, opened
+// either by clicking "+" or by ⌘T (both set the launcher store's openKey). The
+// "+" button is the popover's anchor, not its trigger, so the keyboard path and
+// the click path open the identical UI.
 export function NewTabPopover() {
-  const [open, setOpen] = useState(false);
   const newPlate = useStore((s) => s.newPlate);
+  const openKey = useLauncher((s) => s.openKey);
+  const open = useLauncher((s) => s.open);
+  const close = useLauncher((s) => s.close);
+  const isOpen = openKey === KEY;
 
   const launch = (cli: Cli, mode: Mode) => {
-    setOpen(false);
+    close();
     void newPlate(cli, mode);
   };
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
+    <Popover open={isOpen} onOpenChange={(o) => (o ? open(KEY) : close())}>
+      <PopoverAnchor asChild>
         <button
           type="button"
           title="Open a new tab (⌘T)"
           aria-keyshortcuts="Meta+T"
+          onClick={() => open(KEY)}
           className="group flex items-center gap-[7px] px-[14px] border-l border-rule-soft text-text-dim hover:text-accent transition-colors data-[state=open]:text-accent"
           style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
         >
@@ -36,27 +43,10 @@ export function NewTabPopover() {
             </span>
           </span>
         </button>
-      </PopoverTrigger>
+      </PopoverAnchor>
       <PopoverContent align="end" className="modal-panel popover-launch">
-        {open && <Inner onLaunch={launch} />}
+        {isOpen && <LaunchPanel kicker="New tab" onLaunch={launch} />}
       </PopoverContent>
     </Popover>
-  );
-}
-
-function Inner({ onLaunch }: { onLaunch: (cli: Cli, mode: Mode) => void }) {
-  const { cli, mode, setCli, setMode } = useLaunchChoice();
-  return (
-    <div className={mode === "yolo" ? "yolo-armed" : undefined}>
-      <header className="popover-head">
-        <span className="kicker">New tab</span>
-      </header>
-      <LauncherBody cli={cli} mode={mode} setCli={setCli} setMode={setMode} layout="stack" />
-      <footer className="popover-foot">
-        <button type="button" className="start" onClick={() => onLaunch(cli, mode)}>
-          Open session
-        </button>
-      </footer>
-    </div>
   );
 }

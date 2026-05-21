@@ -6,16 +6,14 @@ interface Props {
   mode: Mode;
   setCli: (c: Cli) => void;
   setMode: (m: Mode) => void;
-  // "cols" = two-column dialog; "stack" = single column for the popover.
-  layout?: "cols" | "stack";
 }
 
-// Agent picker × permission-mode chooser. Controlled by the parent (dialog or
-// popover) via useLaunchChoice.
-export function LauncherBody({ cli, mode, setCli, setMode, layout = "cols" }: Props) {
+// Agent picker × permission-mode chooser. Stacked single column, shared by every
+// launch popover (see LaunchPanel). Controlled by the parent via useLaunchChoice.
+export function LauncherBody({ cli, mode, setCli, setMode }: Props) {
   const allowed = MODE_SUPPORT[cli];
   return (
-    <div className={layout === "cols" ? "launch-body" : "launch-body stack"}>
+    <div className="launch-body">
       <section className="launch-col agents">
         <span className="col-label">Agent</span>
         <div className="agent-list">

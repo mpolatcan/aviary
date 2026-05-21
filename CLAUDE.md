@@ -109,6 +109,7 @@ Environment knobs:
 - **`SHELL ["bash", "-euo", "pipefail", "-c"]` is set in the runtime Dockerfile.** This matters because we use `curl ... | bash` patterns to install CLIs; without pipefail, a failing curl silently succeeds and the CLI is missing from the image. Do not remove it.
 - **macOS Docker Desktop "host network" is gated behind a beta flag.** We default `AVIARY_NETWORK_MODE=bridge` to keep things portable. Override to `host` only if the user has Docker Desktop 4.34+ with the beta enabled.
 - **The runtime container's entrypoint is `tail -f /dev/null`.** It does NOT launch tmux. The tmux server is started by the first `docker exec ... tmux new-session ...` call. Sessions share `TMUX_TMPDIR=/tmp/aviary`.
+- **The in-pane tmux status bar is themed via `runtime/tmux.conf`** (COPYed to `/root/.tmux.conf`, loaded on tmux server start). It restyles tmux's default green to Aviary's palette (`bg=#16181c` panel, ochre `#e8a33d` accent) so the bar reads as app chrome. Changing it needs an image rebuild (`make image`); to preview on a live container without a rebuild: `docker cp runtime/tmux.conf aviary-runtime:/root/.tmux.conf && docker exec -e TMUX_TMPDIR=/tmp/aviary aviary-runtime tmux source-file /root/.tmux.conf`. Keep the hexes in sync with the `@theme` block in `theme.css`.
 - **The webview drag region** is set via `-webkit-app-region: drag` on the masthead and tabbar (React sets it through the `WebkitAppRegion` style prop). Buttons inside those regions must reset with `WebkitAppRegion: "no-drag"` or clicks get captured by window-drag.
 - **Antigravity install URL is unverified** (`antigravity.google/cli/install.sh` returned an SSL self-signed cert chain error during build). The line is commented out in `runtime/Dockerfile`, and `catalog.ts` `MODE_SUPPORT` caps Antigravity to Standard only. Until confirmed, selecting Antigravity spawns a tmux session that exits immediately.
 - **xterm panes mount via `absolute inset-0`, never flexbox.** `.pane-body` is `position:relative; flex:1` but NOT `display:flex`; a `flex-1` slot collapses to height 0 and the absolutely-positioned `.term-surface` renders blank. `<PaneMount>` fills the slot with `absolute inset-0` + a `ResizeObserver` that re-fits on resize (there is no window-level resize handler — the observer is it).
@@ -117,6 +118,17 @@ Environment knobs:
 ## Testing posture
 
 There is no automated IPC test suite yet. Manual regression matrix lives in `TEST_SCENARIOS.md` — run it before any release cut, paying special attention to the close-tab → tmux-kill flow (S3, S5, S7, S8) which previously regressed.
+
+### Visual / design verification (mandatory for any UI change)
+
+ALWAYS visually verify frontend, layout, styling, or UX changes in a real browser before claiming they work — reading the diff is not enough. Use the **dev bridge + Playwright CLI**, never inference:
+
+1. `make dev-web` — boots Vite (`:1420`) + the backend bridge (`:4555`) against a live container, no Tauri window.
+2. Drive it with the `playwright-cli` skill: `open --browser=chrome`, `resize 1440 900`, `goto http://localhost:1420`, then `screenshot` and `Read` the PNG.
+3. Capture every state the change touches — for launch UX that means each surface (`+` new-tab, ⌘T, pane split control, rail "+") — and compare them against each other for consistency, not just the default view.
+4. Check the browser `console` for errors after interacting.
+
+Don't mark UI work done on inference alone — describe the screenshots you actually observed.
 
 ## When in doubt
 

@@ -31,7 +31,7 @@ export function TabBar() {
     >
       <div
         ref={stripRef}
-        className="flex flex-1 overflow-x-auto [scrollbar-width:none]"
+        className="flex min-w-0 shrink overflow-x-auto [scrollbar-width:none]"
         style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
       >
         {workspaces.map((ws) => {
@@ -78,11 +78,12 @@ export function TabBar() {
             </div>
           );
         })}
-      </div>
 
-      {/* Pinned to the right of the strip, so a new tab always opens just to the
-          left of this control — i.e. immediately right of the last tab. */}
-      <NewTabPopover />
+        {/* Sits immediately right of the last tab (inside the scroll strip), so a
+            new tab always appears just before it. The empty bar area to the right
+            of the strip stays a window-drag region. */}
+        <NewTabPopover />
+      </div>
     </nav>
   );
 }

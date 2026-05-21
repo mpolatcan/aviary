@@ -127,6 +127,7 @@ pub async fn serve() {
         .route("/status", get(status))
         .route("/sessions", get(list_sessions).post(create_session))
         .route("/sessions/:name", delete(kill_session))
+        .route("/sessions/:name/rename", post(rename_session))
         .route("/attach", post(attach))
         .route("/panes/:id/write", post(write))
         .route("/panes/:id/resize", post(resize))
@@ -152,6 +153,7 @@ struct CreateBody {
     name: String,
     cli: String,
     mode: Option<String>,
+    alias: Option<String>,
 }
 
 async fn create_session(
@@ -165,7 +167,12 @@ async fn create_session(
         .map(LaunchMode::parse)
         .unwrap_or_default();
     st.docker
-        .create_tmux_session(&body.name, cli, mode)
+        .create_tmux_session(
+            &body.name,
+            cli,
+            mode,
+            body.alias.as_deref().unwrap_or_default(),
+        )
         .await
         .map_err(err)?;
     Ok(StatusCode::NO_CONTENT)
@@ -178,6 +185,23 @@ async fn kill_session(
     // Same ordering as lib.rs: drop pane bookkeeping before killing tmux.
     st.registry.detach_by_session(&name).await;
     st.docker.kill_tmux_session(&name).await.map_err(err)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+struct RenameBody {
+    alias: String,
+}
+
+async fn rename_session(
+    State(st): State<AppState>,
+    Path(name): Path<String>,
+    Json(body): Json<RenameBody>,
+) -> Result<StatusCode, ApiError> {
+    st.docker
+        .rename_tmux_window(&name, &body.alias)
+        .await
+        .map_err(err)?;
     Ok(StatusCode::NO_CONTENT)
 }
 

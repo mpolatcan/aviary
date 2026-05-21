@@ -217,18 +217,27 @@ impl DockerClient {
         name: &str,
         cli: Cli,
         mode: LaunchMode,
+        alias: &str,
     ) -> Result<(), DockerError> {
         // `-e IS_SANDBOX=1` marks the pane env as a recognized sandbox so Claude's
         // YOLO mode (--dangerously-skip-permissions) runs as root inside the
         // container instead of refusing. Pane-scoped, so it does not depend on the
         // long-running tmux server's environment. tmux treats trailing argv as the
         // session command; mode flags ride along.
+        //
+        // `-n <alias>` names the window with Aviary's display alias (e.g. "Owl 1")
+        // so the themed in-pane status bar reads it instead of the opaque session
+        // id. The runtime tmux.conf disables auto/allow-rename so the launched CLI
+        // can't clobber it. Falls back to the session name if alias is empty.
+        let window = if alias.is_empty() { name } else { alias };
         let mut cmd = vec![
             "tmux",
             "new-session",
             "-d",
             "-s",
             name,
+            "-n",
+            window,
             "-e",
             "IS_SANDBOX=1",
         ];
@@ -239,6 +248,15 @@ impl DockerClient {
 
     pub async fn kill_tmux_session(&self, name: &str) -> Result<(), DockerError> {
         self.exec_capture(vec!["tmux", "kill-session", "-t", name])
+            .await?;
+        Ok(())
+    }
+
+    /// Rename a session's window so the themed in-pane status bar (which renders
+    /// the window name `#W`) reflects an alias the user edited in the UI. Each
+    /// Aviary session has exactly one window, so `-t <name>` resolves it.
+    pub async fn rename_tmux_window(&self, name: &str, alias: &str) -> Result<(), DockerError> {
+        self.exec_capture(vec!["tmux", "rename-window", "-t", name, alias])
             .await?;
         Ok(())
     }

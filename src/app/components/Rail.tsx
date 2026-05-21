@@ -1,19 +1,33 @@
 import { useState } from "react";
+import { autoSplitDir } from "../hooks/useKeyboard";
 import { MODE_BY_ID, SPEC_BY_CLI } from "../lib/catalog";
+import type { Cli, Mode } from "../lib/ipc";
+import { useLauncher } from "../lib/launcher";
 import * as registry from "../lib/panes";
 import { useStore } from "../lib/store";
 import { leavesList } from "../lib/tree";
+import { LaunchPanel } from "./LaunchPanel";
+import { Popover, PopoverAnchor, PopoverContent } from "./ui/popover";
+
+const KEY = "rail";
 
 // Catalogue rail — every session across all tabs, grouped by plate. Click a row
 // to focus it (switching tabs if needed); collapse to a labelled spine.
-export function Rail({ onNewHere }: { onNewHere: () => void }) {
+export function Rail() {
   const workspaces = useStore((s) => s.workspaces);
   const activeId = useStore((s) => s.activeWorkspaceId);
   const sessionMeta = useStore((s) => s.sessionMeta);
   const switchWorkspace = useStore((s) => s.switchWorkspace);
   const focusSession = useStore((s) => s.focusSession);
   const closeSession = useStore((s) => s.closeSession);
+  const splitSession = useStore((s) => s.splitSession);
+  const newPlate = useStore((s) => s.newPlate);
+  const openKey = useLauncher((s) => s.openKey);
+  const ctx = useLauncher((s) => s.ctx);
+  const openLaunch = useLauncher((s) => s.open);
+  const closeLaunch = useLauncher((s) => s.close);
   const [collapsed, setCollapsed] = useState(false);
+  const isOpen = openKey === KEY;
 
   const toggle = () => {
     setCollapsed((c) => !c);
@@ -24,6 +38,21 @@ export function Rail({ onNewHere }: { onNewHere: () => void }) {
     };
     requestAnimationFrame(refit);
     setTimeout(refit, 320);
+  };
+
+  // Rail "+" adds a session to the current tab by splitting its focused pane
+  // (along its longer axis); with nothing open it falls back to a new tab. The
+  // anchored popover then picks agent × mode — same UI as every other surface.
+  const arm = () => {
+    const focused = workspaces.find((w) => w.id === activeId)?.focused;
+    openLaunch(KEY, focused ? { dir: autoSplitDir(focused), session: focused } : undefined);
+  };
+  const launch = (cli: Cli, mode: Mode) => {
+    const target = ctx?.session;
+    const dir = ctx?.dir ?? "row";
+    closeLaunch();
+    if (target) void splitSession(target, dir, cli, mode);
+    else void newPlate(cli, mode);
   };
 
   return (
@@ -92,15 +121,27 @@ export function Rail({ onNewHere }: { onNewHere: () => void }) {
       </div>
 
       <footer className="rail-foot">
-        <button
-          type="button"
-          className="rail-new"
-          title="New session in the current tab"
-          onClick={onNewHere}
-        >
-          <span className="plus">＋</span>
-          <span>new session</span>
-        </button>
+        <Popover open={isOpen} onOpenChange={(o) => !o && closeLaunch()}>
+          <PopoverAnchor asChild>
+            <button
+              type="button"
+              className="rail-new"
+              title="New session in the current tab"
+              onClick={arm}
+            >
+              <span className="plus">＋</span>
+              <span>new session</span>
+            </button>
+          </PopoverAnchor>
+          <PopoverContent side="top" align="end" className="modal-panel popover-launch">
+            {isOpen && (
+              <LaunchPanel
+                kicker={ctx?.session ? "Add to this tab" : "New tab"}
+                onLaunch={launch}
+              />
+            )}
+          </PopoverContent>
+        </Popover>
       </footer>
 
       <span className="rail-spine">Sessions</span>

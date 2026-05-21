@@ -101,13 +101,14 @@ async fn create_session(
     name: String,
     cli: String,
     mode: Option<String>,
+    alias: Option<String>,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
     let cli = Cli::parse(&cli).map_err(|e| e.to_string())?;
     let mode = mode.as_deref().map(LaunchMode::parse).unwrap_or_default();
     state
         .docker
-        .create_tmux_session(&name, cli, mode)
+        .create_tmux_session(&name, cli, mode, alias.as_deref().unwrap_or_default())
         .await
         .map_err(|e| e.to_string())
 }
@@ -120,6 +121,19 @@ async fn kill_session(name: String, state: tauri::State<'_, AppState>) -> Result
     state
         .docker
         .kill_tmux_session(&name)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn rename_session(
+    name: String,
+    alias: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    state
+        .docker
+        .rename_tmux_window(&name, &alias)
         .await
         .map_err(|e| e.to_string())
 }
@@ -238,6 +252,7 @@ pub fn run() {
             list_sessions,
             create_session,
             kill_session,
+            rename_session,
             attach_session,
             pty_write,
             pty_resize,

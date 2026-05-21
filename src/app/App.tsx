@@ -1,12 +1,10 @@
 import { useEffect } from "react";
 import { Grid } from "./components/Grid";
-import { LauncherDialog } from "./components/LauncherDialog";
 import { Masthead } from "./components/Masthead";
 import { Rail } from "./components/Rail";
 import { StatusBar } from "./components/StatusBar";
 import { TabBar } from "./components/TabBar";
-import { autoSplitDir, useKeyboard } from "./hooks/useKeyboard";
-import { useLauncher } from "./lib/launcher";
+import { useKeyboard } from "./hooks/useKeyboard";
 import { activeWorkspace, initLifecycle, useStore } from "./lib/store";
 
 const FLEURON_CORNERS = ["tl", "tr", "bl", "br"] as const;
@@ -15,9 +13,6 @@ export function App() {
   const status = useStore((s) => s.status);
   const error = useStore((s) => s.error);
   const active = useStore(activeWorkspace);
-  const newPlate = useStore((s) => s.newPlate);
-  const splitSession = useStore((s) => s.splitSession);
-  const openLauncher = useLauncher((s) => s.openLauncher);
   const focused = active?.focused ?? null;
   const focusedAlias = useStore((s) => (focused ? s.sessionMeta[focused]?.alias : undefined));
 
@@ -27,22 +22,6 @@ export function App() {
   }, []);
 
   const state = error ? "unreachable" : (status?.state ?? null);
-
-  // Rail "+" — add a session to the current tab by splitting its focused pane
-  // along its longer axis; fall back to a new tab when nothing is open. The
-  // launcher dialog picks agent × mode.
-  const newSessionHere = async () => {
-    const { activeWorkspaceId, workspaces } = useStore.getState();
-    const ws = workspaces.find((w) => w.id === activeWorkspaceId);
-    if (!ws?.focused) {
-      const c = await openLauncher("New tab");
-      if (c) await newPlate(c.cli, c.mode);
-      return;
-    }
-    const c = await openLauncher("New session");
-    if (!c) return;
-    await splitSession(ws.focused, autoSplitDir(ws.focused), c.cli, c.mode);
-  };
 
   return (
     <div className="grid h-full grid-rows-[56px_40px_1fr_28px]">
@@ -65,14 +44,13 @@ export function App() {
             <EmptyState />
           )}
         </div>
-        <Rail onNewHere={newSessionHere} />
+        <Rail />
       </main>
       <StatusBar
         state={state}
         sessionName={focusedAlias}
         plate={active ? String(active.plate) : null}
       />
-      <LauncherDialog />
     </div>
   );
 }

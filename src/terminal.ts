@@ -68,7 +68,14 @@ export async function createPane(stash: HTMLElement, sessionName: string): Promi
   term.open(el);
 
   try {
-    term.loadAddon(new WebglAddon());
+    const webgl = new WebglAddon();
+    // WKWebView (Tauri's WebKit) drops the WebGL context when the canvas is
+    // reparented between split-tree leaves — which <PaneMount> does on every
+    // split and tab switch — and the addon does not auto-recover, so the pane
+    // renders blank ("terminal disappears"). Dispose it on context loss so
+    // xterm falls back to the DOM renderer, which survives reparenting.
+    webgl.onContextLoss(() => webgl.dispose());
+    term.loadAddon(webgl);
   } catch {
     // WebGL unavailable — canvas renderer fallback is automatic.
   }

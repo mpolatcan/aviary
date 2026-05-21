@@ -208,6 +208,12 @@ body.dragging .divider::after {
   color: var(--color-danger);
   background: rgba(214, 96, 77, 0.12);
 }
+/* Anchor wrapper for the split popover — keeps the two split buttons inline so
+   the popover opens flush against them. */
+.pane-ctl-group {
+  display: inline-flex;
+  align-items: center;
+}
 
 .pane-body {
   position: relative;
@@ -327,11 +333,21 @@ body.dragging .divider::after {
   flex: 0 0 auto;
   border-bottom: 2px solid var(--color-rule);
 }
-.session-rail.collapsed .rail-head,
 .session-rail.collapsed .rail-foot,
 .session-rail.collapsed .rail-list {
   opacity: 0;
   pointer-events: none;
+}
+/* Keep the header (and its toggle) interactive when collapsed — it is the only
+   affordance back to expanded. Just hide the title and center the chevron in
+   the 24px spine. */
+.session-rail.collapsed .rail-head {
+  padding: 0;
+  justify-content: center;
+  border-bottom-color: transparent;
+}
+.session-rail.collapsed .rail-title {
+  display: none;
 }
 .rail-title {
   font-family: var(--font-pixel);
@@ -700,133 +716,32 @@ body.dragging .divider::after {
   background: rgba(214, 96, 77, 0.12);
 }
 
-/* ---- Launcher (shadcn Dialog + Popover content) ---------------------- */
+/* ---- Launcher (shadcn Popover content) ------------------------------- */
 
-.modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(6, 7, 8, 0.74);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
-  z-index: 1000;
-  animation: overlay-in 0.22s ease;
-}
-@keyframes overlay-in {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-.modal-fixed {
-  position: fixed;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  z-index: 1001;
-  animation: modal-in 0.36s cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-@keyframes modal-in {
-  from {
-    opacity: 0;
-    transform: translate(-50%, calc(-50% + 10px)) scale(0.99);
-  }
-  to {
-    opacity: 1;
-    transform: translate(-50%, -50%) scale(1);
-  }
-}
-
+/* One launch surface everywhere: a compact popover anchored to its trigger
+   (tab "+", pane split controls, rail "+"). `.modal-panel` is the shared shell;
+   `.popover-launch` sizes/animates it. */
 .modal-panel {
   position: relative;
   background: var(--color-panel);
   border: 2px solid var(--color-rule);
   box-shadow: 0 24px 70px rgba(0, 0, 0, 0.6);
 }
-.modal-panel.launcher {
-  width: 600px;
-  max-width: 92vw;
-}
-.modal-panel .frame-fleuron {
-  z-index: 3;
-  opacity: 0.7;
-}
-.modal-panel .frame-fleuron.tl {
-  top: 4px;
-  left: 4px;
-}
-.modal-panel .frame-fleuron.tr {
-  top: 4px;
-  right: 4px;
-}
-.modal-panel .frame-fleuron.bl {
-  bottom: 4px;
-  left: 4px;
-}
-.modal-panel .frame-fleuron.br {
-  bottom: 4px;
-  right: 4px;
-}
 
-.modal-header {
-  padding: 26px 30px 16px;
-  border-bottom: 1px solid var(--color-rule-soft);
-  text-align: center;
-}
-.modal-header .kicker {
-  display: block;
-  font-family: var(--font-pixel);
-  font-size: var(--fs-pixel);
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  color: var(--color-text-faint);
-  margin-bottom: 10px;
-}
-.modal-header h2 {
-  font-family: var(--font-mono);
-  font-weight: 800;
-  font-size: var(--fs-2xl);
-  color: var(--color-text);
-  letter-spacing: -0.02em;
-  line-height: 1;
-  margin: 0;
-}
-.sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
-}
-
-/* Two columns: agent picker | permission mode. `stack` = single column (popover). */
+/* Stacked single column: agent picker over permission mode. */
 .launch-body {
   display: grid;
-  grid-template-columns: 1.1fr 1fr;
-}
-.launch-body.stack {
   grid-template-columns: 1fr;
 }
 .launch-col {
-  padding: 18px 22px 22px;
+  padding: 14px 16px;
   display: flex;
   flex-direction: column;
   gap: 12px;
 }
-.launch-body:not(.stack) .launch-col.agents {
-  border-right: 1px solid var(--color-rule-soft);
-}
-.launch-body.stack .launch-col.agents {
+.launch-col.agents {
   border-bottom: 1px solid var(--color-rule-soft);
   padding-bottom: 14px;
-}
-.launch-body.stack .launch-col {
-  padding: 14px 16px;
 }
 .col-label {
   font-family: var(--font-pixel);
@@ -982,29 +897,6 @@ body.dragging .divider::after {
   display: block;
 }
 
-.modal-footer {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 14px 22px 16px;
-  border-top: 1px solid var(--color-rule-soft);
-  font-family: var(--font-pixel);
-  font-size: var(--fs-pixel);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--color-text-faint);
-}
-.modal-footer .esc {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-}
-.footer-actions {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-}
-.cancel,
 .start {
   border-radius: 2px;
   padding: 8px 16px;
@@ -1014,18 +906,6 @@ body.dragging .divider::after {
   letter-spacing: 0.06em;
   cursor: pointer;
   transition: all 0.18s ease;
-}
-.cancel {
-  background: transparent;
-  color: var(--color-text-faint);
-  border: 2px solid var(--color-rule);
-}
-.cancel:hover {
-  color: var(--color-text);
-  border-color: var(--color-text-faint);
-  background: rgba(255, 255, 255, 0.03);
-}
-.start {
   background: var(--color-accent);
   color: var(--color-bg-deep);
   border: 1px solid var(--color-accent);
@@ -1041,7 +921,7 @@ body.dragging .divider::after {
   color: var(--color-text-bright);
 }
 
-/* ---- New-tab popover -------------------------------------------------- */
+/* ---- Launch popover (shared shell) ------------------------------------ */
 
 .popover-launch {
   width: 300px;
@@ -1091,7 +971,6 @@ body.dragging .divider::after {
 .rr-close:focus-visible,
 .rail-new:focus-visible,
 .rail-toggle:focus-visible,
-.cancel:focus-visible,
 .start:focus-visible,
 .tab .close:focus-visible {
   outline: 2px solid var(--color-accent-bright);

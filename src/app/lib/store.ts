@@ -46,6 +46,12 @@ function updateWs(list: Workspace[], id: string, fn: (w: Workspace) => Workspace
   return list.map((w) => (w.id === id ? fn(w) : w));
 }
 
+// Display alias for a session, e.g. "Owl 1". Shared by the session metadata and
+// the tmux window name passed at create time, so both read identically.
+function aliasFor(cli: Cli, num: number): string {
+  return `${SPEC_BY_CLI[cli].alias} ${num}`;
+}
+
 export const useStore = create<AviaryState>((set, get) => {
   const isRunning = () => get().status?.state === "running";
 
@@ -60,7 +66,7 @@ export const useStore = create<AviaryState>((set, get) => {
     const meta: SessionMeta = {
       cli,
       num,
-      alias: `${SPEC_BY_CLI[cli].alias} ${num}`,
+      alias: aliasFor(cli, num),
       mode,
       workspaceId,
     };
@@ -90,7 +96,7 @@ export const useStore = create<AviaryState>((set, get) => {
     newPlate: async (cli, mode) => {
       if (!isRunning()) return;
       const name = uniqueName(cli);
-      await ipc.createSession(name, cli, mode);
+      await ipc.createSession(name, cli, mode, aliasFor(cli, get().specimenCounter));
       await registry.spawnPane(name);
 
       const plate = get().plateCounter + 1;
@@ -113,7 +119,7 @@ export const useStore = create<AviaryState>((set, get) => {
       const ws = get().workspaces.find((w) => w.id === get().sessionMeta[target]?.workspaceId);
       if (!ws || !ws.root) return;
       const name = uniqueName(cli);
-      await ipc.createSession(name, cli, mode);
+      await ipc.createSession(name, cli, mode, aliasFor(cli, get().specimenCounter));
       await registry.spawnPane(name);
       registerMeta(name, cli, mode, ws.id);
 
@@ -210,11 +216,21 @@ export const useStore = create<AviaryState>((set, get) => {
     renameSession: (name, alias) => {
       const next = alias.trim();
       if (!next) return;
+      let changed = false;
       set((s) => {
         const meta = s.sessionMeta[name];
-        if (!meta) return {};
+        if (!meta || meta.alias === next) return {};
+        changed = true;
         return { sessionMeta: { ...s.sessionMeta, [name]: { ...meta, alias: next } } };
       });
+      // Mirror the alias onto the tmux window name so the in-pane status bar
+      // (#W) updates too. Best-effort: a backend failure must not roll back the
+      // UI rename the user just made.
+      if (changed) {
+        void ipc.renameSession(name, next).catch((e) => {
+          console.warn(`rename_session(${name}) failed:`, e);
+        });
+      }
     },
 
     commitRatio: (wsId, nodeId, ratio) => {
