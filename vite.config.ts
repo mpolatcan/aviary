@@ -1,11 +1,12 @@
+import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
 export default defineConfig({
   clearScreen: false,
-  // React migration is in progress (Phase 0). plugin-react is a no-op for the
-  // current vanilla entry (no JSX there) and powers the spike + future React app.
-  plugins: [react()],
+  // React migration is in progress. plugin-react + tailwind power the React app
+  // (app.html / src/app); both are no-ops for the legacy vanilla entry.
+  plugins: [react(), tailwindcss()],
   server: {
     port: 1420,
     strictPort: true,
