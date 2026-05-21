@@ -29,7 +29,8 @@ aviary/
       hooks/                # useKeyboard (global shortcuts), useContainerStatus
       lib/                  # store.ts (Zustand), panes.ts (registry), tree.ts
                             #   (split layout), catalog.ts (CLIS/MODES), launcher.ts,
-                            #   ipc.ts (typed Tauri boundary)
+                            #   ipc.ts (typed Tauri boundary), bridge.ts (browser-mode
+                            #   transport: Tauri IPC vs dev-server REST/WS)
   src-tauri/                # Rust backend
     Cargo.toml
     tauri.conf.json
@@ -39,7 +40,9 @@ aviary/
       lib.rs                # Tauri commands + setup hook
       lifecycle.rs          # Image pull, container create/start/stop
       docker.rs             # tmux session ops + exec attach
-      pty.rs                # PtyRegistry — pane stream pumps
+      pty.rs                # PtyRegistry — pane stream pumps (PaneEmitter trait)
+      devserver.rs          # Dev-only HTTP/WS bridge (feature `devserver`)
+      bin/devserver.rs      # Bridge entrypoint binary (aviary-devserver)
   runtime/
     Dockerfile              # Runtime image (CLIs + tmux)
     README.md               # Build + publish instructions
@@ -100,6 +103,7 @@ Environment knobs:
 
 ## Gotchas / non-obvious things
 
+- **`src-tauri/Cargo.toml` pins `default-run = "aviary"`.** The dev bridge added a second binary (`aviary-devserver`); without `default-run`, the `cargo run` that `tauri dev` / `make dev` invoke can't pick a target and fails with "could not determine which binary to run". Keep the pin if you add more binaries.
 - **`tauri::generate_context!` macro reads `tauri.conf.json` at compile time** and validates icon paths + `frontendDist`. If `dist/` is missing, `cargo check` fails with a proc-macro panic. Either run `npm run build` once, or keep the gitignored placeholder. Avoid this trap when running CI.
 - **Bollard `create_exec` requires explicit type annotation** in our codebase: `create_exec::<String>(...)`. Without it the compiler cannot infer `T: Into<String>`.
 - **`SHELL ["bash", "-euo", "pipefail", "-c"]` is set in the runtime Dockerfile.** This matters because we use `curl ... | bash` patterns to install CLIs; without pipefail, a failing curl silently succeeds and the CLI is missing from the image. Do not remove it.

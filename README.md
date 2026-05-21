@@ -125,6 +125,18 @@ make dev
 
 > See `make help` for the full target list (`build`, `check`, `fix`, `image-verify`, …).
 
+### Browser mode (dev bridge)
+
+The Tauri webview (WKWebView) has no remote-debugging port, so the UI can't be
+inspected or screenshotted from outside the app. For visual work, `make dev-web`
+runs the frontend in a plain browser at <http://127.0.0.1:1420> against a real
+backend — a feature-gated HTTP/WebSocket bridge that mirrors the Tauri IPC
+surface. It is **dev-only** and never compiled into the shipped app.
+
+```bash
+make dev-web   # Vite + standalone backend bridge, no Tauri window
+```
+
 Override defaults:
 
 | Env var | Purpose | Default |
