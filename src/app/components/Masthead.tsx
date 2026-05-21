@@ -1,6 +1,9 @@
+import { useStore } from "../lib/store";
+
 // Runtime state lives in the StatusBar (bottom); the masthead stays a clean
 // title bar so the status isn't shown twice.
 export function Masthead() {
+  const count = useStore((s) => Object.keys(s.sessionMeta).length);
   const today = new Date().toLocaleDateString("en-US", {
     year: "numeric",
     month: "short",
@@ -22,7 +25,15 @@ export function Masthead() {
         </span>
       </div>
 
-      <div className="flex justify-end items-baseline">
+      <div className="flex justify-end items-baseline gap-[12px]">
+        {count > 0 && (
+          <>
+            <span className="pixel text-text-faint text-[length:var(--fs-pixel)]">
+              {count} {count === 1 ? "specimen" : "specimens"}
+            </span>
+            <span className="text-text-ghost">·</span>
+          </>
+        )}
         <span className="font-mono text-[length:var(--fs-xs)] text-text-faint">{today}</span>
       </div>
     </header>

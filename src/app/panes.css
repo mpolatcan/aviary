@@ -104,8 +104,9 @@ body.dragging .divider::after {
   }
 }
 .pane-leaf.focused {
-  border-color: var(--color-accent-deep);
-  box-shadow: 0 0 0 1px rgba(232, 163, 61, 0.22), inset 0 0 30px rgba(0, 0, 0, 0.3);
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 1px var(--color-accent), 0 0 14px rgba(232, 163, 61, 0.28), inset 0 0 30px
+    rgba(0, 0, 0, 0.3);
 }
 
 .pane-head {
