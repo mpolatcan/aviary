@@ -25,6 +25,12 @@ RUN npm install -g @openai/codex
 ENV TMUX_TMPDIR=/tmp/aviary
 RUN mkdir -p /tmp/aviary && chmod 700 /tmp/aviary
 
+# Declare this container a recognized sandbox so Claude Code's YOLO mode
+# (--dangerously-skip-permissions) runs as root instead of refusing. Aviary also
+# injects this per-pane via `tmux new-session -e`, so the running container does
+# not need a rebuild; this keeps a freshly built image correct on its own.
+ENV IS_SANDBOX=1
+
 # Aviary writes config + workspace via volume mounts
 ENV CLAUDE_CONFIG_DIR=/config/claude
 ENV CODEX_CONFIG_DIR=/config/codex
