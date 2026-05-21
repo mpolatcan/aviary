@@ -48,6 +48,7 @@ async function httpInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
         name: args.name,
         cli: args.cli,
         mode: args.mode,
+        alias: args.alias,
       }) as Promise<T>;
     case "kill_session":
       return jsend("DELETE", `/sessions/${encodeURIComponent(String(args.name))}`) as Promise<T>;

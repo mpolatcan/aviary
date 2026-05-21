@@ -152,6 +152,7 @@ struct CreateBody {
     name: String,
     cli: String,
     mode: Option<String>,
+    alias: Option<String>,
 }
 
 async fn create_session(
@@ -165,7 +166,12 @@ async fn create_session(
         .map(LaunchMode::parse)
         .unwrap_or_default();
     st.docker
-        .create_tmux_session(&body.name, cli, mode)
+        .create_tmux_session(
+            &body.name,
+            cli,
+            mode,
+            body.alias.as_deref().unwrap_or_default(),
+        )
         .await
         .map_err(err)?;
     Ok(StatusCode::NO_CONTENT)
