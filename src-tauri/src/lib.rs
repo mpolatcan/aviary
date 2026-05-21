@@ -2,7 +2,7 @@ mod docker;
 mod lifecycle;
 mod pty;
 
-use docker::{Cli, DockerClient};
+use docker::{Cli, DockerClient, LaunchMode};
 use lifecycle::{ContainerStatus, Lifecycle};
 use pty::{PtyRegistry, SessionInfo};
 use std::sync::Arc;
@@ -82,12 +82,14 @@ async fn list_sessions(state: tauri::State<'_, AppState>) -> Result<Vec<SessionI
 async fn create_session(
     name: String,
     cli: String,
+    mode: Option<String>,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
     let cli = Cli::parse(&cli).map_err(|e| e.to_string())?;
+    let mode = mode.as_deref().map(LaunchMode::parse).unwrap_or_default();
     state
         .docker
-        .create_tmux_session(&name, cli)
+        .create_tmux_session(&name, cli, mode)
         .await
         .map_err(|e| e.to_string())
 }

@@ -6,3 +6,6 @@ src-tauri/gen
 .env
 .env.local
 *.log
+
+# playwright-cli session artifacts
+.playwright-cli/

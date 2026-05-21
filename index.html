@@ -7,133 +7,49 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Cormorant+Garamond:ital,wght@0,400;0,500;1,400;1,500&family=DM+Mono:wght@300;400;500&family=JetBrains+Mono:wght@400;500&display=swap"
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,500;0,700;0,800;1,400;1,500&family=Silkscreen:wght@400;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body>
     <svg width="0" height="0" style="position: absolute" aria-hidden="true">
       <defs>
-        <!-- Eagle Owl in profile (Bubo bubo) — Claude -->
-        <symbol id="bird-owl" viewBox="0 0 64 64">
-          <path
-            fill="currentColor"
-            d="M22 10c-1 1-1 3 0 4-3 1-6 4-7 7-2 4-2 9 0 13 1 4 4 7 8 9l-3 8 3 1 3-6c2 1 4 1 6 1l3 6 3-1-3-8c4-2 7-5 8-9 2-4 2-9 0-13-1-3-4-6-7-7 1-1 1-3 0-4-1-1-2-1-3 0-1-1-2-2-4-2s-3 1-4 2c-1-1-2-1-3 0zm5 10c2 0 4 1 4 3s-2 3-4 3-4-1-4-3 2-3 4-3zm10 0c2 0 4 1 4 3s-2 3-4 3-4-1-4-3 2-3 4-3zm-5 9 3 4-3 3-3-3z"
-          />
+        <!-- Pixel-art birds. 16×16 grid, currentColor, crisp edges (see theme.css). -->
+
+        <!-- Owl — Claude. Round body + two ear tufts + carved eyes. -->
+        <symbol id="bird-owl" viewBox="0 0 16 16" shape-rendering="crispEdges">
+          <path fill="currentColor" d="M5 2h1v2H5z M10 2h1v2h-1z M6 4h4v1H6z M4 5h8v1H4z M3 6h10v3H3z M4 9h8v2H4z M5 11h6v1H5z M6 12h4v1H6z"/>
+          <path fill="#0f1012" d="M5 6h2v2H5z M9 6h2v2H9z"/>
+          <path fill="currentColor" d="M6 7h1v1H6z M9 7h1v1H9z M7 8h2v1H7z"/>
         </symbol>
-        <!-- Common Raven in profile (Corvus corax) — Codex -->
-        <symbol id="bird-raven" viewBox="0 0 64 64">
-          <path
-            fill="currentColor"
-            d="M4 36c2-1 5-2 7-2-1-5 2-10 7-13l-3-7 3 1 4 5c4-1 9-1 13 1l11-12 1 2-6 12c3 2 5 5 6 9l10 6-9 1-2 1c-1 4-3 7-7 9 1 2 3 3 5 4-3 1-7 1-10-1-2 1-5 1-7 1-7-1-13-5-17-11-2 0-4-1-6-2zm38-12c1 0 1 1 1 2s0 2-1 2-1-1-1-2 0-2 1-2z"
-          />
+
+        <!-- Raven — Codex. Sleek leftward profile, long beak + tail. -->
+        <symbol id="bird-raven" viewBox="0 0 16 16" shape-rendering="crispEdges">
+          <path fill="currentColor" d="M1 7h3v1H1z M3 5h3v4H3z M6 4h6v3H6z M11 4h3v1h-3z M6 7h6v2H6z M7 9h4v1H7z M7 10h1v2H7z M10 10h1v2h-1z"/>
+          <path fill="#0f1012" d="M4 6h1v1H4z"/>
         </symbol>
-        <!-- Peregrine Falcon stooping (Falco peregrinus) — Antigravity -->
-        <symbol id="bird-falcon" viewBox="0 0 64 64">
-          <path
-            fill="currentColor"
-            d="M32 4c-2 2-4 5-5 8l-2 9c-5-2-10-2-15-1l9 6c-4 2-7 5-10 9l11-2c-2 4-3 8-3 12l8-7c0 4 1 8 3 11l5-9c1 1 2 1 3 1s2 0 3-1l5 9c2-3 3-7 3-11l8 7c0-4-1-8-3-12l11 2c-3-4-6-7-10-9l9-6c-5-1-10-1-15 1l-2-9c-1-3-3-6-5-8zm0 24c2 0 4 2 4 4s-2 4-4 4-4-2-4-4 2-4 4-4z"
-          />
+
+        <!-- Falcon — Antigravity. Swept-back wings, pointed body (stoop). -->
+        <symbol id="bird-falcon" viewBox="0 0 16 16" shape-rendering="crispEdges">
+          <path fill="currentColor" d="M7 2h2v3H7z M3 4h1v1H3z M4 5h1v1H4z M5 6h1v1H5z M12 4h1v1h-1z M11 5h1v1h-1z M10 6h1v1h-1z M6 5h4v3H6z M7 8h2v4H7z M6 12h1v1H6z M9 12h1v1H9z"/>
         </symbol>
-        <!-- Single bird in flight, for empty state -->
-        <symbol id="bird-flight" viewBox="0 0 160 80">
-          <path
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1.2"
-            stroke-linecap="round"
-            d="M8 52 C 30 24, 54 22, 76 42 C 92 28, 110 26, 132 42 C 140 36, 148 36, 154 42"
-          />
-          <path
-            fill="none"
-            stroke="currentColor"
-            stroke-width="0.8"
-            d="M76 42 C 84 50, 96 50, 104 44"
-          />
+
+        <!-- Flock in flight — empty state. Three pixel gulls. -->
+        <symbol id="bird-flight" viewBox="0 0 40 16" shape-rendering="crispEdges">
+          <path fill="currentColor" d="M3 6h1v1H3z M4 5h1v1H4z M5 4h1v1H5z M6 5h1v1H6z M7 6h1v1H7z
+            M16 9h1v1h-1z M17 8h1v1h-1z M18 7h1v1h-1z M19 8h1v1h-1z M20 9h1v1h-1z
+            M30 5h1v1h-1z M31 4h1v1h-1z M32 3h1v1h-1z M33 4h1v1h-1z M34 5h1v1h-1z"/>
         </symbol>
-        <!-- Fleuron — corner ornament -->
-        <symbol id="fleuron" viewBox="0 0 24 24">
-          <path
-            fill="currentColor"
-            d="M12 4c0 4-2 6-6 6 4 0 6 2 6 6 0-4 2-6 6-6-4 0-6-2-6-6z"
-          />
+
+        <!-- Pixel corner bracket — replaces the old fleuron ornament. -->
+        <symbol id="fleuron" viewBox="0 0 8 8" shape-rendering="crispEdges">
+          <path fill="currentColor" d="M0 0h5v1H0z M0 1h1v4H0z"/>
         </symbol>
       </defs>
     </svg>
 
-    <div id="app">
-      <header id="masthead">
-        <div class="mast-left">
-          <span class="brand">Aviary</span>
-          <span class="brand-sep">·</span>
-          <span class="brand-sub">Sive Catalogus Avium Domesticarum</span>
-        </div>
-        <div class="mast-center" id="status-cell">
-          <span class="status-dot"></span>
-          <span class="status-text">awaiting</span>
-        </div>
-        <div class="mast-right">
-          <span class="mast-date" id="masthead-date"></span>
-          <span class="brand-sep">·</span>
-          <span class="mast-vol">Tom. I</span>
-        </div>
-      </header>
+    <div id="root"></div>
 
-      <nav id="tabbar">
-        <div class="tabbar-rail"></div>
-        <div id="tabs"></div>
-        <button id="new-session" title="Release a new specimen">
-          <span class="plus">＋</span>
-          <span class="release-label">
-            <span class="rl-top">release</span>
-            <span class="rl-bot">a specimen</span>
-          </span>
-        </button>
-      </nav>
-
-      <main id="terminal-host">
-        <span class="frame-fleuron tl"><svg viewBox="0 0 24 24"><use href="#fleuron" /></svg></span>
-        <span class="frame-fleuron tr"><svg viewBox="0 0 24 24"><use href="#fleuron" /></svg></span>
-        <span class="frame-fleuron bl"><svg viewBox="0 0 24 24"><use href="#fleuron" /></svg></span>
-        <span class="frame-fleuron br"><svg viewBox="0 0 24 24"><use href="#fleuron" /></svg></span>
-
-        <div id="empty-state" class="empty-state">
-          <svg class="empty-bird" width="220" height="110" aria-hidden="true">
-            <use href="#bird-flight" />
-          </svg>
-          <h1>
-            <span class="amp">The</span> aviary <span class="amp">is</span> still.
-          </h1>
-          <p class="lede">No specimens currently in residence. Release one to begin.</p>
-          <p class="muted">
-            <kbd>＋</kbd> above &nbsp;·&nbsp; or wait for the runtime to wake
-          </p>
-        </div>
-      </main>
-
-      <footer id="statusbar">
-        <span class="status-foot" id="status-session">
-          <span class="caps">Specimen</span>
-          <span class="sep">|</span>
-          <span class="roman" id="status-session-name">—</span>
-        </span>
-        <span class="status-foot status-plate">
-          <span class="caps">Plate</span>
-          <span class="sep">|</span>
-          <span class="roman" id="status-plate">—</span>
-        </span>
-        <span class="status-foot" id="status-container">
-          <span class="caps">Runtime</span>
-          <span class="sep">|</span>
-          <span class="state" id="status-runtime">awaiting</span>
-        </span>
-        <span class="status-foot status-motto">
-          <span class="motto">ad libitum</span>
-        </span>
-      </footer>
-    </div>
-
-    <script type="module" src="/src/main.ts"></script>
+    <script type="module" src="/src/app/main.tsx"></script>
   </body>
 </html>

@@ -25,7 +25,7 @@ docker exec -it aviary-runtime ps -ef | grep -E "tmux|claude|codex"
 
 | # | Scenario | Expected | Verify command |
 |---|---|---|---|
-| S1 | Click `+`, pick Claude | Modal closes, new tab appears, terminal shows Claude prompt | `tmux ls` shows `claude-xxxxx` |
+| S1 | Open new-tab popover, pick Claude, Open | Popover closes, new tab appears, terminal shows Claude prompt | `tmux ls` shows `claude-xxxxx` |
 | S2 | Type into active session | Keystrokes echo, Claude responds | — |
 | S3 | Click `×` on tab | Tab disappears, **tmux session also gone** | `tmux ls` must NOT list it |
 | S4 | Close last tab | Empty state ("aviary is silent") visible | `tmux ls` empty or "no server" |
@@ -62,13 +62,26 @@ docker exec -it aviary-runtime ps -ef | grep -E "tmux|claude|codex"
 | # | Scenario | Expected |
 |---|---|---|
 | U1 | Hover tab | Bird silhouette colour shifts to ochre, subtle background |
-| U2 | Hover `+` button | `＋` rotates 90° |
-| U3 | Open modal, press Esc | Modal closes, no session created |
-| U4 | Click overlay (outside modal) | Modal closes |
-| U5 | Click "Return to journal" | Modal closes |
-| U6 | Modal entrance | Overlay fades, modal lifts, 3 cards stagger in |
+| U2 | Click new-tab `+` | Popover opens anchored to the button, agent × mode chooser |
+| U3 | Open launcher (split / ⌘T), press Esc | Dialog closes, no session created |
+| U4 | Click overlay (outside dialog) | Dialog closes |
+| U5 | Click "Cancel" in launcher | Dialog closes, no session created |
+| U6 | Launcher entrance | Overlay fades, dialog lifts in |
 | U7 | Container state: running → stopped (manual `docker stop`) | Status bar text colour: moss → ochre |
 | U8 | Container state: unreachable | Status bar colour: oxidized red |
+| U9 | Tab through chrome with keyboard | `:focus-visible` accent ring on tabs/controls; OS reduced-motion disables pane/dialog animation |
+
+## Keyboard & launch modes
+
+| # | Scenario | Expected |
+|---|---|---|
+| K1 | ⌘T (Ctrl+T) | New-tab launcher opens; pick agent × mode → tab created |
+| K2 | ⌘W on focused pane | Session closes, tmux killed (S3 invariant); skipped while renaming |
+| K3 | ⌘\ on focused pane | Split launcher opens; new pane splits along the longer axis |
+| K4 | ⌘1–⌘9 | Switches to tab N (no-op past the last tab) |
+| K5 | Pick YOLO mode | Warn banner shows, Start button turns red; pane gets a `YOLO` badge |
+| K6 | Pick Auto mode | Pane gets an `AUTO` badge; `create_session` sends `mode: "auto"` |
+| K7 | Select Antigravity | Only Standard selectable (Auto/YOLO disabled) |
 
 ## Known limitations (don't test against)
 
@@ -80,6 +93,7 @@ docker exec -it aviary-runtime ps -ef | grep -E "tmux|claude|codex"
 
 - [ ] L1, L3, L5, L6
 - [ ] S3 (the bug user reported), S4, S5, S7, S8, S9
+- [ ] K2 (⌘W must kill tmux — same invariant as S3)
 - [ ] P1, P5, P7
 - [ ] V1, V2
 - [ ] U3, U4, U7

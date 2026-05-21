@@ -50,6 +50,61 @@ impl Cli {
             other => Err(DockerError::UnknownCli(other.into())),
         }
     }
+
+    /// Argv to launch the CLI under the given permission mode. The first element
+    /// is the binary; the rest are mode flags. Flags are verified against each
+    /// CLI's docs — YOLO variants are safe here because the runtime container is
+    /// the sandbox boundary. Antigravity is unverified, so it ignores `mode`.
+    pub fn launch_argv(self, mode: LaunchMode) -> Vec<&'static str> {
+        let bin = self.binary();
+        match (self, mode) {
+            // Claude Code: `auto` uses the classifier to auto-approve safe tool calls
+            // (incl. shell) while still blocking dangerous ones — a better Auto tier
+            // than `acceptEdits`, which frees only edits and prompts on shell. `skip`
+            // bypasses every guard.
+            (Cli::Claude, LaunchMode::Auto) => vec![bin, "--permission-mode", "auto"],
+            (Cli::Claude, LaunchMode::Yolo) => vec![bin, "--dangerously-skip-permissions"],
+            // Codex (0.132): --full-auto was removed; the sandbox+approval pair is the
+            // equivalent (auto-run inside the workspace, escalate only on failure).
+            // --yolo is a still-accepted alias for the no-sandbox/no-approval bypass.
+            (Cli::Codex, LaunchMode::Auto) => {
+                vec![
+                    bin,
+                    "--sandbox",
+                    "workspace-write",
+                    "--ask-for-approval",
+                    "on-failure",
+                ]
+            },
+            (Cli::Codex, LaunchMode::Yolo) => vec![bin, "--yolo"],
+            // Standard, and any Antigravity mode, launch the bare binary.
+            _ => vec![bin],
+        }
+    }
+}
+
+/// Permission posture a session is launched with. Maps to per-CLI flags in
+/// [`Cli::launch_argv`].
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum LaunchMode {
+    /// Agent asks before edits / commands (each CLI's default).
+    #[default]
+    Standard,
+    /// Auto-accept edits inside the workspace, still sandboxed.
+    Auto,
+    /// Skip all approvals and sandbox — relies on the container as the boundary.
+    Yolo,
+}
+
+impl LaunchMode {
+    pub fn parse(s: &str) -> Self {
+        match s.to_ascii_lowercase().as_str() {
+            "auto" => LaunchMode::Auto,
+            "yolo" => LaunchMode::Yolo,
+            _ => LaunchMode::Standard,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -157,10 +212,28 @@ impl DockerClient {
         Ok(sessions)
     }
 
-    pub async fn create_tmux_session(&self, name: &str, cli: Cli) -> Result<(), DockerError> {
-        let bin = cli.binary();
-        self.exec_capture(vec!["tmux", "new-session", "-d", "-s", name, bin])
-            .await?;
+    pub async fn create_tmux_session(
+        &self,
+        name: &str,
+        cli: Cli,
+        mode: LaunchMode,
+    ) -> Result<(), DockerError> {
+        // `-e IS_SANDBOX=1` marks the pane env as a recognized sandbox so Claude's
+        // YOLO mode (--dangerously-skip-permissions) runs as root inside the
+        // container instead of refusing. Pane-scoped, so it does not depend on the
+        // long-running tmux server's environment. tmux treats trailing argv as the
+        // session command; mode flags ride along.
+        let mut cmd = vec![
+            "tmux",
+            "new-session",
+            "-d",
+            "-s",
+            name,
+            "-e",
+            "IS_SANDBOX=1",
+        ];
+        cmd.extend(cli.launch_argv(mode));
+        self.exec_capture(cmd).await?;
         Ok(())
     }
 

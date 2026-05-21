@@ -15,73 +15,41 @@ export interface Pane {
   unlistenExit?: UnlistenFn;
 }
 
-export interface PaneOptions {
-  plateLabel?: string;
-  binomial?: string;
-  watermark?: string;
-}
-
-// Terminal theme — parchment ink on warm charcoal
+// Terminal theme — cool grey with an amber cursor
 const TERM_THEME = {
-  background: "#1a1612",
-  foreground: "#e8dcc4",
-  cursor: "#c9a36b",
-  cursorAccent: "#1a1612",
-  selectionBackground: "#3a2f25",
-  selectionForeground: "#f0e4cc",
+  background: "#131417",
+  foreground: "#c9cdd4",
+  cursor: "#e8a33d",
+  cursorAccent: "#131417",
+  selectionBackground: "#2e333b",
+  selectionForeground: "#e6e9ee",
 
-  black: "#1a1612",
-  red: "#a04a3a",
-  green: "#6a7a52",
-  yellow: "#c9a36b",
-  blue: "#4a5a78",
-  magenta: "#8a5a6a",
-  cyan: "#6a8a8a",
-  white: "#e8dcc4",
+  black: "#1b1e23",
+  red: "#d6604d",
+  green: "#6ee787",
+  yellow: "#e8a33d",
+  blue: "#5a8fd6",
+  magenta: "#b07acb",
+  cyan: "#5ad4e6",
+  white: "#c9cdd4",
 
-  brightBlack: "#3a2f25",
-  brightRed: "#c96a5a",
-  brightGreen: "#8a9a72",
-  brightYellow: "#e0b87a",
-  brightBlue: "#6a7a98",
-  brightMagenta: "#aa7a8a",
-  brightCyan: "#8aaaaa",
-  brightWhite: "#f0e4cc",
+  brightBlack: "#3e444c",
+  brightRed: "#e8786a",
+  brightGreen: "#8af0a0",
+  brightYellow: "#f6b65a",
+  brightBlue: "#7aa6e6",
+  brightMagenta: "#c79ada",
+  brightCyan: "#7ce0ef",
+  brightWhite: "#e6e9ee",
 };
 
-export async function createPane(
-  host: HTMLElement,
-  sessionName: string,
-  opts: PaneOptions = {},
-): Promise<Pane> {
+// The pane's xterm surface is created once, parked in `stash`, and then moved
+// between split-tree leaf bodies on every layout render. xterm keeps its
+// buffer across reparenting as long as the Terminal is not disposed.
+export async function createPane(stash: HTMLElement, sessionName: string): Promise<Pane> {
   const el = document.createElement("div");
-  el.className = "term-pane";
-
-  if (opts.plateLabel) {
-    const label = document.createElement("span");
-    label.className = "plate-label";
-    label.textContent = opts.plateLabel;
-    el.appendChild(label);
-  }
-  if (opts.binomial) {
-    const bn = document.createElement("span");
-    bn.className = "plate-binomial";
-    bn.textContent = opts.binomial;
-    el.appendChild(bn);
-  }
-  if (opts.watermark) {
-    const wm = document.createElement("span");
-    wm.className = "plate-watermark";
-    wm.textContent = opts.watermark;
-    el.appendChild(wm);
-  }
-
-  const termHost = document.createElement("div");
-  termHost.style.position = "absolute";
-  termHost.style.inset = "10px";
-  el.appendChild(termHost);
-
-  host.appendChild(el);
+  el.className = "term-surface";
+  stash.appendChild(el);
 
   const term = new Terminal({
     fontFamily: '"JetBrains Mono", "DM Mono", ui-monospace, "SF Mono", Menlo, monospace',
@@ -98,7 +66,7 @@ export async function createPane(
 
   const fit = new FitAddon();
   term.loadAddon(fit);
-  term.open(termHost);
+  term.open(el);
 
   try {
     term.loadAddon(new WebglAddon());
@@ -143,14 +111,20 @@ export async function destroyPane(pane: Pane) {
   pane.el.remove();
 }
 
-export function activatePane(pane: Pane) {
-  pane.el.classList.add("active");
-  requestAnimationFrame(() => {
+// Re-measure and reflow a pane to its current container. Cheap to call after
+// any layout change (split, resize, tab switch).
+export function fitPane(pane: Pane) {
+  if (!pane.el.isConnected) return;
+  try {
     pane.fit.fit();
-    pane.term.focus();
-  });
+  } catch {
+    // Container momentarily zero-sized during reflow — next tick will retry.
+  }
 }
 
-export function deactivatePane(pane: Pane) {
-  pane.el.classList.remove("active");
+export function focusPane(pane: Pane) {
+  requestAnimationFrame(() => {
+    fitPane(pane);
+    pane.term.focus();
+  });
 }

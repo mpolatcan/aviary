@@ -36,20 +36,23 @@ Edit `src-tauri/src/docker.rs`:
 
 The enum has `#[serde(rename_all = "lowercase")]`, so the frontend sends the lowercase variant name.
 
-## 3. Frontend — `CLIS` array
+## 3. Frontend — `CLIS` array + `Cli` type
 
-Edit `src/main.ts`. Add an entry to the `CLIS: CliSpec[]` array with:
+Edit `src/app/lib/catalog.ts`. Add an entry to the `CLIS: CliSpec[]` array with:
 
 - `id`: matches the lowercase enum variant
-- `common`: English bird name
-- `binomial`: Latin binomial (real if possible — this is the ornithological-field-journal vibe)
-- `order`: taxonomic order (decorative — appears as a chip in the modal corner)
+- `label`: display name (e.g. "Claude Code")
+- `alias`: short bird name used in the auto-generated session alias (e.g. "Owl")
+- `species`: Latin/common species (decorative — the ornithological-field-journal vibe)
 - `bird`: `#bird-<slug>` referencing an SVG symbol id in `index.html`
 
-Also extend the `Cli` type union at the top of `main.ts`:
+In the same file, add the new CLI to `MODE_SUPPORT` with its allowed launch modes
+(`["standard", "auto", "yolo"]`, or `["standard"]` if flags are unverified).
+
+Extend the `Cli` type union in `src/app/lib/ipc.ts`:
 
 ```ts
-type Cli = "claude" | "codex" | "antigravity" | "<new-id>";
+export type Cli = "claude" | "codex" | "antigravity" | "<new-id>";
 ```
 
 ## 4. SVG sprite — bird silhouette
@@ -74,7 +77,8 @@ Invoke the `runtime-rebuild` skill with the new version tag. Then `npm run tauri
 
 - [ ] `runtime/Dockerfile` — install line + optional `ENV`
 - [ ] `docker.rs` — `Cli` variant + `binary()` + `parse()`
-- [ ] `main.ts` — `CLIS` entry + `Cli` type union
+- [ ] `src/app/lib/catalog.ts` — `CLIS` entry + `MODE_SUPPORT` entry
+- [ ] `src/app/lib/ipc.ts` — `Cli` type union
 - [ ] `index.html` — `<symbol id="bird-...">` in sprite
 - [ ] `lib.rs` — `DEFAULT_IMAGE` tag bump
 - [ ] Runtime image rebuilt + smoke-tested

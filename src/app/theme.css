@@ -1,0 +1,85 @@
+@import "tailwindcss";
+
+/* Field-journal dark skin as Tailwind v4 theme tokens. These mirror the legacy
+   :root tokens in src/style.css so the React app matches the vanilla app, and
+   give shadcn primitives a themed base (the --color-* tokens back the bg and
+   text color utilities). */
+@theme {
+  --color-bg: #0f1012;
+  --color-bg-deep: #0b0c0d;
+  --color-panel: #16181c;
+  --color-panel-2: #1b1e23;
+  --color-pane: #131417;
+  --color-rule: #2a2e35;
+  --color-rule-soft: #20242a;
+
+  --color-text: #c9cdd4;
+  --color-text-dim: #8b929c;
+  --color-text-faint: #5c636d;
+  --color-text-ghost: #3e444c;
+  --color-text-bright: #ffffff;
+
+  --color-accent: #e8a33d;
+  --color-accent-bright: #f6b65a;
+  --color-accent-deep: #8f6526;
+  --color-danger: #d6604d;
+  --color-ok: #6ee787;
+
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --font-pixel: "Silkscreen", "JetBrains Mono", monospace;
+}
+
+:root {
+  --fs-pixel: 9px;
+  --fs-base: 12px;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+body {
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Pixel labels — Silkscreen, tiny caps. */
+.pixel {
+  font-family: var(--font-pixel);
+  font-size: var(--fs-pixel);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.bird {
+  shape-rendering: crispEdges;
+}
+
+/* Faint scanline + vignette atmosphere, ported from the vanilla skin. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9999;
+  opacity: 0.4;
+  background-image: repeating-linear-gradient(
+    0deg,
+    rgba(0, 0, 0, 0.15) 0px,
+    rgba(0, 0, 0, 0.15) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+}
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9998;
+  background: radial-gradient(ellipse at center, transparent 60%, rgba(0, 0, 0, 0.4) 100%);
+}
