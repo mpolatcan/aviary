@@ -277,6 +277,19 @@ per tab) need the Tier-3 multi-container work and are deferred.
     that conflict with CodeHub's single shared-runtime model; a faithful port would
     be almost entirely fabricated. Its honest subset already lives in Dashboard +
     Containers.
+  - **Hub B** (`main-hub-b.jsx`) — **dropped** (not stubbed). An alternate Hub
+    layout; the primary Hub A shipped in P3. A second selectable layout is pure
+    redundancy with no new data, so it's not ported.
+- **Broadcast (P4).** ~~Send one prompt to many agents~~ **Send DONE / compare
+  blocked.** The design's value — side-by-side answer columns + per-agent
+  token/cost/elapsed/winner — is fabrication-blocked (no structured per-turn
+  answer or cost capture; see below). The genuinely-real core IS built: a
+  `BroadcastModal` (overlay store `broadcast`, opened from the Hub toolbar Send
+  button + a command-palette action) writes one prompt + Enter to each selected
+  running session's pty via the existing `pty_write` — exactly as if the user
+  typed it into each pane. No new backend. The blocked compare grid is omitted,
+  not stubbed (the send IS the honest realization). Verified end-to-end: the
+  prompt reached both live tmux panes.
 - **Per-turn capture (the big unlock).** A subsystem that tails each agent pane's
   output, detects turn boundaries and extracts token/cost would unblock Usage,
   the Dashboard cost roll-ups, the Hub Activity feed + PaneHead metrics, the

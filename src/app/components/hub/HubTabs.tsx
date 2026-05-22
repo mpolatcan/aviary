@@ -33,7 +33,9 @@ export function HubTabs() {
   // Both reuse the rail-mounted viewers and only matter while the runtime is up.
   const setDiff = useOverlay((s) => s.setDiff);
   const setFiles = useOverlay((s) => s.setFiles);
+  const setBroadcast = useOverlay((s) => s.setBroadcast);
   const running = useStore((s) => s.status?.state === "running");
+  const hasSessions = useStore((s) => s.workspaces.length > 0);
 
   const stripRef = useRef<HTMLDivElement>(null);
   const prevCount = useRef(workspaces.length);
@@ -182,6 +184,17 @@ export function HubTabs() {
           onClick={() => setFiles(true)}
         >
           {Ico.files}
+        </IconBtn>
+        <IconBtn
+          title={
+            running && hasSessions
+              ? "Broadcast a prompt to agents"
+              : "Broadcast (no running sessions)"
+          }
+          disabled={!running || !hasSessions}
+          onClick={() => setBroadcast(true)}
+        >
+          {Ico.arrowR}
         </IconBtn>
         <IconBtn
           title={running ? "Review all workspace changes" : "Diff (runtime not running)"}

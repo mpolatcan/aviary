@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { Grid } from "./components/Grid";
 import { ActivityRail } from "./components/hub/ActivityRail";
+import { BroadcastModal } from "./components/hub/BroadcastModal";
 import { CommandPalette } from "./components/hub/CommandPalette";
 import { HubSidebar } from "./components/hub/HubSidebar";
 import { HubStatusBar } from "./components/hub/HubStatusBar";
@@ -82,6 +83,7 @@ export function App() {
           here is incidental. */}
       <CommandPalette />
       <Shortcuts />
+      <BroadcastModal />
     </div>
   );
 }

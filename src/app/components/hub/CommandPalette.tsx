@@ -30,6 +30,7 @@ const VIEWS: { id: HubView; label: string; icon: keyof typeof Ico }[] = [
 export function CommandPalette() {
   const open = useOverlay((s) => s.palette);
   const setPalette = useOverlay((s) => s.setPalette);
+  const setBroadcast = useOverlay((s) => s.setBroadcast);
   const sessionMeta = useStore((s) => s.sessionMeta);
   const workspaces = useStore((s) => s.workspaces);
   const view = useStore((s) => s.view);
@@ -101,6 +102,21 @@ export function CommandPalette() {
                 </CommandItem>
               );
             })}
+          </CommandGroup>
+        )}
+
+        {sessions.length > 0 && (
+          <CommandGroup heading="Broadcast">
+            <CommandItem
+              value="broadcast prompt to agents"
+              onSelect={() => {
+                setPalette(false);
+                setBroadcast(true);
+              }}
+            >
+              <span style={{ display: "inline-flex", color: "var(--fg-2)" }}>{Ico.arrowR}</span>
+              <span style={{ flex: 1 }}>Broadcast a prompt to agents…</span>
+            </CommandItem>
           </CommandGroup>
         )}
 
