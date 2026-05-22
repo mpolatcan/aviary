@@ -113,6 +113,9 @@ export const ipc = {
   containerGitStatus: () => invoke<GitStatus>("container_git_status"),
   // Unified diff for one /workspace path (raw `git diff` text).
   containerGitDiff: (path: string) => invoke<string>("container_git_diff", { path }),
+  // Combined diff of every tracked /workspace change (`git diff HEAD`); the
+  // "review all" view. Empty string when the tree is clean.
+  containerGitDiffAll: () => invoke<string>("container_git_diff_all"),
   // Processes running inside the runtime container (`docker top`).
   containerTop: () => invoke<ProcessInfo[]>("container_top"),
   // Recent commits on /workspace (`git log`); defaults to 12 server-side.

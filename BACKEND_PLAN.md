@@ -209,7 +209,9 @@ per tab) need the Tier-3 multi-container work and are deferred.
     unit-tested). The rail polls it ~5s while running and lists changed files
     with porcelain-coded accents (A→live, M/R→wait, D→err, ?→dim); honest
     one-liners for not-a-repo / clean / down. `files` capped at 200, `total`
-    carries the full count.
+    carries the full count. **Diff viewing DONE** — `DockerClient::git_diff(path)`
+    (per file) and `git_diff_all()` (combined `diff HEAD`, the rail "Review all"
+    button) feed a parsed unified-diff modal (file headers, hunks, +/- lines).
   - "Activity" turn-event feed — still **pending**: needs an app-level event bus
     / permission-prompt stream the agents don't emit yet (their prompts render in
     the terminal today). Stays an honest empty state until that surface exists.

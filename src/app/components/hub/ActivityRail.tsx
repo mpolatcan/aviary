@@ -88,9 +88,28 @@ export function ActivityRail() {
         )}
         <span style={{ flex: 1 }} />
         {git?.isRepo && git.total > 0 && (
-          <span className="mono tnum" style={{ fontSize: 10.5, color: "var(--fg-3)" }}>
-            {git.total}
-          </span>
+          <>
+            <button
+              type="button"
+              onClick={() => setDiffPath("")}
+              title="Review every change in one diff"
+              className="rail-file"
+              style={{
+                border: "none",
+                background: "transparent",
+                cursor: "pointer",
+                fontSize: 10.5,
+                color: "var(--fg-2)",
+                padding: "2px 6px",
+                borderRadius: 4,
+              }}
+            >
+              Review all
+            </button>
+            <span className="mono tnum" style={{ fontSize: 10.5, color: "var(--fg-3)" }}>
+              {git.total}
+            </span>
+          </>
         )}
       </div>
       <Changes git={git} running={running} onOpen={setDiffPath} />

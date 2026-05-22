@@ -161,6 +161,13 @@ async fn container_git_diff(
         .map_err(|e| e.to_string())
 }
 
+/// Combined diff of all tracked `/workspace` changes (rail "Review all" → diff
+/// viewer). Empty string when the tree is clean.
+#[tauri::command]
+async fn container_git_diff_all(state: tauri::State<'_, AppState>) -> Result<String, String> {
+    state.docker.git_diff_all().await.map_err(|e| e.to_string())
+}
+
 /// Processes running inside the runtime container (Containers view "Processes"
 /// card), from `docker top`. Errs only when the container is down.
 #[tauri::command]
@@ -394,6 +401,7 @@ pub fn run() {
             container_mounts,
             container_git_status,
             container_git_diff,
+            container_git_diff_all,
             container_top,
             container_git_log,
             list_sessions,

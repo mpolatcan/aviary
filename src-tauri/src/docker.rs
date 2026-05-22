@@ -688,6 +688,36 @@ impl DockerClient {
         Ok(untracked)
     }
 
+    /// Combined unified diff of every tracked change in `/workspace` vs the last
+    /// commit (`diff HEAD`, no pathspec) — the "review everything this agent
+    /// changed" view. Untracked files are not included (they're not in `HEAD`);
+    /// the per-file `git_diff` handles those. Output without a `diff --git`
+    /// marker (clean tree, or a `fatal: bad revision HEAD` on a commit-less repo)
+    /// comes back as an empty string so the UI shows an honest empty state.
+    /// Errors only when the container is down.
+    pub async fn git_diff_all(&self) -> Result<String, DockerError> {
+        if !self.is_running().await? {
+            return Err(DockerError::ContainerDown(self.container.clone()));
+        }
+        let out = self
+            .exec_capture(vec![
+                "git",
+                "-C",
+                "/workspace",
+                "-c",
+                "core.quotePath=false",
+                "diff",
+                "--no-color",
+                "HEAD",
+            ])
+            .await?;
+        if out.contains("diff --git") {
+            Ok(out)
+        } else {
+            Ok(String::new())
+        }
+    }
+
     /// Processes running inside the runtime container, via `docker top` (default
     /// `ps` args). Uses the host's `ps` against the container PID namespace, so
     /// it works even on a minimal image with no `ps` of its own. Column layout

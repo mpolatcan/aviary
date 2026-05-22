@@ -2,18 +2,23 @@ import { useEffect, useState } from "react";
 import { ipc } from "../../lib/ipc";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../../ui/dialog";
 
-// Renders the unified diff for one /workspace file (container_git_diff) in a
-// modal. The diff text is git's raw output; we parse it into typed rows for
-// coloring + line numbers rather than dumping it as a blob.
+// Renders a unified diff in a modal. With a path it's one /workspace file
+// (container_git_diff); with the empty-string sentinel it's the combined diff
+// of every tracked change (container_git_diff_all). The diff text is git's raw
+// output; we parse it into typed rows for coloring + line numbers rather than
+// dumping it as a blob. A combined diff carries multiple `diff --git` markers,
+// each emitted as a "file" header row so the viewer reads file-by-file.
 
 type Row =
+  | { kind: "file"; text: string }
   | { kind: "hunk"; text: string }
   | { kind: "add"; text: string; newNo: number }
   | { kind: "del"; text: string; oldNo: number }
   | { kind: "ctx"; text: string; oldNo: number; newNo: number };
 
-// Parse a unified diff into renderable rows. File headers (diff --git, index,
-// ---, +++) are dropped; @@ hunks reset the running line numbers.
+// Parse a unified diff into renderable rows. `diff --git a/X b/Y` becomes a
+// "file" header row (so combined diffs are legible); index/---/+++ and other
+// metadata are dropped; @@ hunks reset the running line numbers.
 function parseDiff(diff: string): Row[] {
   const rows: Row[] = [];
   let oldNo = 0;
@@ -23,6 +28,12 @@ function parseDiff(diff: string): Row[] {
   // it isn't rendered as a spurious blank context row past the last real line.
   if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
   for (const line of lines) {
+    if (line.startsWith("diff --git")) {
+      // `diff --git a/path b/path` → show the b-side path as a file header.
+      const m = line.match(/ b\/(.+)$/);
+      rows.push({ kind: "file", text: m ? m[1] : line.slice("diff --git ".length) });
+      continue;
+    }
     if (
       line.startsWith("diff ") ||
       line.startsWith("index ") ||
@@ -72,10 +83,9 @@ export function DiffViewer({ path, onClose }: { path: string | null; onClose: ()
     }
     let alive = true;
     setDiff(null);
-    ipc
-      .containerGitDiff(path)
-      .then((d) => alive && setDiff(d))
-      .catch(() => alive && setDiff(""));
+    // Empty-string sentinel → combined diff of every change; a path → that file.
+    const load = path === "" ? ipc.containerGitDiffAll() : ipc.containerGitDiff(path);
+    load.then((d) => alive && setDiff(d)).catch(() => alive && setDiff(""));
     return () => {
       alive = false;
     };
@@ -99,7 +109,7 @@ export function DiffViewer({ path, onClose }: { path: string | null; onClose: ()
               whiteSpace: "nowrap",
             }}
           >
-            {path ?? ""}
+            {path === "" ? "All changes" : (path ?? "")}
           </DialogTitle>
           {diff !== null && rows.length > 0 && (
             <span className="mono tnum" style={{ fontSize: 11, color: "var(--fg-2)" }}>
@@ -123,7 +133,11 @@ export function DiffViewer({ path, onClose }: { path: string | null; onClose: ()
           {diff === null ? (
             <Msg>Loading diff…</Msg>
           ) : rows.length === 0 ? (
-            <Msg>No diff to show — the file may be unchanged or binary.</Msg>
+            <Msg>
+              {path === ""
+                ? "No tracked changes — the working tree is clean."
+                : "No diff to show — the file may be unchanged or binary."}
+            </Msg>
           ) : (
             rows.map((r, i) => (
               // biome-ignore lint/suspicious/noArrayIndexKey: diff rows are a fixed render of an immutable parse, never reordered.
@@ -137,6 +151,28 @@ export function DiffViewer({ path, onClose }: { path: string | null; onClose: ()
 }
 
 function DiffRow({ row }: { row: Row }) {
+  if (row.kind === "file") {
+    return (
+      <div
+        className="mono"
+        style={{
+          padding: "8px 12px",
+          fontWeight: 500,
+          color: "var(--fg-1)",
+          background: "var(--bg-1)",
+          borderTop: "1px solid var(--bd)",
+          borderBottom: "1px solid var(--bd-soft)",
+          position: "sticky",
+          top: 0,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {row.text}
+      </div>
+    );
+  }
   if (row.kind === "hunk") {
     return (
       <div
