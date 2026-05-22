@@ -19,7 +19,13 @@ import type { StatusKey } from "@/app/components/primitives/StatusDot";
 import { Tag } from "@/app/components/primitives/Tag";
 import { Ico } from "@/app/components/primitives/icons";
 import { CLIS, MODE_BY_ID, SPEC_BY_CLI } from "@/app/lib/catalog";
-import { type Cli, type ContainerState, type ContainerStats, ipc } from "@/app/lib/ipc";
+import {
+  type Cli,
+  type ContainerState,
+  type ContainerStats,
+  type MountInfo,
+  ipc,
+} from "@/app/lib/ipc";
 import { useStore } from "@/app/lib/store";
 import { useEffect, useRef, useState } from "react";
 
@@ -97,6 +103,25 @@ export function ContainerInspector() {
     return () => {
       alive = false;
       clearInterval(h);
+    };
+  }, [running]);
+
+  // Mounts are fixed for the container's lifetime — fetch once when it comes up,
+  // no polling. `null` while down / before the read → fall back to the known
+  // /workspace mount description rather than an empty card.
+  const [mounts, setMounts] = useState<MountInfo[] | null>(null);
+  useEffect(() => {
+    if (!running) {
+      setMounts(null);
+      return;
+    }
+    let alive = true;
+    ipc
+      .containerMounts()
+      .then((m) => alive && setMounts(m))
+      .catch(() => alive && setMounts(null));
+    return () => {
+      alive = false;
     };
   }, [running]);
 
@@ -314,16 +339,31 @@ export function ContainerInspector() {
               )}
             </div>
 
-            <div className="ch-card" style={{ padding: 14 }}>
+            {/* minWidth:0 so a long host path can ellipsize instead of widening
+                the grid track past the card. */}
+            <div className="ch-card" style={{ padding: 14, minWidth: 0 }}>
               <div className="lbl" style={{ marginBottom: 8 }}>
-                Mounts
+                Mounts{mounts && mounts.length > 0 && ` · ${mounts.length}`}
               </div>
-              <Mount container={CONTAINER_MOUNT} mode="rw" note="host project directory" />
+              {mounts && mounts.length > 0 ? (
+                mounts.map((m) => (
+                  <Mount
+                    key={m.destination}
+                    container={m.destination}
+                    host={m.source}
+                    mode={m.rw ? "rw" : "ro"}
+                  />
+                ))
+              ) : (
+                // No real read yet (down / pre-fetch) — describe the fixed mount
+                // without inventing a host path.
+                <Mount container={CONTAINER_MOUNT} mode="rw" host={null} />
+              )}
               <p
                 className="mono"
                 style={{ margin: "8px 0 0", fontSize: 10.5, color: "var(--fg-3)" }}
               >
-                The active repo is bind-mounted at {CONTAINER_MOUNT}.
+                Sessions share the runtime's bind mounts; work lives under {CONTAINER_MOUNT}.
               </p>
             </div>
           </div>
@@ -544,7 +584,17 @@ function LogPanel({
   );
 }
 
-function Mount({ container, mode, note }: { container: string; mode: "rw" | "ro"; note: string }) {
+// One mount row: host path → container path + rw/ro tag. `host === null` keeps
+// the host side as an em-dash (no real read yet) rather than fabricating a path.
+function Mount({
+  container,
+  host,
+  mode,
+}: {
+  container: string;
+  host: string | null;
+  mode: "rw" | "ro";
+}) {
   return (
     <div
       style={{
@@ -556,9 +606,23 @@ function Mount({ container, mode, note }: { container: string; mode: "rw" | "ro"
         fontSize: 11.5,
       }}
     >
-      <span style={{ color: "var(--fg-2)" }}>{note}</span>
+      <span
+        title={host ?? undefined}
+        style={{
+          color: host ? "var(--fg-2)" : "var(--fg-3)",
+          flex: 1,
+          minWidth: 0,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+          direction: "rtl",
+          textAlign: "left",
+        }}
+      >
+        {host ?? "—"}
+      </span>
       <span style={{ color: "var(--fg-3)" }}>→</span>
-      <span style={{ color: "var(--fg-1)", flex: 1, minWidth: 0 }}>{container}</span>
+      <span style={{ color: "var(--fg-1)", flexShrink: 0 }}>{container}</span>
       <Tag color={mode === "rw" ? "var(--live)" : "var(--fg-2)"}>{mode}</Tag>
     </div>
   );

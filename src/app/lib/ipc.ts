@@ -53,6 +53,15 @@ export interface ContainerStats {
   disk: number;
 }
 
+// One bind/volume mount of the runtime container, from `docker inspect`.
+// `source` is the host path, `destination` the in-container path.
+export interface MountInfo {
+  source: string;
+  destination: string;
+  rw: boolean;
+  kind: string;
+}
+
 export const ipc = {
   containerStatus: () => invoke<ContainerStatus>("container_status"),
   dockerInfo: () => invoke<DockerInfo>("docker_info"),
@@ -61,6 +70,8 @@ export const ipc = {
   containerStats: () => invoke<ContainerStats>("container_stats"),
   // Tail of the runtime container log; defaults to 200 lines server-side.
   containerLogs: (tail?: number) => invoke<string[]>("container_logs", { tail }),
+  // Real bind/volume mounts of the runtime container (host paths).
+  containerMounts: () => invoke<MountInfo[]>("container_mounts"),
   listSessions: () => invoke<SessionInfo[]>("list_sessions"),
   createSession: (name: string, cli: Cli, mode: Mode, alias: string) =>
     invoke<void>("create_session", { name, cli, mode, alias }),

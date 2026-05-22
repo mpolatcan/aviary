@@ -7,7 +7,7 @@ pub mod docker;
 pub mod lifecycle;
 pub mod pty;
 
-use docker::{AgentVersion, Cli, ContainerStats, DockerClient, LaunchMode};
+use docker::{AgentVersion, Cli, ContainerStats, DockerClient, LaunchMode, MountInfo};
 use lifecycle::{ContainerStatus, DockerInfo, KeyStatus, Lifecycle};
 use pty::{PaneEmitter, PtyRegistry, SessionInfo};
 use std::collections::HashMap;
@@ -128,6 +128,13 @@ async fn container_logs(
         .logs(tail.unwrap_or(200))
         .await
         .map_err(|e| e.to_string())
+}
+
+/// Real bind/volume mounts of the runtime container (Containers view Mounts
+/// card). Reports the actual host paths behind `/workspace` and `/config`.
+#[tauri::command]
+async fn container_mounts(state: tauri::State<'_, AppState>) -> Result<Vec<MountInfo>, String> {
+    state.docker.mounts().await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -339,6 +346,7 @@ pub fn run() {
             agent_versions,
             container_stats,
             container_logs,
+            container_mounts,
             list_sessions,
             create_session,
             kill_session,

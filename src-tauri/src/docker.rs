@@ -49,6 +49,20 @@ pub struct ContainerStats {
     pub disk: u64,
 }
 
+/// One bind/volume mount of the runtime container, read from `docker inspect`.
+/// `source` is the host-side path (or volume name); `destination` the in-container
+/// path. Backs the Containers view "Mounts" card — the real host path behind
+/// `/workspace` and `/config`, rather than a hardcoded guess.
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct MountInfo {
+    pub source: String,
+    pub destination: String,
+    pub rw: bool,
+    /// Mount kind as Docker reports it: "bind", "volume", "tmpfs", …
+    pub kind: String,
+}
+
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum Cli {
@@ -517,6 +531,35 @@ impl DockerClient {
         Ok(String::from_utf8_lossy(&buf)
             .lines()
             .map(str::to_string)
+            .collect())
+    }
+
+    /// The runtime container's bind/volume mounts, from `docker inspect`. Unlike
+    /// the lifecycle config (which only knows what it *requested*), this reports
+    /// what the container is actually running with. Errors when the container is
+    /// missing; an empty list is valid (no mounts).
+    pub async fn mounts(&self) -> Result<Vec<MountInfo>, DockerError> {
+        let info = self.docker.inspect_container(&self.container, None).await?;
+        Ok(info
+            .mounts
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|m| {
+                // A mount with no destination is meaningless to show; skip it.
+                let destination = m.destination?;
+                Some(MountInfo {
+                    source: m.source.unwrap_or_default(),
+                    destination,
+                    rw: m.rw.unwrap_or(true),
+                    // Display is the serde-rename-faithful token ("bind", "volume",
+                    // …); fall back to "bind" only if the type is absent.
+                    kind: m
+                        .typ
+                        .map(|t| t.to_string())
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or_else(|| "bind".to_string()),
+                })
+            })
             .collect())
     }
 }

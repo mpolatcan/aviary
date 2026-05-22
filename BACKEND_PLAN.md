@@ -186,10 +186,15 @@ per tab) need the Tier-3 multi-container work and are deferred.
     placeholder when down or before the first read. (Polling, not a
     `codehub://container-log` event stream — a stream is a later upgrade if the
     cadence proves too coarse.)
-  - Host side of the bind mount (the absolute host path behind `/workspace`) — not
-    in `ContainerStatus` today; add to `container_status` or a `mounts()` read. (pending)
-  The remaining one ships with the Tier-3 multi-container work, or sooner as a
-  standalone read.
+  - ~~Host side of the bind mount (the absolute host path behind `/workspace`)~~
+    **DONE** — `DockerClient::mounts()` reads the running container's actual
+    mounts via `docker inspect` (source/destination/rw/kind), so the Containers
+    "Mounts" card shows the real host paths behind `/config` and `/workspace`
+    rather than a hardcoded guess. Fetched once when the runtime comes up (mounts
+    are fixed for the container's lifetime); falls back to the `/workspace`
+    description with an em-dash host when down.
+  All container-inspector feeds are now real (status / stats / logs / mounts).
+  Multi-container (Tier-3) is the only remaining Containers-view work.
 
 ---
 
