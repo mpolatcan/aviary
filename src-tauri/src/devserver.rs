@@ -29,7 +29,7 @@ use std::sync::Arc;
 use tokio::sync::broadcast;
 
 const DEFAULT_CONTAINER: &str = "codehub-runtime";
-const DEFAULT_IMAGE: &str = "ghcr.io/mpolatcan/codehub-runtime:0.1.0";
+const DEFAULT_IMAGE: &str = "ghcr.io/mpolatcan/codehub-runtime:0.1.1";
 const ADDR: &str = "127.0.0.1:4555";
 
 #[derive(Clone)]
