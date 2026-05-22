@@ -1,11 +1,18 @@
 /**
  * Settings — sectioned left-nav + right pane. Ported from design/screens/settings.jsx.
  *
- * P2 scope: presentational. The shown pane is "Agents & API keys". Agent rows
- * come from the real CLIS catalog; version + key-status are placeholders pending
- * the Tier-1 `agent_versions` / `agent_key_status` IPC (see BACKEND_PLAN.md).
- * Other nav items render but are inert until their panes are built (P3+); the
- * Tier-3 "Usage & billing" / "Team" groups are marked "Coming soon".
+ * The "Agents & API keys" pane is wired to REAL data: each agent's version comes
+ * from the Tier-1 `agent_versions` IPC and its connection state from
+ * `agent_key_status` (host-env presence, never the value) — both fetched at
+ * bootstrap. The "Stop all" danger-zone action is real (closeAllSessions).
+ *
+ * Still placeholder, by design: the "Defaults for new sessions" controls have no
+ * backend yet (the persistent settings store is Tier-2/v1 — BACKEND_PLAN.md), so
+ * they render disabled with an honest caption rather than faking persistence. The
+ * deep agent config in design/screens/agent-settings.jsx (model providers, MCP,
+ * sub-agents, skills, plugins, permission rules) is intentionally NOT ported —
+ * CodeHub doesn't manage those (they live in each agent's own in-container
+ * config), so the screen would be almost entirely fabricated controls.
  *
  * Copy note: keys are forwarded from the host environment, NOT an OS keychain
  * (BACKEND_PLAN.md decision) — wording corrected from the design.
@@ -14,30 +21,14 @@ import { AGENT_META, AgentGlyph, type AgentId } from "@/app/components/primitive
 import { StatusDot } from "@/app/components/primitives/StatusDot";
 import { Ico } from "@/app/components/primitives/icons";
 import { CLIS } from "@/app/lib/catalog";
+import { useStore } from "@/app/lib/store";
 import { Button } from "@/app/ui/button";
 import { type ReactNode, useState } from "react";
 
 export interface SettingsProps {
-  /** Wired in P3 to kill every running session. No sessions exist in preview. */
+  /** Kill every running session. Defaults to the store's closeAllSessions. */
   onStopAll?: () => void;
 }
-
-// Placeholder agent metadata until agent_versions / agent_key_status land.
-// `keyState` here is a stand-in; the real value is host-env presence (Tier 1).
-const AGENT_ROWS: Record<
-  AgentId,
-  { defaultModel: string; keyState: "set" | "missing"; auth: string; version: string } | undefined
-> = {
-  claude: { defaultModel: "opus-4.7", keyState: "set", auth: "host env", version: "—" },
-  codex: { defaultModel: "o4-mini", keyState: "missing", auth: "host env", version: "—" },
-  antigravity: {
-    defaultModel: "gemini-2.5-pro",
-    keyState: "missing",
-    auth: "host env",
-    version: "—",
-  },
-  cursor: undefined,
-};
 
 const NAV_GROUPS: { label: string; items: { key: string; label: string; soon?: boolean }[] }[] = [
   {
@@ -70,6 +61,16 @@ export function Settings({ onStopAll }: SettingsProps) {
   // Only the "Agents & API keys" pane is designed; selecting others is a no-op
   // visual highlight until those panes are ported.
   const [active, setActive] = useState("agents");
+  const keyStatus = useStore((s) => s.keyStatus);
+  const agentVersions = useStore((s) => s.agentVersions);
+  const sessionCount = useStore((s) => Object.keys(s.sessionMeta).length);
+  const closeAllSessions = useStore((s) => s.closeAllSessions);
+
+  const stopAll = () => {
+    if (sessionCount === 0) return;
+    if (!window.confirm(`Stop all ${sessionCount} running session(s)? Scrollback is kept.`)) return;
+    (onStopAll ?? (() => void closeAllSessions()))();
+  };
 
   return (
     <main
@@ -161,17 +162,19 @@ export function Settings({ onStopAll }: SettingsProps) {
 
           <SectionHead label="Agents" />
           {CLIS.map((c) => {
-            const row = AGENT_ROWS[c.id];
-            if (!row) return null;
+            // Real Tier-1 reads; null until the bootstrap fetch resolves (or if a
+            // binary/key is absent — then version/varName render as em-dash).
+            const key = keyStatus?.[c.id];
+            const ver = agentVersions?.[c.id];
             return (
               <AgentRow
                 key={c.id}
                 agent={c.id}
                 name={c.label}
-                defaultModel={row.defaultModel}
-                keyState={row.keyState}
-                auth={row.auth}
-                version={row.version}
+                version={ver?.version ?? null}
+                present={key?.present ?? false}
+                varName={key?.varName ?? null}
+                source={key?.source ?? null}
               />
             );
           })}
@@ -180,12 +183,15 @@ export function Settings({ onStopAll }: SettingsProps) {
             <Button variant="outline" size="sm" disabled>
               {Ico.plus}Add custom agent
             </Button>
-            <Button variant="ghost" size="sm" disabled>
-              Refresh versions
-            </Button>
           </div>
 
           <SectionHead label="Defaults for new sessions" />
+          {/* No persistent settings store yet (Tier-2/v1 — BACKEND_PLAN.md). These
+              controls are shown disabled rather than faking persistence. */}
+          <p style={{ margin: "0 0 8px", fontSize: 11.5, color: "var(--fg-2)" }}>
+            Not configurable yet — these land with the settings store. For now, spawn-time options
+            live in the ⌘N dialog.
+          </p>
           <SettingRow
             label="Default agent"
             desc="Pre-selected in the spawn dialog (⌘N)."
@@ -224,10 +230,16 @@ export function Settings({ onStopAll }: SettingsProps) {
                 </div>
                 <div style={{ fontSize: 11.5, color: "var(--fg-2)" }}>
                   SIGTERMs every session and persists their tmux scrollback.
+                  {sessionCount > 0 ? ` ${sessionCount} running.` : " None running."}
                 </div>
               </div>
               <span style={{ flex: 1 }} />
-              <Button variant="destructive" size="sm" onClick={onStopAll}>
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={stopAll}
+                disabled={sessionCount === 0}
+              >
                 Stop all
               </Button>
             </div>
@@ -252,22 +264,29 @@ function SectionHead({ label, tone }: { label: string; tone?: "err" }) {
   );
 }
 
+// One agent card, all real data. `present` is host-env key presence (never the
+// value); `varName`/`source` name where it came from; `version` is the binary's
+// reported version (em-dash when the binary or feed is absent).
 function AgentRow({
   agent,
   name,
-  defaultModel,
-  keyState,
-  auth,
   version,
+  present,
+  varName,
+  source,
 }: {
   agent: AgentId;
   name: string;
-  defaultModel: string;
-  keyState: "set" | "missing";
-  auth: string;
-  version: string;
+  version: string | null;
+  present: boolean;
+  varName: string | null;
+  source: string | null;
 }) {
   const meta = AGENT_META[agent];
+  // Honest auth subline: the env var that's set, else what's missing.
+  const authLine = present
+    ? `${varName ?? "host env"}${source && source !== "env" ? ` · ${source}` : ""}`
+    : "no host key set";
   return (
     <div
       className="ch-card"
@@ -293,14 +312,14 @@ function AgentRow({
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 2 }}>
           <span style={{ fontSize: 13.5, fontWeight: 500, color: "var(--fg-0)" }}>{name}</span>
           <span className="mono" style={{ fontSize: 11, color: "var(--fg-2)" }}>
-            {version}
+            {version ?? "—"}
           </span>
         </div>
         <div style={{ fontSize: 11.5, color: "var(--fg-2)", fontFamily: "var(--mono)" }}>
-          {defaultModel} · {auth}
+          {authLine}
         </div>
       </div>
-      {keyState === "set" ? (
+      {present ? (
         <span
           style={{
             display: "inline-flex",
@@ -327,9 +346,6 @@ function AgentRow({
           <StatusDot status="wait" /> Key needed
         </span>
       )}
-      <Button variant="outline" size="sm" disabled>
-        {keyState === "set" ? "Edit" : "Add key"}
-      </Button>
     </div>
   );
 }
@@ -359,7 +375,11 @@ function SettingRow({
         <div style={{ fontSize: 13, color: "var(--fg-0)", marginBottom: 2 }}>{label}</div>
         <div style={{ fontSize: 11.5, color: "var(--fg-2)" }}>{desc}</div>
       </div>
-      <div>{control}</div>
+      {/* Dimmed + inert: this whole section has no backend yet, so the controls
+          must not look clickable. */}
+      <div aria-disabled style={{ opacity: 0.45, pointerEvents: "none" }}>
+        {control}
+      </div>
     </div>
   );
 }
