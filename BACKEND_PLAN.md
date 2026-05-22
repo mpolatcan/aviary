@@ -248,6 +248,28 @@ per tab) need the Tier-3 multi-container work and are deferred.
   - Per-session token/cost/turn + activity chart + attention queue — still
     **deferred**: requires per-turn token+cost capture from each CLI's output
     and a turn-event bus (same blocker as the Hub "Activity" feed).
+- **Planned screens (P4 honest stubs).** Designed screens whose REAL data needs
+  backend CodeHub doesn't capture yet are shipped as navigable `PlannedScreen`
+  stubs (sidebar "More" group) that name what's missing — never fabricated. They
+  become real once their blocker lands:
+  - **Usage** — needs **per-turn token/cost/turn capture** from each CLI's output
+    (the numbers live only inside each CLI's own session today). Same blocker as
+    the Dashboard cost roll-ups, Hub PaneHead metrics and the Activity feed.
+  - **Resume** — needs **persistent session history**: tmux sessions are
+    ephemeral and discarded on close, so there is no past session to reopen. A
+    history store (session metadata + transcript) would unblock it.
+  - **Integrations** — needs **integration connectors + credential storage**
+    (GitHub / issue trackers / chat); none implemented.
+  - **Platform** — **dropped** (not stubbed). The design's platform screen asserts
+    a multi-container fleet + companion/dynamic-island/broadcast-compare features
+    that conflict with CodeHub's single shared-runtime model; a faithful port would
+    be almost entirely fabricated. Its honest subset already lives in Dashboard +
+    Containers.
+- **Per-turn capture (the big unlock).** A subsystem that tails each agent pane's
+  output, detects turn boundaries and extracts token/cost would unblock Usage,
+  the Dashboard cost roll-ups, the Hub Activity feed + PaneHead metrics, the
+  Broadcast compare panes and the session-detail transcript in one shot. Fragile
+  and CLI-specific (each CLI formats differently) — deferred as its own project.
 
 ---
 

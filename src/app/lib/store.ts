@@ -19,8 +19,17 @@ import {
 } from "./tree";
 
 // Top-level view, switched from the sidebar nav. "hub" is the terminal grid;
-// the rest are full-pane screens (Containers ships in P4, the others follow).
-export type HubView = "hub" | "dashboard" | "containers" | "settings";
+// the rest are full-pane screens. hub/dashboard/containers/settings are live
+// real-data screens; usage/resume/integrations are honest stubs whose real data
+// needs backend CodeHub doesn't capture yet (see PlannedScreen + BACKEND_PLAN).
+export type HubView =
+  | "hub"
+  | "dashboard"
+  | "containers"
+  | "settings"
+  | "usage"
+  | "resume"
+  | "integrations";
 
 interface CodeHubState {
   workspaces: Workspace[];

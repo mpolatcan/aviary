@@ -117,6 +117,44 @@ export function HubSidebar() {
         </div>
       </div>
 
+      {/* Planned screens — navigable honest stubs (their real data needs backend
+          CodeHub doesn't capture yet; see PlannedScreen / BACKEND_PLAN.md). */}
+      <div style={{ padding: "2px 10px 4px" }}>
+        <div className="lbl" style={{ padding: "0 4px 6px" }}>
+          More
+        </div>
+        <div
+          className={`side-item${view === "usage" ? " active" : ""}`}
+          onClick={() => setView("usage")}
+        >
+          {Ico.cpu}
+          <span style={{ flex: 1 }}>Usage</span>
+          <span className="mono" style={{ fontSize: 9.5, color: "var(--fg-3)" }}>
+            soon
+          </span>
+        </div>
+        <div
+          className={`side-item${view === "resume" ? " active" : ""}`}
+          onClick={() => setView("resume")}
+        >
+          {Ico.expand}
+          <span style={{ flex: 1 }}>Resume</span>
+          <span className="mono" style={{ fontSize: 9.5, color: "var(--fg-3)" }}>
+            soon
+          </span>
+        </div>
+        <div
+          className={`side-item${view === "integrations" ? " active" : ""}`}
+          onClick={() => setView("integrations")}
+        >
+          {Ico.diff}
+          <span style={{ flex: 1 }}>Integrations</span>
+          <span className="mono" style={{ fontSize: 9.5, color: "var(--fg-3)" }}>
+            soon
+          </span>
+        </div>
+      </div>
+
       {/* sessions grouped by tab */}
       <div
         style={{
