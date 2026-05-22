@@ -174,16 +174,17 @@ per tab) need the Tier-3 multi-container work and are deferred.
   "Coming soon".
 - **Container inspector live feeds (P4 Containers view).** The view renders the
   real shared runtime (name/state/image/id, docker version, attached sessions,
-  the fixed `/workspace` mount, host-env credential presence) but four things
-  have no feed yet and show em-dashes / an honest placeholder:
-  - `container_stats` → `{ cpuPct, memUsed, memLimit, netRx, netTx, disk }` from
-    bollard `docker.stats()` (one-shot or a `codehub://stats` event stream).
-    Backs the CPU/Memory/Net/Disk gauge cards.
+  the fixed `/workspace` mount, host-env credential presence). Remaining feeds:
+  - ~~`container_stats`~~ **DONE** — `DockerClient::stats()` (bollard
+    `docker.stats()`, one-shot `stream:false` so the CPU delta is valid). The
+    Containers view polls it ~2s while mounted + running and fills the
+    CPU/Memory/Net/Disk gauge cards; em-dash when down or before the first poll.
   - `container_logs` → tail/stream of `docker logs` for the runtime, ideally as a
-    `codehub://container-log` event. Backs the "Container log" panel.
+    `codehub://container-log` event. Backs the "Container log" panel. (pending)
   - Host side of the bind mount (the absolute host path behind `/workspace`) — not
-    in `ContainerStatus` today; add to `container_status` or a `mounts()` read.
-  All ship with the Tier-3 multi-container work, or sooner as standalone reads.
+    in `ContainerStatus` today; add to `container_status` or a `mounts()` read. (pending)
+  The remaining two ship with the Tier-3 multi-container work, or sooner as
+  standalone reads.
 
 ---
 

@@ -7,7 +7,7 @@ pub mod docker;
 pub mod lifecycle;
 pub mod pty;
 
-use docker::{AgentVersion, Cli, DockerClient, LaunchMode};
+use docker::{AgentVersion, Cli, ContainerStats, DockerClient, LaunchMode};
 use lifecycle::{ContainerStatus, DockerInfo, KeyStatus, Lifecycle};
 use pty::{PaneEmitter, PtyRegistry, SessionInfo};
 use std::collections::HashMap;
@@ -107,6 +107,13 @@ async fn agent_versions(
     state: tauri::State<'_, AppState>,
 ) -> Result<HashMap<String, AgentVersion>, String> {
     Ok(state.docker.agent_versions().await)
+}
+
+/// One-shot CPU/mem/net/disk for the runtime container (Containers view gauges).
+/// Errs when the container is down so the UI keeps the gauges blank.
+#[tauri::command]
+async fn container_stats(state: tauri::State<'_, AppState>) -> Result<ContainerStats, String> {
+    state.docker.stats().await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -316,6 +323,7 @@ pub fn run() {
             docker_info,
             agent_key_status,
             agent_versions,
+            container_stats,
             list_sessions,
             create_session,
             kill_session,

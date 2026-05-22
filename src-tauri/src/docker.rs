@@ -1,4 +1,4 @@
-use bollard::container::ListContainersOptions;
+use bollard::container::{ListContainersOptions, MemoryStatsStats, StatsOptions};
 use bollard::exec::{CreateExecOptions, ResizeExecOptions, StartExecOptions, StartExecResults};
 use bollard::Docker;
 use futures_util::StreamExt;
@@ -30,6 +30,23 @@ pub struct SessionInfo {
 #[derive(Debug, Serialize, Clone)]
 pub struct AgentVersion {
     pub version: Option<String>,
+}
+
+/// One-shot resource snapshot for the runtime container, derived from bollard's
+/// `docker.stats()` the same way the docker CLI computes them. Bytes are raw;
+/// the UI formats them. Backs the Containers view gauge cards.
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ContainerStats {
+    /// Container CPU as a percentage of total host capacity (can exceed 100 on
+    /// multi-core), matching `docker stats`.
+    pub cpu_pct: f64,
+    pub mem_used: u64,
+    pub mem_limit: u64,
+    pub net_rx: u64,
+    pub net_tx: u64,
+    /// Total block-IO bytes (read + write) since container start.
+    pub disk: u64,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
@@ -387,6 +404,89 @@ impl DockerClient {
             )
             .await?;
         Ok(())
+    }
+
+    /// One-shot CPU / memory / net / disk snapshot. `stream: false` returns a
+    /// single reading whose `precpu_stats` the daemon fills from its own prior
+    /// sample, so the CPU delta is valid (a `one_shot` read zeroes precpu and
+    /// can't). Errors when the container is down so the caller leaves the gauges
+    /// blank rather than showing zeros.
+    pub async fn stats(&self) -> Result<ContainerStats, DockerError> {
+        if !self.is_running().await? {
+            return Err(DockerError::ContainerDown(self.container.clone()));
+        }
+        let s = self
+            .docker
+            .stats(
+                &self.container,
+                Some(StatsOptions {
+                    stream: false,
+                    one_shot: false,
+                }),
+            )
+            .next()
+            .await
+            .ok_or_else(|| DockerError::ContainerDown(self.container.clone()))??;
+
+        // CPU% per the docker formula: container-usage delta over system delta,
+        // scaled by the number of online cores.
+        let cpu_delta =
+            s.cpu_stats.cpu_usage.total_usage as f64 - s.precpu_stats.cpu_usage.total_usage as f64;
+        let sys_delta = s.cpu_stats.system_cpu_usage.unwrap_or(0) as f64
+            - s.precpu_stats.system_cpu_usage.unwrap_or(0) as f64;
+        let online = s
+            .cpu_stats
+            .online_cpus
+            .or_else(|| {
+                s.cpu_stats
+                    .cpu_usage
+                    .percpu_usage
+                    .as_ref()
+                    .map(|v| v.len() as u64)
+            })
+            .unwrap_or(1) as f64;
+        let cpu_pct = if sys_delta > 0.0 && cpu_delta > 0.0 {
+            (cpu_delta / sys_delta) * online * 100.0
+        } else {
+            0.0
+        };
+
+        // Memory: usage minus inactive file-cache, matching `docker stats`.
+        let usage = s.memory_stats.usage.unwrap_or(0);
+        let inactive = match s.memory_stats.stats {
+            Some(MemoryStatsStats::V1(v)) => v.total_inactive_file,
+            Some(MemoryStatsStats::V2(v)) => v.inactive_file,
+            None => 0,
+        };
+        let mem_used = usage.saturating_sub(inactive);
+        let mem_limit = s.memory_stats.limit.unwrap_or(0);
+
+        // Net + disk: sum across interfaces / block devices.
+        let (mut net_rx, mut net_tx) = (0u64, 0u64);
+        if let Some(nets) = &s.networks {
+            for n in nets.values() {
+                net_rx += n.rx_bytes;
+                net_tx += n.tx_bytes;
+            }
+        }
+        let mut disk = 0u64;
+        if let Some(entries) = &s.blkio_stats.io_service_bytes_recursive {
+            for e in entries {
+                let op = e.op.to_ascii_lowercase();
+                if op == "read" || op == "write" {
+                    disk += e.value;
+                }
+            }
+        }
+
+        Ok(ContainerStats {
+            cpu_pct,
+            mem_used,
+            mem_limit,
+            net_rx,
+            net_tx,
+            disk,
+        })
     }
 }
 

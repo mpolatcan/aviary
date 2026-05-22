@@ -47,6 +47,8 @@ async function httpInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
       return jget("/agent-key-status") as Promise<T>;
     case "agent_versions":
       return jget("/agent-versions") as Promise<T>;
+    case "container_stats":
+      return jget("/container-stats") as Promise<T>;
     case "list_sessions":
       return jget("/sessions") as Promise<T>;
     case "create_session":

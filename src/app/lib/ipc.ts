@@ -41,11 +41,24 @@ export interface AgentVersion {
   version: string | null;
 }
 
+// One-shot resource snapshot of the runtime container (Containers view gauges).
+// Bytes are raw; the UI formats. Errors when the container is down — callers
+// leave the gauges blank rather than show zeros.
+export interface ContainerStats {
+  cpuPct: number;
+  memUsed: number;
+  memLimit: number;
+  netRx: number;
+  netTx: number;
+  disk: number;
+}
+
 export const ipc = {
   containerStatus: () => invoke<ContainerStatus>("container_status"),
   dockerInfo: () => invoke<DockerInfo>("docker_info"),
   agentKeyStatus: () => invoke<Record<Cli, KeyStatus>>("agent_key_status"),
   agentVersions: () => invoke<Record<Cli, AgentVersion>>("agent_versions"),
+  containerStats: () => invoke<ContainerStats>("container_stats"),
   listSessions: () => invoke<SessionInfo[]>("list_sessions"),
   createSession: (name: string, cli: Cli, mode: Mode, alias: string) =>
     invoke<void>("create_session", { name, cli, mode, alias }),

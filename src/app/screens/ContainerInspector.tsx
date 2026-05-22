@@ -19,8 +19,9 @@ import type { StatusKey } from "@/app/components/primitives/StatusDot";
 import { Tag } from "@/app/components/primitives/Tag";
 import { Ico } from "@/app/components/primitives/icons";
 import { CLIS, MODE_BY_ID, SPEC_BY_CLI } from "@/app/lib/catalog";
-import type { Cli, ContainerState } from "@/app/lib/ipc";
+import { type Cli, type ContainerState, type ContainerStats, ipc } from "@/app/lib/ipc";
 import { useStore } from "@/app/lib/store";
+import { useEffect, useState } from "react";
 
 // container_status state → the shared StatusDot/Badge vocabulary.
 const STATE_DOT: Record<ContainerState, StatusKey> = {
@@ -48,6 +49,32 @@ export function ContainerInspector() {
   const image = status?.image ?? "—";
   const id = status?.id ?? null;
   const sessions = Object.entries(sessionMeta);
+
+  // Poll container_stats while the runtime is up and this view is mounted (the
+  // gauges are only visible here). One-shot reads, ~2s apart; a failed read
+  // (container stopped mid-poll) clears back to em-dash rather than freezing a
+  // stale number. No backend event stream — polling is the contract.
+  const [stats, setStats] = useState<ContainerStats | null>(null);
+  const running = state === "running";
+  useEffect(() => {
+    if (!running) {
+      setStats(null);
+      return;
+    }
+    let alive = true;
+    const tick = () => {
+      ipc
+        .containerStats()
+        .then((s) => alive && setStats(s))
+        .catch(() => alive && setStats(null));
+    };
+    tick();
+    const h = setInterval(tick, 2000);
+    return () => {
+      alive = false;
+      clearInterval(h);
+    };
+  }, [running]);
 
   const open = (session: string) => {
     focusSession(session);
@@ -137,9 +164,10 @@ export function ContainerInspector() {
                   ))
                 )}
               </div>
-              {/* TODO(container_stats): live cpu/mem once docker.stats() lands */}
               <span className="mono" style={{ fontSize: 10.5, color: "var(--fg-3)" }}>
-                cpu — · mem —
+                {stats
+                  ? `cpu ${stats.cpuPct.toFixed(0)}% · mem ${fmtBytes(stats.memUsed)}`
+                  : "cpu — · mem —"}
               </span>
             </div>
           </div>
@@ -177,7 +205,8 @@ export function ContainerInspector() {
             </div>
           </div>
 
-          {/* metrics row — no backend feed yet (BACKEND_PLAN.md: container_stats) */}
+          {/* metrics row — live container_stats (em-dash until the first poll
+              resolves, or whenever the runtime is down). */}
           <div
             style={{
               display: "grid",
@@ -186,10 +215,23 @@ export function ContainerInspector() {
               marginBottom: 18,
             }}
           >
-            <GaugeCard label="CPU" />
-            <GaugeCard label="Memory" />
-            <GaugeCard label="Net I/O" />
-            <GaugeCard label="Disk" />
+            <GaugeCard
+              label="CPU"
+              value={stats ? `${stats.cpuPct.toFixed(1)}%` : null}
+              fill={stats ? Math.min(100, stats.cpuPct) : null}
+            />
+            <GaugeCard
+              label="Memory"
+              value={stats ? fmtBytes(stats.memUsed) : null}
+              sub={stats && stats.memLimit > 0 ? `/ ${fmtBytes(stats.memLimit)}` : undefined}
+              fill={stats && stats.memLimit > 0 ? (stats.memUsed / stats.memLimit) * 100 : null}
+            />
+            <GaugeCard
+              label="Net I/O"
+              value={stats ? `↓${fmtBytes(stats.netRx)}` : null}
+              sub={stats ? `↑${fmtBytes(stats.netTx)}` : undefined}
+            />
+            <GaugeCard label="Disk" value={stats ? fmtBytes(stats.disk) : null} />
           </div>
 
           {/* attached sessions + mounts */}
@@ -332,10 +374,31 @@ export function ContainerInspector() {
   );
 }
 
-// Placeholder gauge: keeps the design's 4-up metric shape but shows an em-dash
-// instead of a fabricated reading. Real values arrive with container_stats.
-// TODO(container_stats): replace the em-dash + hatched bar with the live reading.
-function GaugeCard({ label }: { label: string }) {
+// Human-readable bytes: 1.2 GB, 412 MB, 8.0 kB. Binary (1024) units to match
+// how `docker stats` reports memory.
+function fmtBytes(n: number): string {
+  if (n <= 0) return "0 B";
+  const units = ["B", "kB", "MB", "GB", "TB"];
+  const i = Math.min(units.length - 1, Math.floor(Math.log(n) / Math.log(1024)));
+  const v = n / 1024 ** i;
+  return `${v >= 100 || i === 0 ? Math.round(v) : v.toFixed(1)} ${units[i]}`;
+}
+
+// One metric. `value === null` → em-dash + hatched bar (no reading yet / runtime
+// down). With a value: shows it (+ optional `sub`), and a proportional bar when
+// `fill` (0-100) is given — CPU/memory have a meaningful ratio; net/disk don't,
+// so they render value-only.
+function GaugeCard({
+  label,
+  value,
+  sub,
+  fill,
+}: {
+  label: string;
+  value?: string | null;
+  sub?: string;
+  fill?: number | null;
+}) {
   return (
     <div
       className="ch-card"
@@ -344,19 +407,42 @@ function GaugeCard({ label }: { label: string }) {
       <div className="lbl" style={{ fontSize: 10 }}>
         {label}
       </div>
-      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
-        <span className="mono tnum" style={{ fontSize: 18, color: "var(--fg-3)", fontWeight: 500 }}>
-          —
+      <div style={{ display: "flex", alignItems: "baseline", gap: 5 }}>
+        <span
+          className="mono tnum"
+          style={{ fontSize: 18, color: value ? "var(--fg-0)" : "var(--fg-3)", fontWeight: 500 }}
+        >
+          {value ?? "—"}
         </span>
+        {value && sub && (
+          <span className="mono tnum" style={{ fontSize: 11, color: "var(--fg-3)" }}>
+            {sub}
+          </span>
+        )}
       </div>
-      <div
-        style={{
-          height: 20,
-          borderRadius: 4,
-          background: "repeating-linear-gradient(45deg, var(--bg-3) 0 6px, transparent 6px 12px)",
-          opacity: 0.5,
-        }}
-      />
+      {value && typeof fill === "number" ? (
+        <div style={{ height: 20, borderRadius: 4, background: "var(--bg-3)", overflow: "hidden" }}>
+          <div
+            style={{
+              height: "100%",
+              width: `${Math.max(2, Math.min(100, fill))}%`,
+              background: "var(--live)",
+              opacity: 0.55,
+            }}
+          />
+        </div>
+      ) : (
+        <div
+          style={{
+            height: 20,
+            borderRadius: 4,
+            background: value
+              ? "var(--bg-3)"
+              : "repeating-linear-gradient(45deg, var(--bg-3) 0 6px, transparent 6px 12px)",
+            opacity: value ? 1 : 0.5,
+          }}
+        />
+      )}
     </div>
   );
 }

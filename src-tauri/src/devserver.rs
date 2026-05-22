@@ -134,6 +134,7 @@ pub async fn serve() {
         .route("/docker-info", get(docker_info))
         .route("/agent-key-status", get(agent_key_status))
         .route("/agent-versions", get(agent_versions))
+        .route("/container-stats", get(container_stats))
         .route("/sessions", get(list_sessions).post(create_session))
         .route("/sessions/:name", delete(kill_session))
         .route("/sessions/:name/rename", post(rename_session))
@@ -163,6 +164,10 @@ async fn agent_key_status() -> impl IntoResponse {
 
 async fn agent_versions(State(st): State<AppState>) -> impl IntoResponse {
     Json(st.docker.agent_versions().await)
+}
+
+async fn container_stats(State(st): State<AppState>) -> Result<impl IntoResponse, ApiError> {
+    st.docker.stats().await.map(Json).map_err(err)
 }
 
 async fn list_sessions(State(st): State<AppState>) -> Result<impl IntoResponse, ApiError> {
