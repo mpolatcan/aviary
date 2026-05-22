@@ -48,6 +48,7 @@ interface CodeHubState {
   splitSession: (target: string, dir: SplitDir, cli: Cli, mode: Mode) => Promise<void>;
   closeSession: (name: string) => Promise<void>;
   closeWorkspace: (id: string) => Promise<void>;
+  closeAllSessions: () => Promise<void>;
   focusSession: (name: string) => void;
   switchWorkspace: (id: string) => void;
   renameSession: (name: string, alias: string) => void;
@@ -214,6 +215,15 @@ export const useStore = create<CodeHubState>((set, get) => {
         });
       }
       removeWorkspace(get, set, id);
+    },
+
+    // Stop-all (Settings danger zone). Kills every session in every workspace;
+    // closeWorkspace already SIGTERMs each session and persists tmux scrollback.
+    // Snapshot the ids first — closeWorkspace mutates the workspace list.
+    closeAllSessions: async () => {
+      for (const id of get().workspaces.map((w) => w.id)) {
+        await get().closeWorkspace(id);
+      }
     },
 
     focusSession: (name) => {
