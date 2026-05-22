@@ -24,6 +24,7 @@ import {
   type ContainerState,
   type ContainerStats,
   type MountInfo,
+  type ProcessInfo,
   ipc,
 } from "@/app/lib/ipc";
 import { useStore } from "@/app/lib/store";
@@ -122,6 +123,30 @@ export function ContainerInspector() {
       .catch(() => alive && setMounts(null));
     return () => {
       alive = false;
+    };
+  }, [running]);
+
+  // Processes via `docker top`, polled while running + mounted (~3s). Same
+  // one-shot contract as stats/logs; `null` while down / pre-first-read → honest
+  // placeholder rather than an empty table.
+  const [procs, setProcs] = useState<ProcessInfo[] | null>(null);
+  useEffect(() => {
+    if (!running) {
+      setProcs(null);
+      return;
+    }
+    let alive = true;
+    const tick = () => {
+      ipc
+        .containerTop()
+        .then((p) => alive && setProcs(p))
+        .catch(() => alive && setProcs(null));
+    };
+    tick();
+    const h = setInterval(tick, 3000);
+    return () => {
+      alive = false;
+      clearInterval(h);
     };
   }, [running]);
 
@@ -400,6 +425,31 @@ export function ContainerInspector() {
             </div>
           </div>
 
+          {/* processes — `docker top`, polled by container_top (~3s). */}
+          <div className="ch-card" style={{ padding: 0, marginBottom: 18 }}>
+            <div
+              style={{
+                padding: "10px 14px",
+                borderBottom: "1px solid var(--bd-soft)",
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+              }}
+            >
+              <span className="lbl">Processes</span>
+              <span className="mono" style={{ fontSize: 10.5, color: "var(--fg-3)" }}>
+                docker top {name}
+              </span>
+              <span style={{ flex: 1 }} />
+              {procs && procs.length > 0 && (
+                <span className="mono tnum" style={{ fontSize: 10, color: "var(--fg-3)" }}>
+                  {procs.length}
+                </span>
+              )}
+            </div>
+            <ProcessTable procs={procs} running={running} />
+          </div>
+
           {/* logs — tail of `docker logs`, polled by container_logs (~4s). */}
           <div className="ch-card" style={{ padding: 0 }}>
             <div
@@ -579,6 +629,78 @@ function LogPanel({
       {lines.map((line, i) => (
         // biome-ignore lint/suspicious/noArrayIndexKey: log lines have no stable id; a refreshed tail is a full replace, not a reorder.
         <div key={i}>{line || " "}</div>
+      ))}
+    </div>
+  );
+}
+
+// Process list from `docker top`. `procs === null` → honest placeholder (down /
+// pre-first read); empty array → "no processes"; otherwise a compact table.
+// Command is the wide column (truncates); PID/user/time stay narrow + tabular.
+function ProcessTable({
+  procs,
+  running,
+}: {
+  procs: ProcessInfo[] | null;
+  running: boolean;
+}) {
+  if (procs === null) {
+    return (
+      <div
+        className="mono"
+        style={{ padding: "28px 14px", textAlign: "center", fontSize: 11.5, color: "var(--fg-3)" }}
+      >
+        {running ? "Reading processes…" : "Container is not running."}
+      </div>
+    );
+  }
+  if (procs.length === 0) {
+    return (
+      <div
+        className="mono"
+        style={{ padding: "28px 14px", textAlign: "center", fontSize: 11.5, color: "var(--fg-3)" }}
+      >
+        No processes reported.
+      </div>
+    );
+  }
+  return (
+    <div className="scroll" style={{ maxHeight: 280, overflow: "auto" }}>
+      {procs.map((p) => (
+        <div
+          key={`${p.pid}-${p.command}`}
+          style={{
+            display: "flex",
+            alignItems: "baseline",
+            gap: 10,
+            padding: "5px 14px",
+            fontFamily: "var(--mono)",
+            fontSize: 11.5,
+          }}
+        >
+          <span className="tnum" style={{ width: 52, flexShrink: 0, color: "var(--fg-2)" }}>
+            {p.pid}
+          </span>
+          <span style={{ width: 72, flexShrink: 0, color: "var(--fg-3)" }}>{p.user || "—"}</span>
+          {p.time && (
+            <span className="tnum" style={{ width: 64, flexShrink: 0, color: "var(--fg-3)" }}>
+              {p.time}
+            </span>
+          )}
+          <span
+            title={p.command}
+            style={{
+              color: "var(--fg-1)",
+              flex: 1,
+              minWidth: 0,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {p.command}
+          </span>
+        </div>
       ))}
     </div>
   );

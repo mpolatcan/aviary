@@ -69,6 +69,15 @@ export interface GitFile {
   status: string;
 }
 
+// One process in the runtime container, from `docker top`. Fields are whatever
+// the platform `ps` reports; `time` is absent when that column is missing.
+export interface ProcessInfo {
+  pid: string;
+  user: string;
+  time: string | null;
+  command: string;
+}
+
 // Working-tree state of /workspace. `isRepo: false` when it's not a git repo
 // (or git is unavailable). `files` is capped server-side; `total` is the full
 // count.
@@ -95,6 +104,8 @@ export const ipc = {
   containerGitStatus: () => invoke<GitStatus>("container_git_status"),
   // Unified diff for one /workspace path (raw `git diff` text).
   containerGitDiff: (path: string) => invoke<string>("container_git_diff", { path }),
+  // Processes running inside the runtime container (`docker top`).
+  containerTop: () => invoke<ProcessInfo[]>("container_top"),
   listSessions: () => invoke<SessionInfo[]>("list_sessions"),
   createSession: (name: string, cli: Cli, mode: Mode, alias: string) =>
     invoke<void>("create_session", { name, cli, mode, alias }),

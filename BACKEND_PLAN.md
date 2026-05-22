@@ -193,8 +193,15 @@ per tab) need the Tier-3 multi-container work and are deferred.
     rather than a hardcoded guess. Fetched once when the runtime comes up (mounts
     are fixed for the container's lifetime); falls back to the `/workspace`
     description with an em-dash host when down.
-  All container-inspector feeds are now real (status / stats / logs / mounts).
-  Multi-container (Tier-3) is the only remaining Containers-view work.
+  - ~~`container_top` (processes)~~ **DONE** — `DockerClient::top()` (bollard
+    `docker.top_processes()` = host `ps` against the container PID namespace, so
+    no in-container `ps` is required). `parse_top` maps columns by title (robust
+    across platform `ps` layouts; `CMD`/`COMMAND` falls back to the last column),
+    unit-tested. The Containers view polls it ~3s while mounted + running and
+    renders a PID/user/time/command table in the "Processes" card; honest
+    placeholder when down or before the first read.
+  All container-inspector feeds are now real (status / stats / logs / mounts /
+  processes). Multi-container (Tier-3) is the only remaining Containers-view work.
 - **Hub activity rail (P4 Hub A).** Two sections:
   - ~~"Changes"~~ **DONE** — `DockerClient::git_status()` runs
     `git status --porcelain=v1 --branch` inside `/workspace` →

@@ -7,7 +7,9 @@ pub mod docker;
 pub mod lifecycle;
 pub mod pty;
 
-use docker::{AgentVersion, Cli, ContainerStats, DockerClient, GitStatus, LaunchMode, MountInfo};
+use docker::{
+    AgentVersion, Cli, ContainerStats, DockerClient, GitStatus, LaunchMode, MountInfo, ProcessInfo,
+};
 use lifecycle::{ContainerStatus, DockerInfo, KeyStatus, Lifecycle};
 use pty::{PaneEmitter, PtyRegistry, SessionInfo};
 use std::collections::HashMap;
@@ -156,6 +158,13 @@ async fn container_git_diff(
         .git_diff(&path)
         .await
         .map_err(|e| e.to_string())
+}
+
+/// Processes running inside the runtime container (Containers view "Processes"
+/// card), from `docker top`. Errs only when the container is down.
+#[tauri::command]
+async fn container_top(state: tauri::State<'_, AppState>) -> Result<Vec<ProcessInfo>, String> {
+    state.docker.top().await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -370,6 +379,7 @@ pub fn run() {
             container_mounts,
             container_git_status,
             container_git_diff,
+            container_top,
             list_sessions,
             create_session,
             kill_session,

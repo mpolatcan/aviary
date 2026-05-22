@@ -1,4 +1,6 @@
-use bollard::container::{ListContainersOptions, LogsOptions, MemoryStatsStats, StatsOptions};
+use bollard::container::{
+    ListContainersOptions, LogsOptions, MemoryStatsStats, StatsOptions, TopOptions,
+};
 use bollard::exec::{CreateExecOptions, ResizeExecOptions, StartExecOptions, StartExecResults};
 use bollard::Docker;
 use futures_util::StreamExt;
@@ -85,6 +87,19 @@ pub struct GitStatus {
     pub files: Vec<GitFile>,
     /// Total changed paths, even when `files` is truncated for display.
     pub total: u32,
+}
+
+/// One process running inside the runtime container, from `docker top` (host
+/// `ps` against the container's PID namespace — no in-container `ps` needed).
+/// Backs the Containers view "Processes" card. Fields are whatever the platform
+/// `ps` reports; missing columns come back empty / `None` rather than fabricated.
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProcessInfo {
+    pub pid: String,
+    pub user: String,
+    pub time: Option<String>,
+    pub command: String,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
@@ -660,6 +675,24 @@ impl DockerClient {
             .await?;
         Ok(untracked)
     }
+
+    /// Processes running inside the runtime container, via `docker top` (default
+    /// `ps` args). Uses the host's `ps` against the container PID namespace, so
+    /// it works even on a minimal image with no `ps` of its own. Column layout
+    /// varies by platform, so `parse_top` maps by title rather than by position.
+    /// Errors only when the container is down.
+    pub async fn top(&self) -> Result<Vec<ProcessInfo>, DockerError> {
+        if !self.is_running().await? {
+            return Err(DockerError::ContainerDown(self.container.clone()));
+        }
+        let resp = self
+            .docker
+            .top_processes(&self.container, None::<TopOptions<String>>)
+            .await?;
+        let titles = resp.titles.unwrap_or_default();
+        let rows = resp.processes.unwrap_or_default();
+        Ok(parse_top(&titles, &rows))
+    }
 }
 
 /// Cap on changed paths returned to the UI; the rail only renders a short list.
@@ -756,6 +789,42 @@ fn parse_track(inner: &str, key: &str) -> u32 {
         .unwrap_or(0)
 }
 
+/// Index of the first title matching any of `names` (case-insensitive). Lets
+/// `parse_top` find a column by name regardless of the platform `ps` layout.
+fn col(titles: &[String], names: &[&str]) -> Option<usize> {
+    titles
+        .iter()
+        .position(|t| names.iter().any(|n| t.eq_ignore_ascii_case(n)))
+}
+
+/// Map a `docker top` response (titles + rows) to `ProcessInfo`, locating each
+/// field by column title. `CMD`/`COMMAND` falls back to the last column (where
+/// `ps` always puts the command). Pulled out of the async method so it can be
+/// unit-tested without a container.
+fn parse_top(titles: &[String], rows: &[Vec<String>]) -> Vec<ProcessInfo> {
+    let pid_i = col(titles, &["PID"]);
+    let user_i = col(titles, &["USER", "UID"]);
+    let time_i = col(titles, &["TIME"]);
+    let cmd_i = col(titles, &["CMD", "COMMAND"]);
+    rows.iter()
+        .filter_map(|r| {
+            let at = |i: Option<usize>| i.and_then(|i| r.get(i)).cloned();
+            let command = at(cmd_i).or_else(|| r.last().cloned()).unwrap_or_default();
+            let pid = at(pid_i).unwrap_or_default();
+            // Skip a wholly empty row (defensive against odd ps output).
+            if pid.is_empty() && command.is_empty() {
+                return None;
+            }
+            Some(ProcessInfo {
+                pid,
+                user: at(user_i).unwrap_or_default(),
+                time: at(time_i),
+                command,
+            })
+        })
+        .collect()
+}
+
 /// Undo git's porcelain path quoting. With `core.quotePath=false` non-ASCII is
 /// already raw, so only paths with spaces / control chars / quotes arrive in
 /// the `"..."` form; strip the quotes and unescape the common C-escapes. A path
@@ -803,7 +872,7 @@ pub struct AttachHandles {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_version_like, parse_git_status};
+    use super::{is_version_like, parse_git_status, parse_top};
 
     #[test]
     fn version_like_accepts_real_versions_rejects_exec_errors() {
@@ -868,5 +937,57 @@ mod tests {
         assert!(!s.is_repo);
         assert!(s.branch.is_none());
         assert_eq!(s.total, 0);
+    }
+
+    #[test]
+    fn top_maps_columns_by_title() {
+        // Linux `docker top` default layout (UID-style USER column, CMD last).
+        let titles: Vec<String> = ["UID", "PID", "PPID", "C", "STIME", "TTY", "TIME", "CMD"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let row = |cells: &[&str]| cells.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let rows = vec![
+            row(&[
+                "root",
+                "1",
+                "0",
+                "0",
+                "10:00",
+                "?",
+                "00:00:01",
+                "tmux new-session",
+            ]),
+            row(&[
+                "node",
+                "42",
+                "1",
+                "2",
+                "10:01",
+                "pts/0",
+                "00:00:09",
+                "node /usr/bin/claude",
+            ]),
+        ];
+        let procs = parse_top(&titles, &rows);
+        assert_eq!(procs.len(), 2);
+        assert_eq!(procs[0].pid, "1");
+        assert_eq!(procs[0].user, "root");
+        assert_eq!(procs[0].time.as_deref(), Some("00:00:01"));
+        assert_eq!(procs[0].command, "tmux new-session");
+        assert_eq!(procs[1].command, "node /usr/bin/claude");
+    }
+
+    #[test]
+    fn top_falls_back_to_last_column_for_command() {
+        // A layout with no CMD/COMMAND title still recovers the command from the
+        // final column, and a column-less TIME comes back as None.
+        let titles: Vec<String> = ["PID", "USER"].iter().map(|s| s.to_string()).collect();
+        let rows = vec![vec!["7".to_string(), "app".to_string()]];
+        let procs = parse_top(&titles, &rows);
+        assert_eq!(procs.len(), 1);
+        assert_eq!(procs[0].pid, "7");
+        assert_eq!(procs[0].command, "app");
+        assert!(procs[0].time.is_none());
     }
 }

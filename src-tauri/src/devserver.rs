@@ -139,6 +139,7 @@ pub async fn serve() {
         .route("/container-mounts", get(container_mounts))
         .route("/container-git-status", get(container_git_status))
         .route("/container-git-diff", get(container_git_diff))
+        .route("/container-top", get(container_top))
         .route("/sessions", get(list_sessions).post(create_session))
         .route("/sessions/:name", delete(kill_session))
         .route("/sessions/:name/rename", post(rename_session))
@@ -208,6 +209,10 @@ async fn container_git_diff(
     Query(q): Query<DiffQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
     st.docker.git_diff(&q.path).await.map(Json).map_err(err)
+}
+
+async fn container_top(State(st): State<AppState>) -> Result<impl IntoResponse, ApiError> {
+    st.docker.top().await.map(Json).map_err(err)
 }
 
 async fn list_sessions(State(st): State<AppState>) -> Result<impl IntoResponse, ApiError> {
