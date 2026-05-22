@@ -62,6 +62,25 @@ export interface MountInfo {
   kind: string;
 }
 
+// One changed path in /workspace, from `git status --porcelain`. `status` is
+// the raw 2-char XY code (e.g. " M", "??", "A ").
+export interface GitFile {
+  path: string;
+  status: string;
+}
+
+// Working-tree state of /workspace. `isRepo: false` when it's not a git repo
+// (or git is unavailable). `files` is capped server-side; `total` is the full
+// count.
+export interface GitStatus {
+  isRepo: boolean;
+  branch: string | null;
+  ahead: number;
+  behind: number;
+  files: GitFile[];
+  total: number;
+}
+
 export const ipc = {
   containerStatus: () => invoke<ContainerStatus>("container_status"),
   dockerInfo: () => invoke<DockerInfo>("docker_info"),
@@ -72,6 +91,8 @@ export const ipc = {
   containerLogs: (tail?: number) => invoke<string[]>("container_logs", { tail }),
   // Real bind/volume mounts of the runtime container (host paths).
   containerMounts: () => invoke<MountInfo[]>("container_mounts"),
+  // Working-tree status of /workspace (branch + changed files).
+  containerGitStatus: () => invoke<GitStatus>("container_git_status"),
   listSessions: () => invoke<SessionInfo[]>("list_sessions"),
   createSession: (name: string, cli: Cli, mode: Mode, alias: string) =>
     invoke<void>("create_session", { name, cli, mode, alias }),

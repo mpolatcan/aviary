@@ -63,6 +63,30 @@ pub struct MountInfo {
     pub kind: String,
 }
 
+/// One changed path in the `/workspace` working tree, from `git status
+/// --porcelain`. `status` is the raw 2-char XY code (e.g. " M", "??", "A ").
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct GitFile {
+    pub path: String,
+    pub status: String,
+}
+
+/// Working-tree state of the `/workspace` mount. `is_repo: false` covers both
+/// "not a git repo" and "git unavailable" — the UI shows an honest note either
+/// way rather than a fake clean tree. `files` is capped (see `git_status`).
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct GitStatus {
+    pub is_repo: bool,
+    pub branch: Option<String>,
+    pub ahead: u32,
+    pub behind: u32,
+    pub files: Vec<GitFile>,
+    /// Total changed paths, even when `files` is truncated for display.
+    pub total: u32,
+}
+
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum Cli {
@@ -562,6 +586,159 @@ impl DockerClient {
             })
             .collect())
     }
+
+    /// Working-tree status of the `/workspace` mount via
+    /// `git status --porcelain=v1 --branch`. Errors only when the container is
+    /// down; "not a git repo" and "git not installed" both come back as
+    /// `is_repo: false` so the UI shows an honest note rather than a fake-clean
+    /// tree. `files` is capped at [`GIT_FILES_CAP`]; `total` is the full count.
+    pub async fn git_status(&self) -> Result<GitStatus, DockerError> {
+        if !self.is_running().await? {
+            return Err(DockerError::ContainerDown(self.container.clone()));
+        }
+        let raw = self
+            .exec_capture(vec![
+                "git",
+                "-C",
+                "/workspace",
+                // Don't octal-escape non-ASCII paths; we still unquote the
+                // double-quoted form (spaces, control chars) in the parser.
+                "-c",
+                "core.quotePath=false",
+                "status",
+                "--porcelain=v1",
+                "--branch",
+            ])
+            .await?;
+        Ok(parse_git_status(&raw))
+    }
+}
+
+/// Cap on changed paths returned to the UI; the rail only renders a short list.
+const GIT_FILES_CAP: usize = 200;
+
+/// Parse `git status --porcelain=v1 --branch` output. Pulled out of the async
+/// method so the line-handling can be unit-tested without a container.
+fn parse_git_status(raw: &str) -> GitStatus {
+    // exec_capture merges stdout+stderr, so git's own errors land here. Treat
+    // "not a repo" / "git missing" as a non-repo rather than a hard error.
+    let lower = raw.to_ascii_lowercase();
+    if lower.contains("fatal:") || lower.contains("not found") || lower.contains("no such file") {
+        return GitStatus {
+            is_repo: false,
+            branch: None,
+            ahead: 0,
+            behind: 0,
+            files: Vec::new(),
+            total: 0,
+        };
+    }
+
+    let mut branch = None;
+    let mut ahead = 0;
+    let mut behind = 0;
+    let mut files = Vec::new();
+    let mut total = 0;
+
+    for line in raw.lines() {
+        // The `## ` header line carries branch + ahead/behind tracking info.
+        if let Some(rest) = line.strip_prefix("## ") {
+            let name_part = rest.split("...").next().unwrap_or(rest);
+            let name = name_part
+                .strip_prefix("No commits yet on ")
+                .unwrap_or(name_part)
+                .split_whitespace()
+                .next()
+                .unwrap_or("");
+            // "HEAD (no branch)" → detached; leave branch None.
+            if !name.is_empty() && name != "HEAD" {
+                branch = Some(name.to_string());
+            }
+            if let Some(inner) = rest
+                .split_once('[')
+                .and_then(|(_, b)| b.split_once(']'))
+                .map(|(inner, _)| inner)
+            {
+                ahead = parse_track(inner, "ahead");
+                behind = parse_track(inner, "behind");
+            }
+            continue;
+        }
+        // Each change is `XY <path>` — 2 status chars, a space, then the path.
+        if line.len() < 3 {
+            continue;
+        }
+        total += 1;
+        if files.len() < GIT_FILES_CAP {
+            let status = line[..2].to_string();
+            let raw_path = &line[3..];
+            // Rename/copy renders as "old -> new"; keep the new path. rsplit so
+            // a ` -> ` inside the old path can't steal the split.
+            let path_field = raw_path
+                .rsplit_once(" -> ")
+                .map(|(_, new)| new)
+                .unwrap_or(raw_path);
+            files.push(GitFile {
+                path: unquote_git_path(path_field),
+                status,
+            });
+        }
+    }
+
+    GitStatus {
+        is_repo: true,
+        branch,
+        ahead,
+        behind,
+        files,
+        total,
+    }
+}
+
+/// Pull `ahead`/`behind` counts out of a porcelain bracket like
+/// "ahead 1, behind 2".
+fn parse_track(inner: &str, key: &str) -> u32 {
+    inner
+        .split(',')
+        .find_map(|seg| {
+            seg.trim()
+                .strip_prefix(key)
+                .and_then(|n| n.trim().parse().ok())
+        })
+        .unwrap_or(0)
+}
+
+/// Undo git's porcelain path quoting. With `core.quotePath=false` non-ASCII is
+/// already raw, so only paths with spaces / control chars / quotes arrive in
+/// the `"..."` form; strip the quotes and unescape the common C-escapes. A path
+/// that isn't quoted is returned unchanged.
+fn unquote_git_path(s: &str) -> String {
+    let bytes = s.as_bytes();
+    if bytes.len() < 2 || bytes[0] != b'"' || bytes[bytes.len() - 1] != b'"' {
+        return s.to_string();
+    }
+    let inner = &s[1..s.len() - 1];
+    let mut out = String::with_capacity(inner.len());
+    let mut chars = inner.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('n') => out.push('\n'),
+            Some('t') => out.push('\t'),
+            Some('"') => out.push('"'),
+            Some('\\') => out.push('\\'),
+            // Unknown escape: keep it verbatim rather than dropping data.
+            Some(other) => {
+                out.push('\\');
+                out.push(other);
+            },
+            None => out.push('\\'),
+        }
+    }
+    out
 }
 
 pub struct AttachHandles {
@@ -578,7 +755,7 @@ pub struct AttachHandles {
 
 #[cfg(test)]
 mod tests {
-    use super::is_version_like;
+    use super::{is_version_like, parse_git_status};
 
     #[test]
     fn version_like_accepts_real_versions_rejects_exec_errors() {
@@ -591,5 +768,57 @@ mod tests {
         // no digits → not a version
         assert!(!is_version_like("command not found"));
         assert!(!is_version_like(""));
+    }
+
+    #[test]
+    fn git_status_parses_branch_tracking_and_changes() {
+        let raw = "## main...origin/main [ahead 2, behind 1]\n\
+                    M src/app.rs\n\
+                   ?? new_file.txt\n\
+                   R  old.rs -> renamed.rs\n";
+        let s = parse_git_status(raw);
+        assert!(s.is_repo);
+        assert_eq!(s.branch.as_deref(), Some("main"));
+        assert_eq!(s.ahead, 2);
+        assert_eq!(s.behind, 1);
+        assert_eq!(s.total, 3);
+        assert_eq!(s.files.len(), 3);
+        // Rename keeps the new path.
+        assert_eq!(s.files[2].path, "renamed.rs");
+        assert_eq!(s.files[2].status, "R ");
+    }
+
+    #[test]
+    fn git_status_handles_clean_tree_and_no_upstream() {
+        let s = parse_git_status("## feature/x\n");
+        assert!(s.is_repo);
+        assert_eq!(s.branch.as_deref(), Some("feature/x"));
+        assert_eq!(s.ahead, 0);
+        assert_eq!(s.behind, 0);
+        assert_eq!(s.total, 0);
+        assert!(s.files.is_empty());
+    }
+
+    #[test]
+    fn git_status_unquotes_paths_with_spaces_and_renames() {
+        // Paths with spaces arrive double-quoted even with core.quotePath=false.
+        let raw = "## main\n\
+                   ?? \"weird name.txt\"\n\
+                   R  \"old name.rs\" -> \"new name.rs\"\n";
+        let s = parse_git_status(raw);
+        assert_eq!(s.files.len(), 2);
+        assert_eq!(s.files[0].path, "weird name.txt");
+        // Rename keeps the (unquoted) new path.
+        assert_eq!(s.files[1].path, "new name.rs");
+    }
+
+    #[test]
+    fn git_status_reports_non_repo() {
+        let s = parse_git_status(
+            "fatal: not a git repository (or any of the parent directories): .git\n",
+        );
+        assert!(!s.is_repo);
+        assert!(s.branch.is_none());
+        assert_eq!(s.total, 0);
     }
 }

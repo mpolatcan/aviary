@@ -7,7 +7,7 @@ pub mod docker;
 pub mod lifecycle;
 pub mod pty;
 
-use docker::{AgentVersion, Cli, ContainerStats, DockerClient, LaunchMode, MountInfo};
+use docker::{AgentVersion, Cli, ContainerStats, DockerClient, GitStatus, LaunchMode, MountInfo};
 use lifecycle::{ContainerStatus, DockerInfo, KeyStatus, Lifecycle};
 use pty::{PaneEmitter, PtyRegistry, SessionInfo};
 use std::collections::HashMap;
@@ -135,6 +135,14 @@ async fn container_logs(
 #[tauri::command]
 async fn container_mounts(state: tauri::State<'_, AppState>) -> Result<Vec<MountInfo>, String> {
     state.docker.mounts().await.map_err(|e| e.to_string())
+}
+
+/// Working-tree status of the `/workspace` mount (Hub activity rail "Changes").
+/// Reports branch + ahead/behind + changed files; `is_repo: false` when
+/// /workspace is not a git repo. Errs only when the container is down.
+#[tauri::command]
+async fn container_git_status(state: tauri::State<'_, AppState>) -> Result<GitStatus, String> {
+    state.docker.git_status().await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -347,6 +355,7 @@ pub fn run() {
             container_stats,
             container_logs,
             container_mounts,
+            container_git_status,
             list_sessions,
             create_session,
             kill_session,
