@@ -26,6 +26,7 @@ import {
   type ImageInfo,
   type MountInfo,
   type ProcessInfo,
+  type RuntimeHealth,
   ipc,
 } from "@/app/lib/ipc";
 import { useStore } from "@/app/lib/store";
@@ -142,6 +143,34 @@ export function ContainerInspector() {
       .catch(() => alive && setImageInfo(null));
     return () => {
       alive = false;
+    };
+  }, [running]);
+
+  // Liveness — uptime, restart count, OOM flag. Polled ~5s (one cheap `docker
+  // inspect`) rather than fetched once: an auto-restart bumps restartCount,
+  // sets oomKilled and resets startedAt without necessarily surfacing as a
+  // not-running blip, so a once-per-transition read could miss the very events
+  // these indicators exist to show. Same one-shot/alive-guard contract as the
+  // other polls; `null` while down / pre-read → the hero omits the liveness
+  // text rather than showing a fake age.
+  const [health, setHealth] = useState<RuntimeHealth | null>(null);
+  useEffect(() => {
+    if (!running) {
+      setHealth(null);
+      return;
+    }
+    let alive = true;
+    const tick = () => {
+      ipc
+        .containerHealth()
+        .then((h) => alive && setHealth(h))
+        .catch(() => alive && setHealth(null));
+    };
+    tick();
+    const h = setInterval(tick, 5000);
+    return () => {
+      alive = false;
+      clearInterval(h);
     };
   }, [running]);
 
@@ -294,6 +323,16 @@ export function ContainerInspector() {
               <div className="mono" style={{ fontSize: 11.5, color: "var(--fg-2)" }}>
                 {image}
                 {id && ` · ${id.slice(0, 12)}`}
+                {(() => {
+                  const up = health?.startedAt ? fmtUptime(health.startedAt) : null;
+                  return up ? ` · up ${up}` : "";
+                })()}
+                {health && health.restartCount != null && health.restartCount > 0 && (
+                  <span className="tnum">
+                    {` · ${health.restartCount} restart${health.restartCount === 1 ? "" : "s"}`}
+                  </span>
+                )}
+                {health?.oomKilled && <span style={{ color: "var(--err)" }}> · OOM-killed</span>}
               </div>
             </div>
           </div>
@@ -510,6 +549,19 @@ function fmtBytes(n: number): string {
   const i = Math.min(units.length - 1, Math.floor(Math.log(n) / Math.log(1024)));
   const v = n / 1024 ** i;
   return `${v >= 100 || i === 0 ? Math.round(v) : v.toFixed(1)} ${units[i]}`;
+}
+
+// Compact uptime from an RFC 3339 start time: "<1m", "12m", "3h", "2d". Returns
+// null when the timestamp is unparseable (the hero then omits the uptime rather
+// than showing NaN). Coarse on purpose — the hero only needs a glanceable age.
+function fmtUptime(rfc3339: string): string | null {
+  const start = Date.parse(rfc3339);
+  if (Number.isNaN(start)) return null;
+  const s = Math.max(0, Math.floor((Date.now() - start) / 1000));
+  if (s < 60) return "<1m";
+  if (s < 3600) return `${Math.floor(s / 60)}m`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h`;
+  return `${Math.floor(s / 86400)}d`;
 }
 
 // Strip the `sha256:` prefix and shorten a digest/id to 12 hex chars, the way

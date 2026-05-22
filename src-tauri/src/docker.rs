@@ -75,6 +75,25 @@ pub struct ImageInfo {
     pub os: Option<String>,
 }
 
+/// Liveness facts about the runtime container, read from `docker inspect`'s
+/// `State` block. Backs the Containers view hero (uptime + restart count).
+/// Every field is `Option` so a missing value renders as an em-dash rather than
+/// a fabricated zero.
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeHealth {
+    /// `State.StartedAt`, RFC 3339, for the current run — the UI derives uptime
+    /// from it. `None` when the container has never started (Docker reports a
+    /// zero timestamp, which we drop rather than show as a bogus age).
+    pub started_at: Option<String>,
+    /// `RestartCount` — times Docker has auto-restarted the container.
+    pub restart_count: Option<i64>,
+    /// `State.Status` token: "running", "exited", "created", …
+    pub status: Option<String>,
+    /// `State.OOMKilled` — whether the last stop was an out-of-memory kill.
+    pub oom_killed: Option<bool>,
+}
+
 /// One bind/volume mount of the runtime container, read from `docker inspect`.
 /// `source` is the host-side path (or volume name); `destination` the in-container
 /// path. Backs the Containers view "Mounts" card — the real host path behind
@@ -668,6 +687,27 @@ impl DockerClient {
             size: img.size,
             arch: img.architecture,
             os: img.os,
+        })
+    }
+
+    /// Liveness of the runtime container (Containers view hero): started-at,
+    /// restart count, status and OOM flag from `inspect_container`'s `State`.
+    /// Like [`mounts`] and [`image_info`] this reads the real container with no
+    /// `is_running` gate (a stopped container still has a `State`); it errors
+    /// only when the container can't be inspected.
+    pub async fn health(&self) -> Result<RuntimeHealth, DockerError> {
+        let info = self.docker.inspect_container(&self.container, None).await?;
+        let state = info.state;
+        Ok(RuntimeHealth {
+            // Docker reports the zero timestamp for a never-started container;
+            // treat that (and an empty string) as "no uptime" rather than 1-AD.
+            started_at: state
+                .as_ref()
+                .and_then(|s| s.started_at.clone())
+                .filter(|s| !s.is_empty() && s != "0001-01-01T00:00:00Z"),
+            restart_count: info.restart_count,
+            status: state.as_ref().and_then(|s| s.status).map(|s| s.to_string()),
+            oom_killed: state.as_ref().and_then(|s| s.oom_killed),
         })
     }
 

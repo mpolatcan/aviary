@@ -79,6 +79,16 @@ export interface ImageInfo {
   os: string | null;
 }
 
+// Liveness of the runtime container (Containers view hero), from `docker
+// inspect`'s State block. `startedAt` is RFC 3339 (the UI derives uptime from
+// it); every field is nullable so a missing value renders as em-dash.
+export interface RuntimeHealth {
+  startedAt: string | null;
+  restartCount: number | null;
+  status: string | null;
+  oomKilled: boolean | null;
+}
+
 // One bind/volume mount of the runtime container, from `docker inspect`.
 // `source` is the host path, `destination` the in-container path.
 export interface MountInfo {
@@ -139,6 +149,8 @@ export const ipc = {
   containerMounts: () => invoke<MountInfo[]>("container_mounts"),
   // Identity of the runtime container's image (tag/digest/created/size/arch/os).
   containerImage: () => invoke<ImageInfo>("container_image"),
+  // Liveness of the runtime container (started-at/restart count/status/OOM).
+  containerHealth: () => invoke<RuntimeHealth>("container_health"),
   // Working-tree status of /workspace (branch + changed files).
   containerGitStatus: () => invoke<GitStatus>("container_git_status"),
   // Unified diff for one /workspace path (raw `git diff` text).

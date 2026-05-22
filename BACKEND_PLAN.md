@@ -211,8 +211,14 @@ per tab) need the Tier-3 multi-container work and are deferred.
     `inspect_image` for tag/digest/created/size/arch/os → `ImageInfo` (all
     `Option`, em-dash when absent). Backs the Containers "Image" card; fetched
     once on the running transition (fixed for the container's lifetime).
+  - ~~`container_health` (liveness)~~ **DONE** — `DockerClient::health()` reads
+    `inspect_container`'s `State` → `RuntimeHealth{startedAt,restartCount,status,
+    oomKilled}` (all `Option`; the zero `0001-01-01T00:00:00Z` start is dropped).
+    Backs the Containers hero: `· up {age}` derived from `startedAt`, plus
+    `· {n} restarts` and a red `· OOM-killed` flag when present. Fetched once on
+    the running transition; uptime advances off the ~2s stats re-render.
   All container-inspector feeds are now real (status / stats / logs / mounts /
-  processes / image). Multi-container (Tier-3) is the only remaining
+  processes / image / health). Multi-container (Tier-3) is the only remaining
   Containers-view work.
 - **Hub activity rail (P4 Hub A).** Two sections:
   - ~~"Changes"~~ **DONE** — `DockerClient::git_status()` runs
