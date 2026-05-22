@@ -390,6 +390,18 @@ impl DockerClient {
     }
 }
 
+pub struct AttachHandles {
+    pub exec_id: String,
+    pub output: std::pin::Pin<
+        Box<
+            dyn futures_util::Stream<
+                    Item = Result<bollard::container::LogOutput, bollard::errors::Error>,
+                > + Send,
+        >,
+    >,
+    pub input: std::pin::Pin<Box<dyn tokio::io::AsyncWrite + Send>>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::is_version_like;
@@ -406,16 +418,4 @@ mod tests {
         assert!(!is_version_like("command not found"));
         assert!(!is_version_like(""));
     }
-}
-
-pub struct AttachHandles {
-    pub exec_id: String,
-    pub output: std::pin::Pin<
-        Box<
-            dyn futures_util::Stream<
-                    Item = Result<bollard::container::LogOutput, bollard::errors::Error>,
-                > + Send,
-        >,
-    >,
-    pub input: std::pin::Pin<Box<dyn tokio::io::AsyncWrite + Send>>,
 }

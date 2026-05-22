@@ -345,6 +345,14 @@ impl Lifecycle {
     }
 }
 
+fn host_network_mode() -> String {
+    // macOS Docker Desktop supports host network behind a feature flag.
+    // Default to `bridge` to maximize compatibility; users can override.
+    std::env::var("CODEHUB_NETWORK_MODE")
+        .or_else(|_| std::env::var("AVIARY_NETWORK_MODE"))
+        .unwrap_or_else(|_| "bridge".to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -389,12 +397,4 @@ mod tests {
             std::env::remove_var("GOOGLE_API_KEY");
         }
     }
-}
-
-fn host_network_mode() -> String {
-    // macOS Docker Desktop supports host network behind a feature flag.
-    // Default to `bridge` to maximize compatibility; users can override.
-    std::env::var("CODEHUB_NETWORK_MODE")
-        .or_else(|_| std::env::var("AVIARY_NETWORK_MODE"))
-        .unwrap_or_else(|_| "bridge".to_string())
 }
