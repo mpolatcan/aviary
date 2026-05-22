@@ -25,6 +25,13 @@ pub struct SessionInfo {
     pub attached: bool,
 }
 
+/// Installed version of a CLI inside the runtime container, as reported by
+/// `<bin> --version`. `None` when the container is down or the probe fails.
+#[derive(Debug, Serialize, Clone)]
+pub struct AgentVersion {
+    pub version: Option<String>,
+}
+
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum Cli {
@@ -107,6 +114,22 @@ impl LaunchMode {
     }
 }
 
+/// Distinguishes a real `--version` line from a docker-exec failure that
+/// `exec_capture` (which merges stdout+stderr) returns when a binary is absent,
+/// e.g. `exec failed: ... executable file not found in $PATH`. A version string
+/// always contains a digit and none of these error markers.
+fn is_version_like(s: &str) -> bool {
+    let lower = s.to_ascii_lowercase();
+    const MARKERS: [&str; 5] = [
+        "exec failed",
+        "not found",
+        "no such file",
+        "executable file",
+        "permission denied",
+    ];
+    s.chars().any(|c| c.is_ascii_digit()) && !MARKERS.iter().any(|m| lower.contains(m))
+}
+
 #[derive(Clone)]
 pub struct DockerClient {
     pub container: String,
@@ -181,6 +204,28 @@ impl DockerClient {
         } else {
             Ok(String::new())
         }
+    }
+
+    /// Probe each CLI's `--version` inside the container. Best-effort: a stopped
+    /// container or a failing/absent binary yields `version: None` for that CLI
+    /// rather than an error, so the caller always gets a full map.
+    pub async fn agent_versions(&self) -> HashMap<String, AgentVersion> {
+        let running = self.is_running().await.unwrap_or(false);
+        let mut out = HashMap::new();
+        for cli in [Cli::Claude, Cli::Codex, Cli::Antigravity] {
+            let version = if running {
+                self.exec_capture(vec![cli.binary(), "--version"])
+                    .await
+                    .ok()
+                    .map(|s| s.lines().next().unwrap_or_default().trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .filter(|s| is_version_like(s))
+            } else {
+                None
+            };
+            out.insert(cli.binary().to_string(), AgentVersion { version });
+        }
+        out
     }
 
     pub async fn list_tmux_sessions(&self) -> Result<Vec<SessionInfo>, DockerError> {
@@ -355,4 +400,22 @@ pub struct AttachHandles {
         >,
     >,
     pub input: std::pin::Pin<Box<dyn tokio::io::AsyncWrite + Send>>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_version_like;
+
+    #[test]
+    fn version_like_accepts_real_versions_rejects_exec_errors() {
+        assert!(is_version_like("2.1.148 (Claude Code)"));
+        assert!(is_version_like("codex-cli 0.132.0"));
+        // docker-exec failure text for an absent binary
+        assert!(!is_version_like(
+            "exec failed: unable to start container process: exec: \"antigravity\": executable file not found in $PATH"
+        ));
+        // no digits → not a version
+        assert!(!is_version_like("command not found"));
+        assert!(!is_version_like(""));
+    }
 }

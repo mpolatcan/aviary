@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { SPEC_BY_CLI } from "./catalog";
-import type { Cli, ContainerStatus, Mode } from "./ipc";
+import type { AgentVersion, Cli, ContainerStatus, DockerInfo, KeyStatus, Mode } from "./ipc";
 import { ipc, onLifecycle, onLifecycleError } from "./ipc";
 import * as registry from "./panes";
 import {
@@ -24,6 +24,12 @@ interface CodeHubState {
   sessionMeta: Record<string, SessionMeta>;
   status: ContainerStatus | null;
   error: string | null;
+
+  // Tier-1 reads (BACKEND_PLAN.md), fetched once the runtime is reachable.
+  // Presence/version metadata only — never secret values.
+  dockerInfo: DockerInfo | null;
+  keyStatus: Record<Cli, KeyStatus> | null;
+  agentVersions: Record<Cli, AgentVersion> | null;
 
   // imperative bookkeeping (non-reactive counters)
   plateCounter: number;
@@ -79,6 +85,9 @@ export const useStore = create<CodeHubState>((set, get) => {
     sessionMeta: {},
     status: null,
     error: null,
+    dockerInfo: null,
+    keyStatus: null,
+    agentVersions: null,
     plateCounter: 0,
     specimenCounter: 0,
     bootstrapped: false,
@@ -264,6 +273,22 @@ async function bootstrap(
   set: Set,
   registerMeta: (name: string, cli: Cli, mode: Mode, workspaceId: string) => void,
 ) {
+  // Tier-1 reads (BACKEND_PLAN.md): daemon info, per-CLI version + key presence.
+  // Best-effort and independent of session bootstrap — a failure must not block
+  // session restore, so each is caught on its own.
+  void ipc
+    .dockerInfo()
+    .then((dockerInfo) => set({ dockerInfo }))
+    .catch((e) => console.warn("docker_info failed", e));
+  void ipc
+    .agentKeyStatus()
+    .then((keyStatus) => set({ keyStatus }))
+    .catch((e) => console.warn("agent_key_status failed", e));
+  void ipc
+    .agentVersions()
+    .then((agentVersions) => set({ agentVersions }))
+    .catch((e) => console.warn("agent_versions failed", e));
+
   try {
     const sessions = await ipc.listSessions();
     for (const s of sessions) {

@@ -35,8 +35,15 @@ export function ContextGauge({ used, max, label = "ctx", width = 110 }: ContextG
         />
       </span>
       <span className="mono tnum" style={{ fontSize: 12, color: "var(--fg-0)", fontWeight: 500 }}>
-        {formatK(used)}
-        <span style={{ color: "var(--fg-3)", fontWeight: 400 }}> / {formatK(max)}</span>
+        {max > 0 ? (
+          <>
+            {formatK(used)}
+            <span style={{ color: "var(--fg-3)", fontWeight: 400 }}> / {formatK(max)}</span>
+          </>
+        ) : (
+          // No context-window feed yet (BACKEND_PLAN.md): em-dash, not a fake "0 / 0".
+          <span style={{ color: "var(--fg-3)" }}>—</span>
+        )}
       </span>
     </span>
   );

@@ -7,9 +7,10 @@ pub mod docker;
 pub mod lifecycle;
 pub mod pty;
 
-use docker::{Cli, DockerClient, LaunchMode};
-use lifecycle::{ContainerStatus, Lifecycle};
+use docker::{AgentVersion, Cli, DockerClient, LaunchMode};
+use lifecycle::{ContainerStatus, DockerInfo, KeyStatus, Lifecycle};
 use pty::{PaneEmitter, PtyRegistry, SessionInfo};
+use std::collections::HashMap;
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
 
@@ -85,6 +86,27 @@ async fn container_restart(
     let status = state.lifecycle.status().await;
     let _ = app.emit("codehub://lifecycle", &status);
     Ok(status)
+}
+
+/// Daemon reachability + version for the empty-state pill / Settings.
+#[tauri::command]
+async fn docker_info(state: tauri::State<'_, AppState>) -> Result<DockerInfo, String> {
+    Ok(state.lifecycle.docker_info().await)
+}
+
+/// Presence-only auth status per CLI. Reports booleans + env var names; never
+/// the secret values (see BACKEND_PLAN.md / lifecycle::agent_key_status).
+#[tauri::command]
+fn agent_key_status() -> Result<HashMap<String, KeyStatus>, String> {
+    Ok(lifecycle::agent_key_status())
+}
+
+/// `<cli> --version` for each agent inside the runtime container.
+#[tauri::command]
+async fn agent_versions(
+    state: tauri::State<'_, AppState>,
+) -> Result<HashMap<String, AgentVersion>, String> {
+    Ok(state.docker.agent_versions().await)
 }
 
 #[tauri::command]
@@ -291,6 +313,9 @@ pub fn run() {
             container_start,
             container_stop,
             container_restart,
+            docker_info,
+            agent_key_status,
+            agent_versions,
             list_sessions,
             create_session,
             kill_session,

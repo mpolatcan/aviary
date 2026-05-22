@@ -1032,3 +1032,34 @@ body.dragging .divider::after {
 .xterm-viewport::-webkit-scrollbar-thumb:hover {
   background: var(--color-text-faint);
 }
+
+/* ---- Hub A tile grid -------------------------------------------------- */
+/* The Hub shell (App.tsx) wraps the split tree in `.hub-grid` instead of the
+   legacy `.grid-root` field-journal frame. Tiles are flush against a 1px rule
+   background; the focused pane gets a subtle inset ring (design tokens) rather
+   than the amber border + glow of the old skin. */
+.hub-grid {
+  flex: 1;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bd-soft);
+}
+.hub-grid > * {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+.hub-grid .pane-leaf {
+  margin: 0;
+  background: var(--bg-0);
+  border: none;
+  animation: none;
+}
+.hub-grid .pane-leaf.focused {
+  border: none;
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--fg-0) 20%, transparent);
+}
+.hub-grid .pane-leaf.focused .pane-head {
+  background: var(--bg-1);
+}

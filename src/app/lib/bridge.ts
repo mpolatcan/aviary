@@ -41,6 +41,12 @@ async function httpInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
   switch (cmd) {
     case "container_status":
       return jget("/status") as Promise<T>;
+    case "docker_info":
+      return jget("/docker-info") as Promise<T>;
+    case "agent_key_status":
+      return jget("/agent-key-status") as Promise<T>;
+    case "agent_versions":
+      return jget("/agent-versions") as Promise<T>;
     case "list_sessions":
       return jget("/sessions") as Promise<T>;
     case "create_session":

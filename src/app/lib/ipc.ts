@@ -21,8 +21,31 @@ export interface SessionInfo {
 export type Cli = "claude" | "codex" | "antigravity";
 export type Mode = "standard" | "auto" | "yolo";
 
+// Tier-1 reads (BACKEND_PLAN.md). docker_info backs the empty-state daemon pill;
+// agent_versions / agent_key_status back the agent cards + Settings.
+export interface DockerInfo {
+  reachable: boolean;
+  version: string | null;
+  apiVersion: string | null;
+}
+
+// Presence-only auth status. `present` + `varName` (env var NAME) only — the
+// backend never returns the secret value.
+export interface KeyStatus {
+  present: boolean;
+  source: string;
+  varName: string | null;
+}
+
+export interface AgentVersion {
+  version: string | null;
+}
+
 export const ipc = {
   containerStatus: () => invoke<ContainerStatus>("container_status"),
+  dockerInfo: () => invoke<DockerInfo>("docker_info"),
+  agentKeyStatus: () => invoke<Record<Cli, KeyStatus>>("agent_key_status"),
+  agentVersions: () => invoke<Record<Cli, AgentVersion>>("agent_versions"),
   listSessions: () => invoke<SessionInfo[]>("list_sessions"),
   createSession: (name: string, cli: Cli, mode: Mode, alias: string) =>
     invoke<void>("create_session", { name, cli, mode, alias }),

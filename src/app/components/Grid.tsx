@@ -29,7 +29,7 @@ function Leaf({ session, ws }: { session: string; ws: Workspace }) {
       data-session={session}
       onMouseDown={() => focusSession(session)}
     >
-      <PaneHead session={session} />
+      <PaneHead session={session} focused={focused} />
       <div className="pane-body">
         <PaneMount session={session} />
       </div>

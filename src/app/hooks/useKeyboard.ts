@@ -15,7 +15,7 @@ export function autoSplitDir(session: string): SplitDir {
 }
 
 // Global keyboard shortcuts:
-//   ⌘/Ctrl T  — new tab (opens the launcher)
+//   ⌘/Ctrl N  — new tab (opens the launcher); ⌘/Ctrl T kept as an alias
 //   ⌘/Ctrl W  — close the focused session
 //   ⌘/Ctrl \  — split the focused pane
 //   ⌘/Ctrl 1-9 — switch to tab N
@@ -45,6 +45,7 @@ export function useKeyboard() {
       }
 
       switch (e.key.toLowerCase()) {
+        case "n":
         case "t":
           e.preventDefault();
           launcher.open("newtab");

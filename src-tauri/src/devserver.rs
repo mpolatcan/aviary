@@ -131,6 +131,9 @@ pub async fn serve() {
 
     let app = Router::new()
         .route("/status", get(status))
+        .route("/docker-info", get(docker_info))
+        .route("/agent-key-status", get(agent_key_status))
+        .route("/agent-versions", get(agent_versions))
         .route("/sessions", get(list_sessions).post(create_session))
         .route("/sessions/:name", delete(kill_session))
         .route("/sessions/:name/rename", post(rename_session))
@@ -148,6 +151,18 @@ pub async fn serve() {
 
 async fn status(State(st): State<AppState>) -> impl IntoResponse {
     Json(st.lifecycle.status().await)
+}
+
+async fn docker_info(State(st): State<AppState>) -> impl IntoResponse {
+    Json(st.lifecycle.docker_info().await)
+}
+
+async fn agent_key_status() -> impl IntoResponse {
+    Json(crate::lifecycle::agent_key_status())
+}
+
+async fn agent_versions(State(st): State<AppState>) -> impl IntoResponse {
+    Json(st.docker.agent_versions().await)
 }
 
 async fn list_sessions(State(st): State<AppState>) -> Result<impl IntoResponse, ApiError> {
