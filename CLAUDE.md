@@ -87,7 +87,7 @@ Environment knobs:
 | Env var | Purpose | Default |
 |---|---|---|
 | `CODEHUB_CONTAINER` | Container name | `codehub-runtime` |
-| `CODEHUB_IMAGE` | Image tag | `ghcr.io/mpolatcan/codehub-runtime:0.1.1` |
+| `CODEHUB_IMAGE` | Image tag | `ghcr.io/mpolatcan/codehub-runtime:0.1.2` |
 | `CODEHUB_NETWORK_MODE` | Docker network mode | `bridge` |
 | `CLAUDE_CODE_OAUTH_TOKEN` | Skip /login in Claude Code | unset |
 

@@ -33,7 +33,7 @@ pub struct AppState {
 }
 
 const DEFAULT_CONTAINER: &str = "codehub-runtime";
-const DEFAULT_IMAGE: &str = "ghcr.io/mpolatcan/codehub-runtime:0.1.1";
+const DEFAULT_IMAGE: &str = "ghcr.io/mpolatcan/codehub-runtime:0.1.2";
 
 #[tauri::command]
 async fn container_status(state: tauri::State<'_, AppState>) -> Result<ContainerStatus, String> {

@@ -30,7 +30,7 @@ docker build -t codehub-runtime:dev .
 ```bash
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
-  -t ghcr.io/mpolatcan/codehub-runtime:0.1.1 \
+  -t ghcr.io/mpolatcan/codehub-runtime:0.1.2 \
   -t ghcr.io/mpolatcan/codehub-runtime:latest \
   --push .
 ```
