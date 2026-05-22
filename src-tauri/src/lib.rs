@@ -116,6 +116,20 @@ async fn container_stats(state: tauri::State<'_, AppState>) -> Result<ContainerS
     state.docker.stats().await.map_err(|e| e.to_string())
 }
 
+/// Tail of the runtime container's log (Containers view log panel). `tail`
+/// defaults to 200 lines. Errs when the container is down.
+#[tauri::command]
+async fn container_logs(
+    state: tauri::State<'_, AppState>,
+    tail: Option<u32>,
+) -> Result<Vec<String>, String> {
+    state
+        .docker
+        .logs(tail.unwrap_or(200))
+        .await
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 async fn list_sessions(state: tauri::State<'_, AppState>) -> Result<Vec<SessionInfo>, String> {
     state
@@ -324,6 +338,7 @@ pub fn run() {
             agent_key_status,
             agent_versions,
             container_stats,
+            container_logs,
             list_sessions,
             create_session,
             kill_session,

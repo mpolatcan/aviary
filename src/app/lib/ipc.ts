@@ -59,6 +59,8 @@ export const ipc = {
   agentKeyStatus: () => invoke<Record<Cli, KeyStatus>>("agent_key_status"),
   agentVersions: () => invoke<Record<Cli, AgentVersion>>("agent_versions"),
   containerStats: () => invoke<ContainerStats>("container_stats"),
+  // Tail of the runtime container log; defaults to 200 lines server-side.
+  containerLogs: (tail?: number) => invoke<string[]>("container_logs", { tail }),
   listSessions: () => invoke<SessionInfo[]>("list_sessions"),
   createSession: (name: string, cli: Cli, mode: Mode, alias: string) =>
     invoke<void>("create_session", { name, cli, mode, alias }),

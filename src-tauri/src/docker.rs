@@ -1,4 +1,4 @@
-use bollard::container::{ListContainersOptions, MemoryStatsStats, StatsOptions};
+use bollard::container::{ListContainersOptions, LogsOptions, MemoryStatsStats, StatsOptions};
 use bollard::exec::{CreateExecOptions, ResizeExecOptions, StartExecOptions, StartExecResults};
 use bollard::Docker;
 use futures_util::StreamExt;
@@ -487,6 +487,37 @@ impl DockerClient {
             net_tx,
             disk,
         })
+    }
+
+    /// Last `tail` lines of the runtime container's stdout+stderr (the `docker
+    /// logs` tail), newest last. One-shot, not a follow stream — the Containers
+    /// view re-polls. Errors when the container is down so the panel stays on its
+    /// honest placeholder rather than showing a stale tail.
+    pub async fn logs(&self, tail: u32) -> Result<Vec<String>, DockerError> {
+        if !self.is_running().await? {
+            return Err(DockerError::ContainerDown(self.container.clone()));
+        }
+        let mut stream = self.docker.logs(
+            &self.container,
+            Some(LogsOptions::<String> {
+                stdout: true,
+                stderr: true,
+                timestamps: false,
+                tail: tail.to_string(),
+                ..Default::default()
+            }),
+        );
+        // Logs arrive as framed chunks that align to neither lines nor UTF-8
+        // boundaries (a glyph can straddle two frames), so accumulate the raw
+        // bytes and decode once at the end before splitting into lines.
+        let mut buf: Vec<u8> = Vec::new();
+        while let Some(chunk) = stream.next().await {
+            buf.extend_from_slice(chunk?.into_bytes().as_ref());
+        }
+        Ok(String::from_utf8_lossy(&buf)
+            .lines()
+            .map(str::to_string)
+            .collect())
     }
 }
 

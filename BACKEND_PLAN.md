@@ -179,12 +179,17 @@ per tab) need the Tier-3 multi-container work and are deferred.
     `docker.stats()`, one-shot `stream:false` so the CPU delta is valid). The
     Containers view polls it ~2s while mounted + running and fills the
     CPU/Memory/Net/Disk gauge cards; em-dash when down or before the first poll.
-  - `container_logs` → tail/stream of `docker logs` for the runtime, ideally as a
-    `codehub://container-log` event. Backs the "Container log" panel. (pending)
+  - ~~`container_logs`~~ **DONE** — `DockerClient::logs(tail)` (bollard
+    `docker.logs()`, one-shot tail of stdout+stderr, no timestamps, split into
+    lines). The Containers view polls it ~4s while mounted + running and renders
+    the tail in the "Container log" panel, auto-scrolled to newest; honest
+    placeholder when down or before the first read. (Polling, not a
+    `codehub://container-log` event stream — a stream is a later upgrade if the
+    cadence proves too coarse.)
   - Host side of the bind mount (the absolute host path behind `/workspace`) — not
     in `ContainerStatus` today; add to `container_status` or a `mounts()` read. (pending)
-  The remaining two ship with the Tier-3 multi-container work, or sooner as
-  standalone reads.
+  The remaining one ships with the Tier-3 multi-container work, or sooner as a
+  standalone read.
 
 ---
 

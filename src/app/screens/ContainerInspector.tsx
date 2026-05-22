@@ -21,7 +21,7 @@ import { Ico } from "@/app/components/primitives/icons";
 import { CLIS, MODE_BY_ID, SPEC_BY_CLI } from "@/app/lib/catalog";
 import { type Cli, type ContainerState, type ContainerStats, ipc } from "@/app/lib/ipc";
 import { useStore } from "@/app/lib/store";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 // container_status state → the shared StatusDot/Badge vocabulary.
 const STATE_DOT: Record<ContainerState, StatusKey> = {
@@ -70,6 +70,30 @@ export function ContainerInspector() {
     };
     tick();
     const h = setInterval(tick, 2000);
+    return () => {
+      alive = false;
+      clearInterval(h);
+    };
+  }, [running]);
+
+  // Tail the container log while running + mounted. Same one-shot polling
+  // contract as stats (no backend stream); slower cadence (~4s) since logs are
+  // bulkier. `null` while down / before first read → honest placeholder.
+  const [logs, setLogs] = useState<string[] | null>(null);
+  useEffect(() => {
+    if (!running) {
+      setLogs(null);
+      return;
+    }
+    let alive = true;
+    const tick = () => {
+      ipc
+        .containerLogs(200)
+        .then((l) => alive && setLogs(l))
+        .catch(() => alive && setLogs(null));
+    };
+    tick();
+    const h = setInterval(tick, 4000);
     return () => {
       alive = false;
       clearInterval(h);
@@ -336,7 +360,7 @@ export function ContainerInspector() {
             </div>
           </div>
 
-          {/* logs — placeholder until a docker-logs stream exists (BACKEND_PLAN.md) */}
+          {/* logs — tail of `docker logs`, polled by container_logs (~4s). */}
           <div className="ch-card" style={{ padding: 0 }}>
             <div
               style={{
@@ -351,22 +375,14 @@ export function ContainerInspector() {
               <span className="mono" style={{ fontSize: 10.5, color: "var(--fg-3)" }}>
                 docker logs {name}
               </span>
+              <span style={{ flex: 1 }} />
+              {logs && logs.length > 0 && (
+                <span className="mono tnum" style={{ fontSize: 10, color: "var(--fg-3)" }}>
+                  last {logs.length} lines
+                </span>
+              )}
             </div>
-            <div
-              style={{
-                padding: "28px 14px",
-                textAlign: "center",
-                fontFamily: "var(--mono)",
-                fontSize: 11.5,
-                color: "var(--fg-3)",
-                lineHeight: 1.6,
-              }}
-            >
-              Live log streaming lands with a backend feed.
-              <br />
-              For now, use <span style={{ color: "var(--fg-1)" }}>docker logs -f {name}</span> in a
-              terminal.
-            </div>
+            <LogPanel lines={logs} running={running} name={name} />
           </div>
         </div>
       </div>
@@ -443,6 +459,87 @@ function GaugeCard({
           }}
         />
       )}
+    </div>
+  );
+}
+
+// Container log tail. `lines === null` → honest placeholder (down / pre-first
+// read); empty array → "no output yet"; otherwise the raw lines, newest at the
+// bottom, auto-scrolled to the tail on each refresh.
+function LogPanel({
+  lines,
+  running,
+  name,
+}: {
+  lines: string[] | null;
+  running: boolean;
+  name: string;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  // Keep pinned to the newest line when fresh tails arrive. `lines` is the
+  // trigger even though the body only touches the ref.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: lines is the intended re-scroll trigger.
+  useEffect(() => {
+    const el = ref.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [lines]);
+
+  if (lines === null) {
+    return (
+      <div
+        style={{
+          padding: "28px 14px",
+          textAlign: "center",
+          fontFamily: "var(--mono)",
+          fontSize: 11.5,
+          color: "var(--fg-3)",
+          lineHeight: 1.6,
+        }}
+      >
+        {running ? (
+          "Reading container log…"
+        ) : (
+          <>
+            Container is not running.
+            <br />
+            Start it to tail <span style={{ color: "var(--fg-1)" }}>docker logs {name}</span>.
+          </>
+        )}
+      </div>
+    );
+  }
+
+  if (lines.length === 0) {
+    return (
+      <div
+        className="mono"
+        style={{ padding: "28px 14px", textAlign: "center", fontSize: 11.5, color: "var(--fg-3)" }}
+      >
+        No log output yet.
+      </div>
+    );
+  }
+
+  return (
+    <div
+      ref={ref}
+      className="scroll"
+      style={{
+        maxHeight: 280,
+        overflow: "auto",
+        padding: "10px 14px",
+        fontFamily: "var(--mono)",
+        fontSize: 11,
+        lineHeight: 1.55,
+        color: "var(--fg-1)",
+        whiteSpace: "pre-wrap",
+        wordBreak: "break-word",
+      }}
+    >
+      {lines.map((line, i) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: log lines have no stable id; a refreshed tail is a full replace, not a reorder.
+        <div key={i}>{line || " "}</div>
+      ))}
     </div>
   );
 }

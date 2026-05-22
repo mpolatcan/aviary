@@ -16,7 +16,7 @@ use crate::docker::{Cli, DockerClient, LaunchMode};
 use crate::lifecycle::Lifecycle;
 use crate::pty::{PaneEmitter, PtyRegistry};
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::{delete, get, post};
@@ -135,6 +135,7 @@ pub async fn serve() {
         .route("/agent-key-status", get(agent_key_status))
         .route("/agent-versions", get(agent_versions))
         .route("/container-stats", get(container_stats))
+        .route("/container-logs", get(container_logs))
         .route("/sessions", get(list_sessions).post(create_session))
         .route("/sessions/:name", delete(kill_session))
         .route("/sessions/:name/rename", post(rename_session))
@@ -168,6 +169,22 @@ async fn agent_versions(State(st): State<AppState>) -> impl IntoResponse {
 
 async fn container_stats(State(st): State<AppState>) -> Result<impl IntoResponse, ApiError> {
     st.docker.stats().await.map(Json).map_err(err)
+}
+
+#[derive(Deserialize)]
+struct LogsQuery {
+    tail: Option<u32>,
+}
+
+async fn container_logs(
+    State(st): State<AppState>,
+    Query(q): Query<LogsQuery>,
+) -> Result<impl IntoResponse, ApiError> {
+    st.docker
+        .logs(q.tail.unwrap_or(200))
+        .await
+        .map(Json)
+        .map_err(err)
 }
 
 async fn list_sessions(State(st): State<AppState>) -> Result<impl IntoResponse, ApiError> {
