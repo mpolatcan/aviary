@@ -63,6 +63,20 @@ export interface ContainerStats {
   disk: number;
 }
 
+// Identity of the runtime container's image (Containers view Image card). Every
+// field is nullable — a missing value renders as em-dash, never a fake. `size`
+// is bytes; `created` is RFC 3339; `tag`/`digest` may be absent for a
+// locally-built (untagged / never-pushed) image.
+export interface ImageInfo {
+  id: string | null;
+  tag: string | null;
+  digest: string | null;
+  created: string | null;
+  size: number | null;
+  arch: string | null;
+  os: string | null;
+}
+
 // One bind/volume mount of the runtime container, from `docker inspect`.
 // `source` is the host path, `destination` the in-container path.
 export interface MountInfo {
@@ -121,6 +135,8 @@ export const ipc = {
   containerLogs: (tail?: number) => invoke<string[]>("container_logs", { tail }),
   // Real bind/volume mounts of the runtime container (host paths).
   containerMounts: () => invoke<MountInfo[]>("container_mounts"),
+  // Identity of the runtime container's image (tag/digest/created/size/arch/os).
+  containerImage: () => invoke<ImageInfo>("container_image"),
   // Working-tree status of /workspace (branch + changed files).
   containerGitStatus: () => invoke<GitStatus>("container_git_status"),
   // Unified diff for one /workspace path (raw `git diff` text).

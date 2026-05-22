@@ -138,6 +138,7 @@ pub async fn serve() {
         .route("/container-stats", get(container_stats))
         .route("/container-logs", get(container_logs))
         .route("/container-mounts", get(container_mounts))
+        .route("/container-image", get(container_image))
         .route("/container-git-status", get(container_git_status))
         .route("/container-git-diff", get(container_git_diff))
         .route("/container-git-diff-all", get(container_git_diff_all))
@@ -200,6 +201,10 @@ async fn container_logs(
 
 async fn container_mounts(State(st): State<AppState>) -> Result<impl IntoResponse, ApiError> {
     st.docker.mounts().await.map(Json).map_err(err)
+}
+
+async fn container_image(State(st): State<AppState>) -> Result<impl IntoResponse, ApiError> {
+    st.docker.image_info().await.map(Json).map_err(err)
 }
 
 async fn container_git_status(State(st): State<AppState>) -> Result<impl IntoResponse, ApiError> {

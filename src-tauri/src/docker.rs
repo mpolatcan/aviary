@@ -51,6 +51,26 @@ pub struct ContainerStats {
     pub disk: u64,
 }
 
+/// Identity of the image the runtime container runs, from `docker inspect` +
+/// `docker image inspect`. Backs the Containers view "Image" card. Every field
+/// is `Option` so a missing value renders as an em-dash rather than a fake.
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageInfo {
+    /// Image ID (`sha256:…`), as the container resolves it.
+    pub id: Option<String>,
+    /// First repo tag, e.g. `ghcr.io/.../codehub-runtime:0.1.2`.
+    pub tag: Option<String>,
+    /// First repo digest's `sha256:…` (registry content digest), if pulled.
+    pub digest: Option<String>,
+    /// Image build time, RFC 3339 as Docker reports it.
+    pub created: Option<String>,
+    /// On-disk image size in bytes.
+    pub size: Option<i64>,
+    pub arch: Option<String>,
+    pub os: Option<String>,
+}
+
 /// One bind/volume mount of the runtime container, read from `docker inspect`.
 /// `source` is the host-side path (or volume name); `destination` the in-container
 /// path. Backs the Containers view "Mounts" card — the real host path behind
@@ -612,6 +632,37 @@ impl DockerClient {
                 })
             })
             .collect())
+    }
+
+    /// Identity of the image the runtime container runs (Containers view "Image"
+    /// card): resolves the container's image ref via `inspect_container`, then
+    /// `inspect_image` for tag/digest/created/size/arch/os. Like [`mounts`], this
+    /// reads the actual container (no `is_running` gate) so it works for a stopped
+    /// container too; errors only when the container/image can't be inspected, in
+    /// which case the UI leaves the card em-dashed.
+    pub async fn image_info(&self) -> Result<ImageInfo, DockerError> {
+        let container = self.docker.inspect_container(&self.container, None).await?;
+        // The container's resolved image (an id, `sha256:…`); fall back to the
+        // configured image name if the id field is absent.
+        let image_ref = container
+            .image
+            .or_else(|| container.config.and_then(|c| c.image))
+            .ok_or_else(|| DockerError::ContainerDown(self.container.clone()))?;
+        let img = self.docker.inspect_image(&image_ref).await?;
+        // `repo_digests` entries look like `repo@sha256:…`; keep just the digest.
+        let digest = img
+            .repo_digests
+            .and_then(|d| d.into_iter().next())
+            .and_then(|rd| rd.rsplit_once('@').map(|(_, sha)| sha.to_string()));
+        Ok(ImageInfo {
+            id: img.id,
+            tag: img.repo_tags.and_then(|t| t.into_iter().next()),
+            digest,
+            created: img.created,
+            size: img.size,
+            arch: img.architecture,
+            os: img.os,
+        })
     }
 
     /// Working-tree status of the `/workspace` mount via

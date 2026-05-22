@@ -53,6 +53,8 @@ async function httpInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
       return jget(`/container-logs?tail=${args.tail ?? 200}`) as Promise<T>;
     case "container_mounts":
       return jget("/container-mounts") as Promise<T>;
+    case "container_image":
+      return jget("/container-image") as Promise<T>;
     case "container_git_status":
       return jget("/container-git-status") as Promise<T>;
     case "container_git_diff":

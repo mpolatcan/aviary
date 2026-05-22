@@ -23,6 +23,7 @@ import {
   type Cli,
   type ContainerState,
   type ContainerStats,
+  type ImageInfo,
   type MountInfo,
   type ProcessInfo,
   ipc,
@@ -121,6 +122,24 @@ export function ContainerInspector() {
       .containerMounts()
       .then((m) => alive && setMounts(m))
       .catch(() => alive && setMounts(null));
+    return () => {
+      alive = false;
+    };
+  }, [running]);
+
+  // Image identity (tag/digest/created/size) is fixed for the container's
+  // lifetime — fetch once like mounts; `null` while down / pre-read → em-dash.
+  const [imageInfo, setImageInfo] = useState<ImageInfo | null>(null);
+  useEffect(() => {
+    if (!running) {
+      setImageInfo(null);
+      return;
+    }
+    let alive = true;
+    ipc
+      .containerImage()
+      .then((i) => alive && setImageInfo(i))
+      .catch(() => alive && setImageInfo(null));
     return () => {
       alive = false;
     };
@@ -308,6 +327,9 @@ export function ContainerInspector() {
             <GaugeCard label="Disk" value={stats ? fmtBytes(stats.disk) : null} />
           </div>
 
+          {/* runtime image identity — real `docker image inspect` */}
+          <ImageCard image={imageInfo} />
+
           {/* attached sessions + mounts */}
           <div
             style={{
@@ -488,6 +510,61 @@ function fmtBytes(n: number): string {
   const i = Math.min(units.length - 1, Math.floor(Math.log(n) / Math.log(1024)));
   const v = n / 1024 ** i;
   return `${v >= 100 || i === 0 ? Math.round(v) : v.toFixed(1)} ${units[i]}`;
+}
+
+// Strip the `sha256:` prefix and shorten a digest/id to 12 hex chars, the way
+// `docker images` displays them. Returns null untouched so callers em-dash.
+function shortSha(s: string | null): string | null {
+  if (!s) return null;
+  const hex = s.startsWith("sha256:") ? s.slice("sha256:".length) : s;
+  return hex.length > 12 ? hex.slice(0, 12) : hex;
+}
+
+// The runtime image's identity from `docker image inspect` — all real, each
+// field em-dashed when absent (e.g. a locally-built image has no repo digest).
+function ImageCard({ image }: { image: ImageInfo | null }) {
+  const dash = "—";
+  const created = image?.created ? image.created.replace("T", " ").slice(0, 19) : dash;
+  return (
+    <div className="ch-card" style={{ padding: 14, marginBottom: 18, minWidth: 0 }}>
+      <div className="lbl" style={{ marginBottom: 10 }}>
+        Image
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px 24px" }}>
+        <ImageKv k="Tag" v={image?.tag ?? dash} />
+        <ImageKv k="Size" v={image?.size != null ? fmtBytes(image.size) : dash} />
+        <ImageKv k="Digest" v={shortSha(image?.digest ?? null) ?? dash} />
+        <ImageKv k="Created" v={created} />
+        <ImageKv k="Image ID" v={shortSha(image?.id ?? null) ?? dash} />
+        <ImageKv k="Platform" v={image?.os && image?.arch ? `${image.os}/${image.arch}` : dash} />
+      </div>
+    </div>
+  );
+}
+
+// One mono key/value row for the Image card; value right-aligned + ellipsized so
+// a long tag/digest can't widen its grid track.
+function ImageKv({ k, v }: { k: string; v: string }) {
+  return (
+    <div style={{ display: "flex", alignItems: "baseline", gap: 10, minWidth: 0 }}>
+      <span style={{ fontSize: 11.5, color: "var(--fg-2)", flexShrink: 0 }}>{k}</span>
+      <span style={{ flex: 1, borderBottom: "1px dotted var(--bd-soft)", minWidth: 8 }} />
+      <span
+        className="mono tnum"
+        style={{
+          fontSize: 11,
+          color: "var(--fg-1)",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+          minWidth: 0,
+        }}
+        title={v}
+      >
+        {v}
+      </span>
+    </div>
+  );
 }
 
 // One metric. `value === null` → em-dash + hatched bar (no reading yet / runtime

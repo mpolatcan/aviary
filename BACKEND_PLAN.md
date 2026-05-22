@@ -206,8 +206,14 @@ per tab) need the Tier-3 multi-container work and are deferred.
     unit-tested. The Containers view polls it ~3s while mounted + running and
     renders a PID/user/time/command table in the "Processes" card; honest
     placeholder when down or before the first read.
+  - ~~`container_image` (image identity)~~ **DONE** — `DockerClient::image_info()`
+    resolves the container's image ref via `inspect_container`, then
+    `inspect_image` for tag/digest/created/size/arch/os → `ImageInfo` (all
+    `Option`, em-dash when absent). Backs the Containers "Image" card; fetched
+    once on the running transition (fixed for the container's lifetime).
   All container-inspector feeds are now real (status / stats / logs / mounts /
-  processes). Multi-container (Tier-3) is the only remaining Containers-view work.
+  processes / image). Multi-container (Tier-3) is the only remaining
+  Containers-view work.
 - **Hub activity rail (P4 Hub A).** Two sections:
   - ~~"Changes"~~ **DONE** — `DockerClient::git_status()` runs
     `git status --porcelain=v1 --branch` inside `/workspace` →
