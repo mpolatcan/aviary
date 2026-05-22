@@ -8,7 +8,8 @@ pub mod lifecycle;
 pub mod pty;
 
 use docker::{
-    AgentVersion, Cli, ContainerStats, DockerClient, GitStatus, LaunchMode, MountInfo, ProcessInfo,
+    AgentVersion, Cli, CommitInfo, ContainerStats, DockerClient, GitStatus, LaunchMode, MountInfo,
+    ProcessInfo,
 };
 use lifecycle::{ContainerStatus, DockerInfo, KeyStatus, Lifecycle};
 use pty::{PaneEmitter, PtyRegistry, SessionInfo};
@@ -165,6 +166,20 @@ async fn container_git_diff(
 #[tauri::command]
 async fn container_top(state: tauri::State<'_, AppState>) -> Result<Vec<ProcessInfo>, String> {
     state.docker.top().await.map_err(|e| e.to_string())
+}
+
+/// Recent commits on `/workspace` (Dashboard "Recent commits"). `limit` defaults
+/// to 12 server-side and is clamped. Errs only when the container is down.
+#[tauri::command]
+async fn container_git_log(
+    limit: Option<u32>,
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<CommitInfo>, String> {
+    state
+        .docker
+        .git_log(limit.unwrap_or(12))
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -380,6 +395,7 @@ pub fn run() {
             container_git_status,
             container_git_diff,
             container_top,
+            container_git_log,
             list_sessions,
             create_session,
             kill_session,

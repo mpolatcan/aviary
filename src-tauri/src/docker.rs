@@ -102,6 +102,18 @@ pub struct ProcessInfo {
     pub command: String,
 }
 
+/// One commit from `git log` on `/workspace`. `hash` is the full SHA (the UI
+/// shortens it); `relative` is git's human age ("2 hours ago"). Backs the
+/// Dashboard "Recent commits" card.
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitInfo {
+    pub hash: String,
+    pub author: String,
+    pub relative: String,
+    pub subject: String,
+}
+
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum Cli {
@@ -693,10 +705,64 @@ impl DockerClient {
         let rows = resp.processes.unwrap_or_default();
         Ok(parse_top(&titles, &rows))
     }
+
+    /// Recent commits on the `/workspace` working tree (Dashboard "Recent
+    /// commits"). Fields are joined by US (\x1f) and split in `parse_git_log` so
+    /// a subject with spaces stays intact. `limit` is clamped to `GIT_LOG_CAP`.
+    /// Not-a-repo / no-commits-yet come back as an empty list (the UI shows an
+    /// honest note); errors only when the container is down.
+    pub async fn git_log(&self, limit: u32) -> Result<Vec<CommitInfo>, DockerError> {
+        if !self.is_running().await? {
+            return Err(DockerError::ContainerDown(self.container.clone()));
+        }
+        let n = format!("-n{}", limit.clamp(1, GIT_LOG_CAP));
+        let raw = self
+            .exec_capture(vec![
+                "git",
+                "-C",
+                "/workspace",
+                "-c",
+                "core.quotePath=false",
+                "log",
+                "--no-color",
+                &n,
+                "--pretty=format:%H%x1f%an%x1f%ar%x1f%s",
+            ])
+            .await?;
+        Ok(parse_git_log(&raw))
+    }
 }
 
 /// Cap on changed paths returned to the UI; the rail only renders a short list.
 const GIT_FILES_CAP: usize = 200;
+
+/// Upper bound on commits a single `git_log` call will return.
+const GIT_LOG_CAP: u32 = 50;
+
+/// Parse the US-delimited `git log` output (one commit per line,
+/// `hash\x1fauthor\x1frelative\x1fsubject`). Lines without all four fields —
+/// notably a `fatal:` error on a non-repo, or the empty output of a commit-less
+/// repo — are skipped, so callers get an empty list rather than garbage rows.
+fn parse_git_log(raw: &str) -> Vec<CommitInfo> {
+    raw.lines()
+        .filter_map(|line| {
+            let mut f = line.split('\u{1f}');
+            let hash = f.next()?;
+            let author = f.next()?;
+            let relative = f.next()?;
+            let subject = f.next()?;
+            if hash.is_empty() {
+                return None;
+            }
+            Some(CommitInfo {
+                hash: hash.to_string(),
+                author: author.to_string(),
+                relative: relative.to_string(),
+                subject: subject.to_string(),
+            })
+        })
+        .collect()
+}
 
 /// Parse `git status --porcelain=v1 --branch` output. Pulled out of the async
 /// method so the line-handling can be unit-tested without a container.
@@ -872,7 +938,7 @@ pub struct AttachHandles {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_version_like, parse_git_status, parse_top};
+    use super::{is_version_like, parse_git_log, parse_git_status, parse_top};
 
     #[test]
     fn version_like_accepts_real_versions_rejects_exec_errors() {
@@ -976,6 +1042,27 @@ mod tests {
         assert_eq!(procs[0].time.as_deref(), Some("00:00:01"));
         assert_eq!(procs[0].command, "tmux new-session");
         assert_eq!(procs[1].command, "node /usr/bin/claude");
+    }
+
+    #[test]
+    fn git_log_parses_us_delimited_commits() {
+        let raw = "abc123\u{1f}Ada\u{1f}2 hours ago\u{1f}feat: add the thing\n\
+                   def456\u{1f}Grace\u{1f}3 days ago\u{1f}fix: spaces, commas: kept\n";
+        let commits = parse_git_log(raw);
+        assert_eq!(commits.len(), 2);
+        assert_eq!(commits[0].hash, "abc123");
+        assert_eq!(commits[0].author, "Ada");
+        assert_eq!(commits[0].relative, "2 hours ago");
+        assert_eq!(commits[0].subject, "feat: add the thing");
+        // A subject with its own separators survives intact.
+        assert_eq!(commits[1].subject, "fix: spaces, commas: kept");
+    }
+
+    #[test]
+    fn git_log_skips_non_commit_lines() {
+        // fatal error (non-repo) and a blank line produce no rows.
+        let raw = "fatal: not a git repository\n\n";
+        assert!(parse_git_log(raw).is_empty());
     }
 
     #[test]

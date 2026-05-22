@@ -213,6 +213,20 @@ per tab) need the Tier-3 multi-container work and are deferred.
   - "Activity" turn-event feed — still **pending**: needs an app-level event bus
     / permission-prompt stream the agents don't emit yet (their prompts render in
     the terminal today). Stays an honest empty state until that surface exists.
+- **Dashboard (P4).** ~~Cross-session overview~~ **DONE (real subset)** — the
+  Dashboard view is now a real read-only overview built from data the backend
+  already reports: live session count + per-session agent/mode/tab (store),
+  runtime CPU/memory (`container_stats`), `/workspace` git status
+  (`container_git_status`: branch + ahead/behind + changed-file count), and
+  ~~recent commits~~ **DONE** — `DockerClient::git_log(limit)` runs
+  `git log --pretty=format:%H%x1f%an%x1f%ar%x1f%s` inside `/workspace` →
+  `Vec<CommitInfo{hash,author,relative,subject}>` (US-delimited, parser
+  unit-tested, limit clamped to 50). The design's per-session token/cost/turn
+  telemetry, activity chart, attention queue and account-usage roll-ups are
+  **omitted** (not faked) — they need the per-turn cost/usage capture below.
+  - Per-session token/cost/turn + activity chart + attention queue — still
+    **deferred**: requires per-turn token+cost capture from each CLI's output
+    and a turn-event bus (same blocker as the Hub "Activity" feed).
 
 ---
 

@@ -78,6 +78,15 @@ export interface ProcessInfo {
   command: string;
 }
 
+// One commit from `git log` on /workspace. `hash` is the full SHA (UI shortens);
+// `relative` is git's human age ("2 hours ago").
+export interface CommitInfo {
+  hash: string;
+  author: string;
+  relative: string;
+  subject: string;
+}
+
 // Working-tree state of /workspace. `isRepo: false` when it's not a git repo
 // (or git is unavailable). `files` is capped server-side; `total` is the full
 // count.
@@ -106,6 +115,8 @@ export const ipc = {
   containerGitDiff: (path: string) => invoke<string>("container_git_diff", { path }),
   // Processes running inside the runtime container (`docker top`).
   containerTop: () => invoke<ProcessInfo[]>("container_top"),
+  // Recent commits on /workspace (`git log`); defaults to 12 server-side.
+  containerGitLog: (limit?: number) => invoke<CommitInfo[]>("container_git_log", { limit }),
   listSessions: () => invoke<SessionInfo[]>("list_sessions"),
   createSession: (name: string, cli: Cli, mode: Mode, alias: string) =>
     invoke<void>("create_session", { name, cli, mode, alias }),

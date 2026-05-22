@@ -1,7 +1,6 @@
 import { useEffect } from "react";
 import { Grid } from "./components/Grid";
 import { ActivityRail } from "./components/hub/ActivityRail";
-import { ComingSoon } from "./components/hub/ComingSoon";
 import { CommandPalette } from "./components/hub/CommandPalette";
 import { HubSidebar } from "./components/hub/HubSidebar";
 import { HubStatusBar } from "./components/hub/HubStatusBar";
@@ -12,6 +11,7 @@ import { useKeyboard } from "./hooks/useKeyboard";
 import { useLauncher } from "./lib/launcher";
 import { activeWorkspace, initLifecycle, useStore } from "./lib/store";
 import { ContainerInspector } from "./screens/ContainerInspector";
+import { Dashboard } from "./screens/Dashboard";
 import { EmptyHero } from "./screens/EmptyState";
 import { Settings } from "./screens/Settings";
 
@@ -44,10 +44,7 @@ export function App() {
       ) : view === "settings" ? (
         <Settings />
       ) : (
-        <ComingSoon
-          title="Dashboard"
-          note="Cross-session activity, usage and cost roll-ups land in a later P4 slice."
-        />
+        <Dashboard />
       )}
 
       {/* Floating overlays, above every view (⌘K / ⌘/). Portalled, so placement
