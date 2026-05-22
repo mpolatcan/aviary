@@ -9,7 +9,7 @@ pub mod pty;
 
 use docker::{
     AgentVersion, Cli, CommitInfo, ContainerStats, DockerClient, GitStatus, ImageInfo, LaunchMode,
-    MountInfo, ProcessInfo,
+    MountInfo, ProcessInfo, RuntimeHealth,
 };
 use lifecycle::{AppInfo, ContainerStatus, DockerInfo, KeyStatus, Lifecycle};
 use pty::{PaneEmitter, PtyRegistry, SessionInfo};
@@ -153,6 +153,13 @@ async fn container_mounts(state: tauri::State<'_, AppState>) -> Result<Vec<Mount
 #[tauri::command]
 async fn container_image(state: tauri::State<'_, AppState>) -> Result<ImageInfo, String> {
     state.docker.image_info().await.map_err(|e| e.to_string())
+}
+
+/// Liveness of the runtime container (Containers view hero): started-at, restart
+/// count, status and OOM flag. Errs only when the container can't be inspected.
+#[tauri::command]
+async fn container_health(state: tauri::State<'_, AppState>) -> Result<RuntimeHealth, String> {
+    state.docker.health().await.map_err(|e| e.to_string())
 }
 
 /// Working-tree status of the `/workspace` mount (Hub activity rail "Changes").
@@ -416,6 +423,7 @@ pub fn run() {
             container_logs,
             container_mounts,
             container_image,
+            container_health,
             container_git_status,
             container_git_diff,
             container_git_diff_all,
