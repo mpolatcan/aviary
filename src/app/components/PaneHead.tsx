@@ -25,6 +25,7 @@ export function PaneHead({ session, focused }: { session: string; focused: boole
   const splitSession = useStore((s) => s.splitSession);
   const closeSession = useStore((s) => s.closeSession);
   const renameSession = useStore((s) => s.renameSession);
+  const openDetail = useStore((s) => s.openDetail);
   const openKey = useLauncher((s) => s.openKey);
   const ctx = useLauncher((s) => s.ctx);
   const openLaunch = useLauncher((s) => s.open);
@@ -110,6 +111,17 @@ export function PaneHead({ session, focused }: { session: string; focused: boole
         {badge && <span className={`mode-badge badge-${meta.mode}`}>{badge}</span>}
 
         <span style={{ flex: 1 }} />
+
+        <IconBtn
+          title="Open session detail"
+          style={{ width: 20, height: 20 }}
+          onClick={(e) => {
+            e.stopPropagation();
+            openDetail(session);
+          }}
+        >
+          {Ico.expand}
+        </IconBtn>
 
         {/* split — same anchored launcher popover as every other surface */}
         <Popover open={isOpen} onOpenChange={(o) => !o && closeLaunch()}>

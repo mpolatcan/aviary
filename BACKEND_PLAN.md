@@ -290,6 +290,19 @@ per tab) need the Tier-3 multi-container work and are deferred.
   typed it into each pane. No new backend. The blocked compare grid is omitted,
   not stubbed (the send IS the honest realization). Verified end-to-end: the
   prompt reached both live tmux panes.
+- **Session detail (P4).** ~~Focused-session view~~ **DONE (core) / telemetry
+  blocked.** `session-detail.jsx` is a single session's terminal + a tabbed
+  inspector. The genuinely-real core IS built: a `SessionDetail` screen (store
+  `detailSession` + `openDetail`/`closeDetail`, opened from a PaneHead expand
+  button, rendered in App ahead of the view switch) reparents the session's live
+  xterm on the left (existing `PaneMount`) and a Diff/Logs inspector on the right
+  reusing existing backends — Diff polls `container_git_diff_all` through the
+  shared `DiffBody` renderer, Logs polls `container_logs`, the header branch comes
+  from `container_git_status`. No new backend. The design's per-turn header
+  telemetry (ctx gauge / turn / tokens / cost / budget) is **omitted** (not faked)
+  — same per-turn-capture blocker below. Because every session shares ONE runtime,
+  git + logs are workspace/runtime-wide, not per-session, and the inspector is
+  labelled accordingly. Verified end-to-end against the live runtime (dark+light).
 - **Per-turn capture (the big unlock).** A subsystem that tails each agent pane's
   output, detects turn boundaries and extracts token/cost would unblock Usage,
   the Dashboard cost roll-ups, the Hub Activity feed + PaneHead metrics, the

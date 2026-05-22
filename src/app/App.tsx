@@ -15,6 +15,7 @@ import { activeWorkspace, initLifecycle, useStore } from "./lib/store";
 import { ContainerInspector } from "./screens/ContainerInspector";
 import { Dashboard } from "./screens/Dashboard";
 import { EmptyHero } from "./screens/EmptyState";
+import { SessionDetail } from "./screens/SessionDetail";
 import { Settings } from "./screens/Settings";
 
 // Designed screens whose real data needs backend CodeHub doesn't capture yet
@@ -50,6 +51,7 @@ const PLANNED = {
 // other views are full-pane screens.
 export function App() {
   const view = useStore((s) => s.view);
+  const detailSession = useStore((s) => s.detailSession);
 
   useKeyboard();
   useEffect(() => {
@@ -67,7 +69,9 @@ export function App() {
       }}
     >
       <HubSidebar />
-      {view === "hub" ? (
+      {detailSession ? (
+        <SessionDetail session={detailSession} />
+      ) : view === "hub" ? (
         <HubView />
       ) : view === "containers" ? (
         <ContainerInspector />

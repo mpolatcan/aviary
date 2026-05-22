@@ -38,6 +38,10 @@ interface CodeHubState {
   status: ContainerStatus | null;
   error: string | null;
   view: HubView;
+  // Session whose focused-detail view is open (terminal + workspace inspector),
+  // or null for the normal view. Set from a pane's expand button; any sidebar
+  // view switch or closing that session clears it.
+  detailSession: string | null;
 
   // Tier-1 reads (BACKEND_PLAN.md), fetched once the runtime is reachable.
   // Presence/version metadata only — never secret values.
@@ -53,6 +57,8 @@ interface CodeHubState {
   setStatus: (s: ContainerStatus) => void;
   setError: (msg: string) => void;
   setView: (v: HubView) => void;
+  openDetail: (name: string) => void;
+  closeDetail: () => void;
   newPlate: (cli: Cli, mode: Mode) => Promise<void>;
   splitSession: (target: string, dir: SplitDir, cli: Cli, mode: Mode) => Promise<void>;
   closeSession: (name: string) => Promise<void>;
@@ -102,6 +108,7 @@ export const useStore = create<CodeHubState>((set, get) => {
     status: null,
     error: null,
     view: "hub",
+    detailSession: null,
     dockerInfo: null,
     keyStatus: null,
     agentVersions: null,
@@ -119,7 +126,13 @@ export const useStore = create<CodeHubState>((set, get) => {
 
     setError: (msg) => set({ error: msg }),
 
-    setView: (view) => set({ view }),
+    // Switching to a top-level view leaves any open session-detail view.
+    setView: (view) => set({ view, detailSession: null }),
+
+    openDetail: (name) => {
+      if (get().sessionMeta[name]) set({ detailSession: name });
+    },
+    closeDetail: () => set({ detailSession: null }),
 
     newPlate: async (cli, mode) => {
       if (!isRunning()) return;
@@ -184,7 +197,8 @@ export const useStore = create<CodeHubState>((set, get) => {
       set((s) => {
         const sessionMeta = { ...s.sessionMeta };
         delete sessionMeta[name];
-        return { sessionMeta };
+        // A closed session can't have an open detail view.
+        return { sessionMeta, detailSession: s.detailSession === name ? null : s.detailSession };
       });
 
       if (!meta) return;
@@ -220,7 +234,11 @@ export const useStore = create<CodeHubState>((set, get) => {
         set((s) => {
           const sessionMeta = { ...s.sessionMeta };
           delete sessionMeta[session];
-          return { sessionMeta };
+          // A closed session can't have an open detail view (matches closeSession).
+          return {
+            sessionMeta,
+            detailSession: s.detailSession === session ? null : s.detailSession,
+          };
         });
       }
       removeWorkspace(get, set, id);
@@ -247,7 +265,9 @@ export const useStore = create<CodeHubState>((set, get) => {
 
     switchWorkspace: (id) => {
       if (get().activeWorkspaceId === id) return;
-      set({ activeWorkspaceId: id });
+      // Switching tabs leaves any open session-detail view (same contract as
+      // setView) — otherwise the sidebar tab click is a silent no-op behind it.
+      set({ activeWorkspaceId: id, detailSession: null });
     },
 
     renameSession: (name, alias) => {
