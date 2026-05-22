@@ -37,9 +37,9 @@ export const ipc = {
 } as const;
 
 export function onLifecycle(cb: (s: ContainerStatus) => void): Promise<UnlistenFn> {
-  return listen<ContainerStatus>("aviary://lifecycle", (e) => cb(e.payload));
+  return listen<ContainerStatus>("codehub://lifecycle", (e) => cb(e.payload));
 }
 
 export function onLifecycleError(cb: (msg: string) => void): Promise<UnlistenFn> {
-  return listen<string>("aviary://lifecycle-error", (e) => cb(e.payload));
+  return listen<string>("codehub://lifecycle-error", (e) => cb(e.payload));
 }

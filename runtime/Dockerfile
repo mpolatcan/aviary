@@ -22,25 +22,25 @@ RUN npm install -g @openai/codex
 # RUN curl -fsSL https://antigravity.google/cli/install.sh | bash
 
 # Persistent tmux socket location
-ENV TMUX_TMPDIR=/tmp/aviary
-RUN mkdir -p /tmp/aviary && chmod 700 /tmp/aviary
+ENV TMUX_TMPDIR=/tmp/codehub
+RUN mkdir -p /tmp/codehub && chmod 700 /tmp/codehub
 
-# Themed status bar matching Aviary's palette (replaces tmux's default green).
+# Themed status bar matching CodeHub's palette (replaces tmux's default green).
 # Loaded on tmux server start from $HOME/.tmux.conf.
 COPY tmux.conf /root/.tmux.conf
 
 # Declare this container a recognized sandbox so Claude Code's YOLO mode
-# (--dangerously-skip-permissions) runs as root instead of refusing. Aviary also
+# (--dangerously-skip-permissions) runs as root instead of refusing. CodeHub also
 # injects this per-pane via `tmux new-session -e`, so the running container does
 # not need a rebuild; this keeps a freshly built image correct on its own.
 ENV IS_SANDBOX=1
 
-# Aviary writes config + workspace via volume mounts
+# CodeHub writes config + workspace via volume mounts
 ENV CLAUDE_CONFIG_DIR=/config/claude
 ENV CODEX_CONFIG_DIR=/config/codex
 ENV ANTIGRAVITY_CONFIG_DIR=/config/antigravity
 
 WORKDIR /workspace
 
-# Idle entrypoint — Aviary spawns tmux sessions via docker exec
+# Idle entrypoint — CodeHub spawns tmux sessions via docker exec
 ENTRYPOINT ["tail", "-f", "/dev/null"]

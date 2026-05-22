@@ -1,9 +1,9 @@
 ---
 name: runtime-rebuild
-description: Rebuild and re-tag the Aviary runtime Docker image. Use when the Dockerfile, CLI install commands, or base image change, or when verifying a clean rebuild against the current source.
+description: Rebuild and re-tag the CodeHub runtime Docker image. Use when the Dockerfile, CLI install commands, or base image change, or when verifying a clean rebuild against the current source.
 ---
 
-# Rebuild Aviary runtime image
+# Rebuild CodeHub runtime image
 
 Run this skill when any of:
 
@@ -40,7 +40,7 @@ Run this skill when any of:
 4. **Tag `latest`** only if this is the canonical version on `main`:
 
    ```bash
-   docker tag ghcr.io/mpolatcan/aviary-runtime:<VERSION> ghcr.io/mpolatcan/aviary-runtime:latest
+   docker tag ghcr.io/mpolatcan/codehub-runtime:<VERSION> ghcr.io/mpolatcan/codehub-runtime:latest
    ```
 
 5. **Multi-arch build for publishing** (only when cutting a release — see `release-cut` skill):

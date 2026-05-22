@@ -1,9 +1,9 @@
 ---
 name: add-cli
-description: Add a new AI coding agent CLI to Aviary's lineup. Walks the four-file sync — Dockerfile, Rust enum, frontend spec, bird sprite — and the runtime rebuild that ships it.
+description: Add a new AI coding agent CLI to CodeHub's lineup. Walks the four-file sync — Dockerfile, Rust enum, frontend spec, bird sprite — and the runtime rebuild that ships it.
 ---
 
-# Add a new CLI to Aviary
+# Add a new CLI to CodeHub
 
 Adding a CLI is a four-file change. Skipping any step will produce silent runtime failures (modal entry exists but session dies, or vice versa). Do all four in one commit.
 
@@ -64,10 +64,10 @@ Edit `index.html`. Add a `<symbol id="bird-<slug>" viewBox="0 0 64 64">` inside 
 Edit `src-tauri/src/lib.rs`:
 
 ```rust
-const DEFAULT_IMAGE: &str = "ghcr.io/mpolatcan/aviary-runtime:0.1.<NEXT>";
+const DEFAULT_IMAGE: &str = "ghcr.io/mpolatcan/codehub-runtime:0.1.<NEXT>";
 ```
 
-This ensures end users get a fresh pull when they update Aviary.
+This ensures end users get a fresh pull when they update CodeHub.
 
 ## 6. Rebuild + verify
 

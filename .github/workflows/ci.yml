@@ -97,13 +97,13 @@ jobs:
           context: runtime
           push: false
           load: true
-          tags: aviary-runtime:ci
+          tags: codehub-runtime:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
       - name: Smoke-test installed CLIs
         run: |
-          docker run --rm --entrypoint bash aviary-runtime:ci -c "
+          docker run --rm --entrypoint bash codehub-runtime:ci -c "
             set -e
             which claude
             which codex

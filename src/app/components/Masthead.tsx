@@ -17,7 +17,7 @@ export function Masthead() {
     >
       <div className="flex items-baseline gap-[10px] pl-[70px]">
         <span className="font-mono font-extrabold text-[length:var(--fs-lg)] text-text tracking-[-0.02em] leading-none">
-          <span className="text-accent font-normal">▟ </span>Aviary
+          <span className="text-accent font-normal">▟ </span>CodeHub
         </span>
         <span className="text-text-ghost">·</span>
         <span className="pixel text-text-faint text-[length:var(--fs-pixel)]">
@@ -29,7 +29,7 @@ export function Masthead() {
         {count > 0 && (
           <>
             <span className="pixel text-text-faint text-[length:var(--fs-pixel)]">
-              {count} {count === 1 ? "specimen" : "specimens"}
+              {count} {count === 1 ? "session" : "sessions"}
             </span>
             <span className="text-text-ghost">·</span>
           </>

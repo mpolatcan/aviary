@@ -78,7 +78,7 @@ async function httpInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
 
 // One shared WebSocket fans every `{event, payload}` frame out to the listeners
 // registered for that exact event string — the same strings the Tauri build
-// emits (`pty://data/<id>`, `aviary://lifecycle`, …).
+// emits (`pty://data/<id>`, `codehub://lifecycle`, …).
 type Frame = { payload: unknown };
 const listeners = new Map<string, Set<(e: Frame) => void>>();
 let socket: WebSocket | null = null;

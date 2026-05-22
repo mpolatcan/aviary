@@ -1,12 +1,12 @@
-# Aviary
+# CodeHub
 
 A home for your AI coding agents.
 
-Tauri desktop app that runs **Claude Code**, **Codex**, and **Antigravity** CLIs inside a single sandboxed Docker container, multiplexed via tmux. Each pane = one tmux session = one agent; tabs hold one or more split panes. Aviary spawns and manages the container itself — no `docker compose` step.
+Tauri desktop app that runs **Claude Code**, **Codex**, and **Antigravity** CLIs inside a single sandboxed Docker container, multiplexed via tmux. Each pane = one tmux session = one agent; tabs hold one or more split panes. CodeHub spawns and manages the container itself — no `docker compose` step.
 
 ## Why
 
-Running multiple agent CLIs locally is messy: separate terminals, separate auth, no unified view, no isolation. Aviary cages each agent in its own tmux session inside one container, and gives you a single window to switch between them.
+Running multiple agent CLIs locally is messy: separate terminals, separate auth, no unified view, no isolation. CodeHub isolates each agent in its own tmux session inside one container, and gives you a single window to switch between them.
 
 ## Architecture
 
@@ -24,7 +24,7 @@ flowchart LR
         PR["PtyRegistry<br/>pane_id map"]
     end
 
-    subgraph runtime["aviary-runtime container"]
+    subgraph runtime["codehub-runtime container"]
         direction TB
         TMUX["tmux server<br/>idle until first session"]
         CLIS["claude · codex<br/>antigravity"]
@@ -53,14 +53,14 @@ sequenceDiagram
     participant UI as Frontend
     participant LC as Lifecycle
     participant D as Docker
-    participant C as aviary-runtime
+    participant C as codehub-runtime
 
     UI->>LC: ensure_runtime (spawn bg)
-    LC->>D: pull ghcr.io/mpolatcan/aviary-runtime:VER
+    LC->>D: pull ghcr.io/mpolatcan/codehub-runtime:VER
     Note right of D: ~10–20s first run only
     LC->>D: create container + volume mounts
     D->>C: start
-    LC-->>UI: emit aviary://lifecycle (running)
+    LC-->>UI: emit codehub://lifecycle (running)
     UI->>LC: list_sessions
     LC-->>UI: existing tmux sessions
     UI->>UI: restore tabs
@@ -112,8 +112,8 @@ Lives in `runtime/`. See `runtime/README.md` for build and publish instructions.
 ## Setup
 
 ```bash
-git clone https://github.com/mpolatcan/aviary.git
-cd aviary
+git clone https://github.com/mpolatcan/codehub.git
+cd codehub
 npm install
 
 # Build runtime image locally (or wait for app to pull from the registry on first launch)
@@ -141,9 +141,9 @@ Override defaults:
 
 | Env var | Purpose | Default |
 |---|---|---|
-| `AVIARY_CONTAINER` | Container name | `aviary-runtime` |
-| `AVIARY_IMAGE` | Image tag to use | `ghcr.io/mpolatcan/aviary-runtime:0.1.0` |
-| `AVIARY_NETWORK_MODE` | Docker network mode | `bridge` |
+| `CODEHUB_CONTAINER` | Container name | `codehub-runtime` |
+| `CODEHUB_IMAGE` | Image tag to use | `ghcr.io/mpolatcan/codehub-runtime:0.1.0` |
+| `CODEHUB_NETWORK_MODE` | Docker network mode | `bridge` |
 | `CLAUDE_CODE_OAUTH_TOKEN` | Skip `/login` in Claude Code | unset |
 
 ## Production build
@@ -156,7 +156,7 @@ Bundles a `.dmg` on macOS, `.AppImage`/`.deb` on Linux. Output at `src-tauri/tar
 
 ## Volume layout
 
-Aviary stores all state under the OS app-data dir, namespaced by the bundle identifier
+CodeHub stores all state under the OS app-data dir, namespaced by the bundle identifier
 configured in `src-tauri/tauri.conf.json`.
 
 | Platform | Host path | Container path | Purpose |

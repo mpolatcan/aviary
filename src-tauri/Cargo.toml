@@ -1,19 +1,19 @@
 [package]
-name = "aviary"
+name = "codehub"
 version = "0.1.0"
 edition = "2021"
 # Dev-bridge added a second binary; without this, `cargo run` (used by
 # `tauri dev`) can't choose a default. Pin the app as the default-run target.
-default-run = "aviary"
+default-run = "codehub"
 
 [lib]
-name = "aviary_lib"
+name = "codehub_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 # Dev-only HTTP/WS bridge (browser testing). Excluded from normal builds; only
 # compiled with `--features devserver`. See src/devserver.rs.
 [[bin]]
-name = "aviary-devserver"
+name = "codehub-devserver"
 path = "src/bin/devserver.rs"
 required-features = ["devserver"]
 

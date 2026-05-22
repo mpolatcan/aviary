@@ -1,4 +1,4 @@
-# Aviary — Manual Test Scenarios
+# CodeHub — Manual Test Scenarios
 
 Until automated IPC tests exist, exercise these by hand before each cut.
 Run `npm run tauri dev`, then check each row.
@@ -6,8 +6,8 @@ Run `npm run tauri dev`, then check each row.
 Verify inside the container with:
 
 ```bash
-docker exec -it aviary-runtime tmux -S /tmp/aviary/default ls
-docker exec -it aviary-runtime ps -ef | grep -E "tmux|claude|codex"
+docker exec -it codehub-runtime tmux -S /tmp/codehub/default ls
+docker exec -it codehub-runtime ps -ef | grep -E "tmux|claude|codex"
 ```
 
 ## Lifecycle
@@ -17,9 +17,9 @@ docker exec -it aviary-runtime ps -ef | grep -E "tmux|claude|codex"
 | L1 | First launch, image absent | App pulls image, status: missing → starting → running |
 | L2 | First launch, image present, container absent | Container created + started; volumes appear under app-data dir |
 | L3 | Launch, container exists & running | Status flips to running immediately, no re-pull |
-| L4 | Launch, container exists but stopped | Aviary starts it; status: stopped → running |
+| L4 | Launch, container exists but stopped | CodeHub starts it; status: stopped → running |
 | L5 | Docker daemon down | Status: unreachable; clear error in status bar |
-| L6 | `docker stop aviary-runtime` while app running | Status drops to stopped within next probe; further `+` clicks blocked |
+| L6 | `docker stop codehub-runtime` while app running | Status drops to stopped within next probe; further `+` clicks blocked |
 
 ## Session lifecycle (CORE — was previously broken)
 
@@ -28,7 +28,7 @@ docker exec -it aviary-runtime ps -ef | grep -E "tmux|claude|codex"
 | S1 | Open new-tab popover, pick Claude, Open | Popover closes, new tab appears, terminal shows Claude prompt | `tmux ls` shows `claude-xxxxx` |
 | S2 | Type into active session | Keystrokes echo, Claude responds | — |
 | S3 | Click `×` on tab | Tab disappears, **tmux session also gone** | `tmux ls` must NOT list it |
-| S4 | Close last tab | Empty state ("aviary is silent") visible | `tmux ls` empty or "no server" |
+| S4 | Close last tab | Empty state ("No sessions yet") visible | `tmux ls` empty or "no server" |
 | S5 | Open 3 sessions, close middle one | Middle gone, others untouched, focus moves to first remaining | `tmux ls` shows 2 |
 | S6 | Open Claude + Codex + Antigravity tabs | 3 different bird silhouettes, 3 different Latin binomials in tabs | — |
 | S7 | Close active tab | Focus auto-moves to next pane | UI: another tab gets `.active` border-top |
@@ -53,7 +53,7 @@ docker exec -it aviary-runtime ps -ef | grep -E "tmux|claude|codex"
 
 | # | Scenario | Expected |
 |---|---|---|
-| V1 | Write file in session: `touch /workspace/probe.txt` | File visible on host under `~/Library/Application Support/com.mutlupolatcan.aviary/workspace/` |
+| V1 | Write file in session: `touch /workspace/probe.txt` | File visible on host under `~/Library/Application Support/com.mutlupolatcan.codehub/workspace/` |
 | V2 | Restart container, re-open Claude | No re-login needed; `~/.../config/claude` carried |
 | V3 | Restart app, restart container | Same — auth + workspace intact |
 

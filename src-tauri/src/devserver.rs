@@ -10,7 +10,7 @@
 //! command surface mirrors the `#[tauri::command]`s in `lib.rs` one-for-one.
 //!
 //! NOT compiled into the shipped app — gated behind the `devserver` feature and
-//! built only via `cargo run --bin aviary-devserver --features devserver`.
+//! built only via `cargo run --bin codehub-devserver --features devserver`.
 
 use crate::docker::{Cli, DockerClient, LaunchMode};
 use crate::lifecycle::Lifecycle;
@@ -28,8 +28,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::broadcast;
 
-const DEFAULT_CONTAINER: &str = "aviary-runtime";
-const DEFAULT_IMAGE: &str = "ghcr.io/mpolatcan/aviary-runtime:0.1.0";
+const DEFAULT_CONTAINER: &str = "codehub-runtime";
+const DEFAULT_IMAGE: &str = "ghcr.io/mpolatcan/codehub-runtime:0.1.0";
 const ADDR: &str = "127.0.0.1:4555";
 
 #[derive(Clone)]
@@ -74,17 +74,23 @@ pub async fn serve() {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info,aviary_lib=debug".into()),
+                .unwrap_or_else(|_| "info,codehub_lib=debug".into()),
         )
         .init();
 
-    let container = std::env::var("AVIARY_CONTAINER").unwrap_or_else(|_| DEFAULT_CONTAINER.into());
-    let image = std::env::var("AVIARY_IMAGE").unwrap_or_else(|_| DEFAULT_IMAGE.into());
-    let data_dir = std::env::var("AVIARY_DEV_DATA")
+    // CODEHUB_* canonical; AVIARY_* kept as a fallback for existing setups.
+    let container = std::env::var("CODEHUB_CONTAINER")
+        .or_else(|_| std::env::var("AVIARY_CONTAINER"))
+        .unwrap_or_else(|_| DEFAULT_CONTAINER.into());
+    let image = std::env::var("CODEHUB_IMAGE")
+        .or_else(|_| std::env::var("AVIARY_IMAGE"))
+        .unwrap_or_else(|_| DEFAULT_IMAGE.into());
+    let data_dir = std::env::var("CODEHUB_DEV_DATA")
+        .or_else(|_| std::env::var("AVIARY_DEV_DATA"))
         .map(PathBuf::from)
         .unwrap_or_else(|_| {
             PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".into()))
-                .join(".aviary-devserver")
+                .join(".codehub-devserver")
         });
 
     let lifecycle = Arc::new(
@@ -107,9 +113,9 @@ pub async fn serve() {
         let tx = tx.clone();
         tokio::spawn(async move {
             let frame = match lifecycle.ensure_runtime().await {
-                Ok(status) => json!({ "event": "aviary://lifecycle", "payload": status }),
+                Ok(status) => json!({ "event": "codehub://lifecycle", "payload": status }),
                 Err(e) => {
-                    json!({ "event": "aviary://lifecycle-error", "payload": e.to_string() })
+                    json!({ "event": "codehub://lifecycle-error", "payload": e.to_string() })
                 },
             };
             let _ = tx.send(frame.to_string());
@@ -136,7 +142,7 @@ pub async fn serve() {
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(ADDR).await.expect("bind");
-    tracing::info!("aviary dev bridge on http://{ADDR}  (proxied at /__bridge)");
+    tracing::info!("codehub dev bridge on http://{ADDR}  (proxied at /__bridge)");
     axum::serve(listener, app).await.expect("serve");
 }
 

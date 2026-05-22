@@ -1,4 +1,4 @@
-# Aviary — Repository Guide for Claude
+# CodeHub — Repository Guide for Claude
 
 A Tauri 2 desktop app that runs multiple AI coding CLIs (Claude Code, Codex, Antigravity) inside one Docker container, multiplexed via tmux. Each tab in the window = one tmux session = one agent.
 
@@ -36,13 +36,13 @@ aviary/
     tauri.conf.json
     capabilities/default.json
     src/
-      main.rs               # Tiny entry, calls aviary_lib::run()
+      main.rs               # Tiny entry, calls codehub_lib::run()
       lib.rs                # Tauri commands + setup hook
       lifecycle.rs          # Image pull, container create/start/stop
       docker.rs             # tmux session ops + exec attach
       pty.rs                # PtyRegistry — pane stream pumps (PaneEmitter trait)
       devserver.rs          # Dev-only HTTP/WS bridge (feature `devserver`)
-      bin/devserver.rs      # Bridge entrypoint binary (aviary-devserver)
+      bin/devserver.rs      # Bridge entrypoint binary (codehub-devserver)
   runtime/
     Dockerfile              # Runtime image (CLIs + tmux)
     README.md               # Build + publish instructions
@@ -52,7 +52,7 @@ aviary/
 
 ## How sessions work end-to-end
 
-1. User opens the new-tab Popover (or ⌘T / a split control → Launcher Dialog) → picks CLI × mode → store `newPlate`/`splitSession` → `invoke("create_session", { name, cli, mode })` → backend `docker.create_tmux_session` → `docker exec aviary-runtime tmux -S /tmp/aviary new-session -d -s <name> <cli-binary>`.
+1. User opens the new-tab Popover (or ⌘T / a split control → Launcher Dialog) → picks CLI × mode → store `newPlate`/`splitSession` → `invoke("create_session", { name, cli, mode })` → backend `docker.create_tmux_session` → `docker exec codehub-runtime tmux -S /tmp/codehub new-session -d -s <name> <cli-binary>`.
 2. `invoke("attach_session", { name, cols, rows })` → backend `docker.attach_exec` opens a bollard exec with `tty=true` running `tmux attach -t <name>` → returns a `pane_id`.
 3. Backend spawns two tokio tasks per pane: output pump (bollard stream → `pty://data/<pane_id>` event) and input pump (mpsc channel → bollard stdin).
 4. Frontend `xterm.term.onData` → `invoke("pty_write", ...)`, `term.onResize` → `invoke("pty_resize", ...)`.
@@ -84,9 +84,9 @@ Environment knobs:
 
 | Env var | Purpose | Default |
 |---|---|---|
-| `AVIARY_CONTAINER` | Container name | `aviary-runtime` |
-| `AVIARY_IMAGE` | Image tag | `ghcr.io/mpolatcan/aviary-runtime:0.1.0` |
-| `AVIARY_NETWORK_MODE` | Docker network mode | `bridge` |
+| `CODEHUB_CONTAINER` | Container name | `codehub-runtime` |
+| `CODEHUB_IMAGE` | Image tag | `ghcr.io/mpolatcan/codehub-runtime:0.1.0` |
+| `CODEHUB_NETWORK_MODE` | Docker network mode | `bridge` |
 | `CLAUDE_CODE_OAUTH_TOKEN` | Skip /login in Claude Code | unset |
 
 ## Conventions
@@ -98,18 +98,18 @@ Environment knobs:
 - **Design tokens live in the `@theme` block of `theme.css`** (exposed as `--color-*` / `--font-*`). Never inline raw hex values; use the tokens (Tailwind utilities like `text-accent` or `var(--color-...)` in `panes.css`).
 - **Bird silhouettes go in the SVG sprite** in `index.html`. Reference via `<use href="#bird-foo"/>`. Don't inline new SVGs per-tab.
 - **CLIs are enumerated in four places** (kept deliberately in sync): `Cli` enum in `docker.rs`, `Cli` type in `src/app/lib/ipc.ts`, `CLIS` + `MODE_SUPPORT` in `src/app/lib/catalog.ts`, and the `RUN` line in `runtime/Dockerfile`. The `add-cli` skill walks the full update.
-- **Never commit `Cargo.lock`** — wait, scratch that: do commit `Cargo.lock`. Aviary is an application binary, not a library, so the lock is part of the build contract.
+- **Never commit `Cargo.lock`** — wait, scratch that: do commit `Cargo.lock`. CodeHub is an application binary, not a library, so the lock is part of the build contract.
 - **Don't commit `dist/`** — it's a Vite build artifact. `src-tauri/target/` and `node_modules/` are also gitignored.
 
 ## Gotchas / non-obvious things
 
-- **`src-tauri/Cargo.toml` pins `default-run = "aviary"`.** The dev bridge added a second binary (`aviary-devserver`); without `default-run`, the `cargo run` that `tauri dev` / `make dev` invoke can't pick a target and fails with "could not determine which binary to run". Keep the pin if you add more binaries.
+- **`src-tauri/Cargo.toml` pins `default-run = "codehub"`.** The dev bridge added a second binary (`codehub-devserver`); without `default-run`, the `cargo run` that `tauri dev` / `make dev` invoke can't pick a target and fails with "could not determine which binary to run". Keep the pin if you add more binaries.
 - **`tauri::generate_context!` macro reads `tauri.conf.json` at compile time** and validates icon paths + `frontendDist`. If `dist/` is missing, `cargo check` fails with a proc-macro panic. Either run `npm run build` once, or keep the gitignored placeholder. Avoid this trap when running CI.
 - **Bollard `create_exec` requires explicit type annotation** in our codebase: `create_exec::<String>(...)`. Without it the compiler cannot infer `T: Into<String>`.
 - **`SHELL ["bash", "-euo", "pipefail", "-c"]` is set in the runtime Dockerfile.** This matters because we use `curl ... | bash` patterns to install CLIs; without pipefail, a failing curl silently succeeds and the CLI is missing from the image. Do not remove it.
-- **macOS Docker Desktop "host network" is gated behind a beta flag.** We default `AVIARY_NETWORK_MODE=bridge` to keep things portable. Override to `host` only if the user has Docker Desktop 4.34+ with the beta enabled.
-- **The runtime container's entrypoint is `tail -f /dev/null`.** It does NOT launch tmux. The tmux server is started by the first `docker exec ... tmux new-session ...` call. Sessions share `TMUX_TMPDIR=/tmp/aviary`.
-- **The in-pane tmux status bar is themed via `runtime/tmux.conf`** (COPYed to `/root/.tmux.conf`, loaded on tmux server start). It restyles tmux's default green to Aviary's palette (`bg=#16181c` panel, ochre `#e8a33d` accent) so the bar reads as app chrome. Changing it needs an image rebuild (`make image`); to preview on a live container without a rebuild: `docker cp runtime/tmux.conf aviary-runtime:/root/.tmux.conf && docker exec -e TMUX_TMPDIR=/tmp/aviary aviary-runtime tmux source-file /root/.tmux.conf`. Keep the hexes in sync with the `@theme` block in `theme.css`.
+- **macOS Docker Desktop "host network" is gated behind a beta flag.** We default `CODEHUB_NETWORK_MODE=bridge` to keep things portable. Override to `host` only if the user has Docker Desktop 4.34+ with the beta enabled.
+- **The runtime container's entrypoint is `tail -f /dev/null`.** It does NOT launch tmux. The tmux server is started by the first `docker exec ... tmux new-session ...` call. Sessions share `TMUX_TMPDIR=/tmp/codehub`.
+- **The in-pane tmux status bar is themed via `runtime/tmux.conf`** (COPYed to `/root/.tmux.conf`, loaded on tmux server start). It restyles tmux's default green to CodeHub's palette (`bg=#16181c` panel, ochre `#e8a33d` accent) so the bar reads as app chrome. Changing it needs an image rebuild (`make image`); to preview on a live container without a rebuild: `docker cp runtime/tmux.conf codehub-runtime:/root/.tmux.conf && docker exec -e TMUX_TMPDIR=/tmp/codehub codehub-runtime tmux source-file /root/.tmux.conf`. Keep the hexes in sync with the `@theme` block in `theme.css`.
 - **The webview drag region** is set via `-webkit-app-region: drag` on the masthead and tabbar (React sets it through the `WebkitAppRegion` style prop). Buttons inside those regions must reset with `WebkitAppRegion: "no-drag"` or clicks get captured by window-drag.
 - **Antigravity install URL is unverified** (`antigravity.google/cli/install.sh` returned an SSL self-signed cert chain error during build). The line is commented out in `runtime/Dockerfile`, and `catalog.ts` `MODE_SUPPORT` caps Antigravity to Standard only. Until confirmed, selecting Antigravity spawns a tmux session that exits immediately.
 - **xterm panes mount via `absolute inset-0`, never flexbox.** `.pane-body` is `position:relative; flex:1` but NOT `display:flex`; a `flex-1` slot collapses to height 0 and the absolutely-positioned `.term-surface` renders blank. `<PaneMount>` fills the slot with `absolute inset-0` + a `ResizeObserver` that re-fits on resize (there is no window-level resize handler — the observer is it).

@@ -18,7 +18,7 @@ import {
   setRatio,
 } from "./tree";
 
-interface AviaryState {
+interface CodeHubState {
   workspaces: Workspace[];
   activeWorkspaceId: string | null;
   sessionMeta: Record<string, SessionMeta>;
@@ -52,7 +52,7 @@ function aliasFor(cli: Cli, num: number): string {
   return `${SPEC_BY_CLI[cli].alias} ${num}`;
 }
 
-export const useStore = create<AviaryState>((set, get) => {
+export const useStore = create<CodeHubState>((set, get) => {
   const isRunning = () => get().status?.state === "running";
 
   const uniqueName = (cli: Cli): string => {
@@ -244,8 +244,8 @@ export const useStore = create<AviaryState>((set, get) => {
   };
 });
 
-type Get = () => AviaryState;
-type Set = (partial: Partial<AviaryState> | ((s: AviaryState) => Partial<AviaryState>)) => void;
+type Get = () => CodeHubState;
+type Set = (partial: Partial<CodeHubState> | ((s: CodeHubState) => Partial<CodeHubState>)) => void;
 
 function removeWorkspace(get: Get, set: Set, id: string) {
   const list = get().workspaces;
@@ -309,7 +309,7 @@ export async function initLifecycle(): Promise<void> {
 }
 
 // Convenience selectors.
-export function activeWorkspace(s: AviaryState): Workspace | undefined {
+export function activeWorkspace(s: CodeHubState): Workspace | undefined {
   return s.workspaces.find((w) => w.id === s.activeWorkspaceId);
 }
 

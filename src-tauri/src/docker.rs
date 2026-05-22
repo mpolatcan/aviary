@@ -148,7 +148,7 @@ impl DockerClient {
                     attach_stdout: Some(true),
                     attach_stderr: Some(true),
                     cmd: Some(cmd.into_iter().map(String::from).collect()),
-                    env: Some(vec!["TMUX_TMPDIR=/tmp/aviary".into()]),
+                    env: Some(vec!["TMUX_TMPDIR=/tmp/codehub".into()]),
                     ..Default::default()
                 },
             )
@@ -225,7 +225,7 @@ impl DockerClient {
         // long-running tmux server's environment. tmux treats trailing argv as the
         // session command; mode flags ride along.
         //
-        // `-n <alias>` names the window with Aviary's display alias (e.g. "Owl 1")
+        // `-n <alias>` names the window with CodeHub's display alias (e.g. "Claude 1")
         // so the themed in-pane status bar reads it instead of the opaque session
         // id. The runtime tmux.conf disables auto/allow-rename so the launched CLI
         // can't clobber it. Falls back to the session name if alias is empty.
@@ -254,7 +254,7 @@ impl DockerClient {
 
     /// Rename a session's window so the themed in-pane status bar (which renders
     /// the window name `#W`) reflects an alias the user edited in the UI. Each
-    /// Aviary session has exactly one window, so `-t <name>` resolves it.
+    /// CodeHub session has exactly one window, so `-t <name>` resolves it.
     pub async fn rename_tmux_window(&self, name: &str, alias: &str) -> Result<(), DockerError> {
         self.exec_capture(vec!["tmux", "rename-window", "-t", name, alias])
             .await?;
@@ -284,7 +284,7 @@ impl DockerClient {
                     ]),
                     env: Some(vec![
                         "TERM=xterm-256color".into(),
-                        "TMUX_TMPDIR=/tmp/aviary".into(),
+                        "TMUX_TMPDIR=/tmp/codehub".into(),
                     ]),
                     ..Default::default()
                 },

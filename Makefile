@@ -1,24 +1,24 @@
 # =============================================================================
-# Aviary — developer convenience targets.
+# CodeHub — developer convenience targets.
 #
 # All paths are relative to repo root. Run `make help` for a quick reference.
 # Variables (override on the command line, e.g. `make image IMAGE_TAG=0.2.0`):
 #
 #   IMAGE_TAG     Runtime image tag.  Default: parsed from src-tauri/src/lib.rs
-#   IMAGE_REPO    Runtime image repo. Default: ghcr.io/mpolatcan/aviary-runtime
+#   IMAGE_REPO    Runtime image repo. Default: ghcr.io/mpolatcan/codehub-runtime
 #   PLATFORMS     buildx platforms.   Default: linux/amd64,linux/arm64
-#   CONTAINER     Runtime container name (debug helpers). Default: aviary-runtime
+#   CONTAINER     Runtime container name (debug helpers). Default: codehub-runtime
 # =============================================================================
 
 SHELL := /bin/bash
 .SHELLFLAGS := -eu -o pipefail -c
 .DEFAULT_GOAL := help
 
-IMAGE_REPO ?= ghcr.io/mpolatcan/aviary-runtime
+IMAGE_REPO ?= ghcr.io/mpolatcan/codehub-runtime
 IMAGE_TAG  ?= $(shell grep -E 'DEFAULT_IMAGE' src-tauri/src/lib.rs | sed -E 's/.*:([0-9]+\.[0-9]+\.[0-9]+).*/\1/' | head -n1)
 IMAGE      := $(IMAGE_REPO):$(IMAGE_TAG)
 PLATFORMS  ?= linux/amd64,linux/arm64
-CONTAINER  ?= aviary-runtime
+CONTAINER  ?= codehub-runtime
 
 # ---------------------------------------------------------------------------
 # Setup
@@ -42,13 +42,13 @@ dev: ## Run Tauri dev (Vite + Rust, hot-reload frontend)
 
 .PHONY: dev-server
 dev-server: ## Run only the browser-mode backend bridge (HTTP/WS on :4555)
-	cd src-tauri && cargo run --bin aviary-devserver --features devserver
+	cd src-tauri && cargo run --bin codehub-devserver --features devserver
 
 .PHONY: dev-web
 dev-web: ## Browser-mode dev: Vite (:1420) + backend bridge (:4555), no Tauri window
 	@echo "Vite → http://localhost:1420  ·  bridge → /__bridge → :4555  (Ctrl-C to stop both)"
 	@trap 'kill 0' EXIT; \
-	  ( cd src-tauri && cargo run --bin aviary-devserver --features devserver ) & \
+	  ( cd src-tauri && cargo run --bin codehub-devserver --features devserver ) & \
 	  npm run dev & \
 	  wait
 
@@ -133,7 +133,7 @@ shell: ## Open an interactive shell inside the running runtime container
 
 .PHONY: tmux-ls
 tmux-ls: ## List tmux sessions inside the runtime container
-	docker exec $(CONTAINER) tmux -S /tmp/aviary/default ls 2>/dev/null || echo "no tmux server (no sessions yet)"
+	docker exec $(CONTAINER) tmux -S /tmp/codehub/default ls 2>/dev/null || echo "no tmux server (no sessions yet)"
 
 .PHONY: ctr-logs
 ctr-logs: ## Tail runtime container logs

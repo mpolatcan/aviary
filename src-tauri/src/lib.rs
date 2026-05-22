@@ -32,8 +32,8 @@ pub struct AppState {
     pub registry: Arc<PtyRegistry>,
 }
 
-const DEFAULT_CONTAINER: &str = "aviary-runtime";
-const DEFAULT_IMAGE: &str = "ghcr.io/mpolatcan/aviary-runtime:0.1.0";
+const DEFAULT_CONTAINER: &str = "codehub-runtime";
+const DEFAULT_IMAGE: &str = "ghcr.io/mpolatcan/codehub-runtime:0.1.0";
 
 #[tauri::command]
 async fn container_status(state: tauri::State<'_, AppState>) -> Result<ContainerStatus, String> {
@@ -50,7 +50,7 @@ async fn ensure_runtime(
         .ensure_runtime()
         .await
         .map_err(|e| e.to_string())?;
-    let _ = app.emit("aviary://lifecycle", &status);
+    let _ = app.emit("codehub://lifecycle", &status);
     Ok(status)
 }
 
@@ -61,7 +61,7 @@ async fn container_start(
 ) -> Result<ContainerStatus, String> {
     state.lifecycle.start().await.map_err(|e| e.to_string())?;
     let status = state.lifecycle.status().await;
-    let _ = app.emit("aviary://lifecycle", &status);
+    let _ = app.emit("codehub://lifecycle", &status);
     Ok(status)
 }
 
@@ -72,7 +72,7 @@ async fn container_stop(
 ) -> Result<ContainerStatus, String> {
     state.lifecycle.stop().await.map_err(|e| e.to_string())?;
     let status = state.lifecycle.status().await;
-    let _ = app.emit("aviary://lifecycle", &status);
+    let _ = app.emit("codehub://lifecycle", &status);
     Ok(status)
 }
 
@@ -83,7 +83,7 @@ async fn container_restart(
 ) -> Result<ContainerStatus, String> {
     state.lifecycle.restart().await.map_err(|e| e.to_string())?;
     let status = state.lifecycle.status().await;
-    let _ = app.emit("aviary://lifecycle", &status);
+    let _ = app.emit("codehub://lifecycle", &status);
     Ok(status)
 }
 
@@ -197,13 +197,18 @@ pub fn run() {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info,aviary_lib=debug".into()),
+                .unwrap_or_else(|_| "info,codehub_lib=debug".into()),
         )
         .init();
 
-    let container_name =
-        std::env::var("AVIARY_CONTAINER").unwrap_or_else(|_| DEFAULT_CONTAINER.into());
-    let image = std::env::var("AVIARY_IMAGE").unwrap_or_else(|_| DEFAULT_IMAGE.into());
+    // CODEHUB_* is canonical; AVIARY_* kept as a fallback so existing user
+    // environments keep working after the rebrand.
+    let container_name = std::env::var("CODEHUB_CONTAINER")
+        .or_else(|_| std::env::var("AVIARY_CONTAINER"))
+        .unwrap_or_else(|_| DEFAULT_CONTAINER.into());
+    let image = std::env::var("CODEHUB_IMAGE")
+        .or_else(|_| std::env::var("AVIARY_IMAGE"))
+        .unwrap_or_else(|_| DEFAULT_IMAGE.into());
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -232,11 +237,11 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 match lifecycle.ensure_runtime().await {
                     Ok(status) => {
-                        let _ = handle.emit("aviary://lifecycle", &status);
+                        let _ = handle.emit("codehub://lifecycle", &status);
                     },
                     Err(e) => {
                         tracing::error!("ensure_runtime failed: {e}");
-                        let _ = handle.emit("aviary://lifecycle-error", e.to_string());
+                        let _ = handle.emit("codehub://lifecycle-error", e.to_string());
                     },
                 }
             });
@@ -259,5 +264,5 @@ pub fn run() {
             detach_session,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running aviary");
+        .expect("error while running codehub");
 }

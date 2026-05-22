@@ -1,6 +1,6 @@
-# Aviary Runtime Image
+# CodeHub Runtime Image
 
-Container image bundling AI coding CLIs that Aviary multiplexes via tmux.
+Container image bundling AI coding CLIs that CodeHub multiplexes via tmux.
 
 ## CLIs included
 
@@ -10,19 +10,19 @@ Container image bundling AI coding CLIs that Aviary multiplexes via tmux.
 
 ## How it runs
 
-The container does not run any CLI as PID 1. It idles on `tail -f /dev/null`. Aviary spawns tmux sessions inside it on demand via `docker exec -it aviary-runtime tmux ...`. The tmux server persists across exec invocations because they all attach to the same `TMUX_TMPDIR=/tmp/aviary` socket.
+The container does not run any CLI as PID 1. It idles on `tail -f /dev/null`. CodeHub spawns tmux sessions inside it on demand via `docker exec -it codehub-runtime tmux ...`. The tmux server persists across exec invocations because they all attach to the same `TMUX_TMPDIR=/tmp/codehub` socket.
 
 ## Volume layout
 
 | Host path (macOS) | Container path | Purpose |
 |---|---|---|
-| `~/Library/Application Support/aviary/config` | `/config` | Auth state for each CLI (`claude`, `codex`, `antigravity` subdirs) |
-| `~/Library/Application Support/aviary/workspace` | `/workspace` | Project files visible to all CLIs |
+| `~/Library/Application Support/codehub/config` | `/config` | Auth state for each CLI (`claude`, `codex`, `antigravity` subdirs) |
+| `~/Library/Application Support/codehub/workspace` | `/workspace` | Project files visible to all CLIs |
 
 ## Building manually (dev)
 
 ```bash
-docker build -t aviary-runtime:dev .
+docker build -t codehub-runtime:dev .
 ```
 
 ## Publishing release image
@@ -30,9 +30,9 @@ docker build -t aviary-runtime:dev .
 ```bash
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
-  -t ghcr.io/mpolatcan/aviary-runtime:0.1.0 \
-  -t ghcr.io/mpolatcan/aviary-runtime:latest \
+  -t ghcr.io/mpolatcan/codehub-runtime:0.1.0 \
+  -t ghcr.io/mpolatcan/codehub-runtime:latest \
   --push .
 ```
 
-Aviary's `lifecycle.rs` pulls `ghcr.io/mpolatcan/aviary-runtime:<aviary-version>` on first launch.
+CodeHub's `lifecycle.rs` pulls `ghcr.io/mpolatcan/codehub-runtime:<codehub-version>` on first launch.

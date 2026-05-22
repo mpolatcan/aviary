@@ -15,7 +15,7 @@ concurrency:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository_owner }}/aviary-runtime
+  IMAGE_NAME: ${{ github.repository_owner }}/codehub-runtime
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -133,7 +133,7 @@ jobs:
       - name: Upload bundle artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: aviary-${{ matrix.target }}
+          name: codehub-${{ matrix.target }}
           path: ${{ matrix.artifact_glob }}
           if-no-files-found: error
 
@@ -154,7 +154,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: bundles
-          pattern: aviary-*
+          pattern: codehub-*
           merge-multiple: true
 
       - name: Generate release notes from commits
@@ -162,7 +162,7 @@ jobs:
         run: |
           PREV=$(git tag --sort=-v:refname | grep -v "^${GITHUB_REF_NAME}$" | head -n1 || echo "")
           {
-            echo "## Aviary ${GITHUB_REF_NAME}"
+            echo "## CodeHub ${GITHUB_REF_NAME}"
             echo
             echo "Runtime image: \`${REGISTRY}/${IMAGE_NAME}:${{ needs.runtime-image.outputs.version }}\`"
             echo
@@ -179,7 +179,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
-          name: Aviary ${{ github.ref_name }}
+          name: CodeHub ${{ github.ref_name }}
           body_path: NOTES.md
           draft: false
           prerelease: ${{ contains(github.ref_name, '-') }}

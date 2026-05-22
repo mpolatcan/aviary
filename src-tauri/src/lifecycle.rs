@@ -174,7 +174,7 @@ impl Lifecycle {
             ..Default::default()
         };
 
-        let mut env = vec!["TMUX_TMPDIR=/tmp/aviary".to_string()];
+        let mut env = vec!["TMUX_TMPDIR=/tmp/codehub".to_string()];
         if let Ok(token) = std::env::var("CLAUDE_CODE_OAUTH_TOKEN") {
             env.push(format!("CLAUDE_CODE_OAUTH_TOKEN={}", token));
         }
@@ -258,5 +258,7 @@ impl Lifecycle {
 fn host_network_mode() -> String {
     // macOS Docker Desktop supports host network behind a feature flag.
     // Default to `bridge` to maximize compatibility; users can override.
-    std::env::var("AVIARY_NETWORK_MODE").unwrap_or_else(|_| "bridge".to_string())
+    std::env::var("CODEHUB_NETWORK_MODE")
+        .or_else(|_| std::env::var("AVIARY_NETWORK_MODE"))
+        .unwrap_or_else(|_| "bridge".to_string())
 }

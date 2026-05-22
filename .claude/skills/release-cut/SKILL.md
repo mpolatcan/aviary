@@ -1,9 +1,9 @@
 ---
 name: release-cut
-description: Cut a new Aviary release — version bump across Cargo / package.json / tauri.conf.json / runtime image, multi-arch image publish, GitHub release with .dmg bundle. Use only after TEST_SCENARIOS regression has been run green.
+description: Cut a new CodeHub release — version bump across Cargo / package.json / tauri.conf.json / runtime image, multi-arch image publish, GitHub release with .dmg bundle. Use only after TEST_SCENARIOS regression has been run green.
 ---
 
-# Cut an Aviary release
+# Cut a CodeHub release
 
 Pre-flight required:
 
@@ -11,7 +11,7 @@ Pre-flight required:
 - `TEST_SCENARIOS.md` regression checklist (the end-of-doc list) has been walked manually
 - `cargo check` clean inside `src-tauri/`
 - `npm run build` clean
-- Docker Hub credentials available for `ghcr.io/mpolatcan/aviary-runtime`
+- Docker Hub credentials available for `ghcr.io/mpolatcan/codehub-runtime`
 
 ## 1. Bump version everywhere
 
@@ -20,7 +20,7 @@ The version appears in four places. Update all to the same value (`X.Y.Z`):
 - `package.json` — `"version": "X.Y.Z"`
 - `src-tauri/Cargo.toml` — `version = "X.Y.Z"` under `[package]`
 - `src-tauri/tauri.conf.json` — `"version": "X.Y.Z"`
-- `src-tauri/src/lib.rs` — `const DEFAULT_IMAGE: &str = "ghcr.io/mpolatcan/aviary-runtime:X.Y.Z";`
+- `src-tauri/src/lib.rs` — `const DEFAULT_IMAGE: &str = "ghcr.io/mpolatcan/codehub-runtime:X.Y.Z";`
 
 Commit the version bump as its own commit: `chore: bump version to X.Y.Z`.
 
@@ -37,7 +37,7 @@ The `image-push` target reads the tag from `src-tauri/src/lib.rs:DEFAULT_IMAGE` 
 Verify the manifest after push:
 
 ```bash
-docker buildx imagetools inspect ghcr.io/mpolatcan/aviary-runtime:X.Y.Z
+docker buildx imagetools inspect ghcr.io/mpolatcan/codehub-runtime:X.Y.Z
 ```
 
 Both `linux/amd64` and `linux/arm64` platforms must be listed.
@@ -50,15 +50,15 @@ make build
 
 Outputs land in `src-tauri/target/release/bundle/`:
 
-- macOS: `dmg/Aviary_X.Y.Z_aarch64.dmg` and/or `_x64.dmg`
-- Linux: `deb/aviary_X.Y.Z_amd64.deb`, `appimage/aviary_X.Y.Z_amd64.AppImage`
+- macOS: `dmg/CodeHub_X.Y.Z_aarch64.dmg` and/or `_x64.dmg`
+- Linux: `deb/codehub_X.Y.Z_amd64.deb`, `appimage/codehub_X.Y.Z_amd64.AppImage`
 
 On macOS, repeat the build inside an x86_64 host (or use `--target x86_64-apple-darwin`) if you want a universal release. Sign + notarize with `xcrun notarytool` before publishing if you have a developer ID.
 
 ## 4. Tag + push
 
 ```bash
-git tag -a vX.Y.Z -m "Aviary X.Y.Z"
+git tag -a vX.Y.Z -m "CodeHub X.Y.Z"
 git push origin vX.Y.Z
 ```
 
@@ -66,7 +66,7 @@ git push origin vX.Y.Z
 
 ```bash
 gh release create vX.Y.Z \
-  --title "Aviary X.Y.Z" \
+  --title "CodeHub X.Y.Z" \
   --notes-file CHANGELOG-NEXT.md \
   src-tauri/target/release/bundle/dmg/*.dmg \
   src-tauri/target/release/bundle/appimage/*.AppImage \
@@ -89,8 +89,8 @@ If a release ships broken:
 gh release delete vX.Y.Z --yes
 git tag -d vX.Y.Z
 git push origin :refs/tags/vX.Y.Z
-docker buildx imagetools create --tag ghcr.io/mpolatcan/aviary-runtime:latest \
-  ghcr.io/mpolatcan/aviary-runtime:<previous-version>
+docker buildx imagetools create --tag ghcr.io/mpolatcan/codehub-runtime:latest \
+  ghcr.io/mpolatcan/codehub-runtime:<previous-version>
 ```
 
 Leave the broken runtime tag in place (`X.Y.Z`) for forensics — only re-point `latest`.

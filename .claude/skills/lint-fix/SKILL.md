@@ -1,11 +1,11 @@
 ---
 name: lint-fix
-description: Run linters and formatters across the Aviary repo (Biome for TS/JS/CSS/JSON, rustfmt + clippy for Rust). Use before opening a PR, before a release cut, or when a CI lint job has failed.
+description: Run linters and formatters across the CodeHub repo (Biome for TS/JS/CSS/JSON, rustfmt + clippy for Rust). Use before opening a PR, before a release cut, or when a CI lint job has failed.
 ---
 
 # Lint + fix
 
-Aviary uses **Biome** for the frontend (TypeScript, JavaScript, CSS, JSON, import organisation) and the standard **rustfmt + clippy** pair for the Rust backend. Both are configured at repo root.
+CodeHub uses **Biome** for the frontend (TypeScript, JavaScript, CSS, JSON, import organisation) and the standard **rustfmt + clippy** pair for the Rust backend. Both are configured at repo root.
 
 ## Frontend — Biome
 
