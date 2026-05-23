@@ -109,38 +109,8 @@ body.dragging .divider::after {
     rgba(0, 0, 0, 0.3);
 }
 
-.pane-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 5px 7px 5px 9px;
-  background: var(--color-panel);
-  border-bottom: 1px solid var(--color-rule);
-  user-select: none;
-  flex: 0 0 auto;
-}
-.pane-leaf.focused .pane-head {
-  border-bottom-color: var(--color-accent-deep);
-  background: linear-gradient(180deg, rgba(232, 163, 61, 0.06), var(--color-panel));
-}
-
-.pane-head .pane-name {
-  font-family: var(--font-mono);
-  font-weight: 500;
-  font-size: var(--fs-xs);
-  color: var(--color-text);
-  line-height: 1;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  cursor: text;
-  padding: 1px 3px;
-  border-radius: 2px;
-}
-.pane-head .pane-name:hover {
-  background: rgba(255, 255, 255, 0.04);
-}
-
+/* Inline-renamed pane name field (PaneHead renders the static name with inline
+   styles; this is the edit-mode input it swaps to). */
 .pane-name-input {
   font-family: var(--font-mono);
   font-weight: 500;
@@ -153,55 +123,6 @@ body.dragging .divider::after {
   line-height: 1;
   width: 12ch;
   outline: none;
-}
-
-.pane-head .pane-agent {
-  font-family: var(--font-pixel);
-  font-size: var(--fs-pixel);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--color-text-faint);
-  white-space: nowrap;
-}
-
-.pane-head .pane-spacer {
-  flex: 1;
-}
-
-.pane-ctl {
-  background: transparent;
-  border: none;
-  color: var(--color-text-faint);
-  cursor: pointer;
-  padding: 3px 4px;
-  border-radius: 2px;
-  line-height: 0;
-  opacity: 0.45;
-  transition: opacity 0.15s ease, color 0.15s ease, background 0.15s ease;
-}
-.pane-leaf:hover .pane-ctl,
-.pane-leaf.focused .pane-ctl {
-  opacity: 0.8;
-}
-.pane-ctl:hover {
-  opacity: 1;
-  color: var(--color-accent-bright);
-  background: rgba(232, 163, 61, 0.1);
-}
-.pane-ctl svg {
-  width: 13px;
-  height: 13px;
-  display: block;
-}
-.pane-ctl.close:hover {
-  color: var(--color-danger);
-  background: rgba(214, 96, 77, 0.12);
-}
-/* Anchor wrapper for the split popover — keeps the two split buttons inline so
-   the popover opens flush against them. */
-.pane-ctl-group {
-  display: inline-flex;
-  align-items: center;
 }
 
 .pane-body {
@@ -236,330 +157,6 @@ body.dragging .divider::after {
   color: var(--color-danger);
   background: rgba(214, 96, 77, 0.14);
   border: 1px solid rgba(214, 96, 77, 0.5);
-}
-
-/* ---- Work area frame -------------------------------------------------- */
-
-.work-area {
-  position: relative;
-  flex: 1;
-  min-width: 0;
-  padding: 14px 16px;
-}
-.work-area::before {
-  content: "";
-  position: absolute;
-  inset: 10px 12px;
-  border: 1px solid var(--color-rule-soft);
-  pointer-events: none;
-  z-index: 1;
-}
-.frame-fleuron {
-  position: absolute;
-  width: 8px;
-  height: 8px;
-  color: var(--color-accent);
-  z-index: 4;
-  pointer-events: none;
-  opacity: 0.8;
-}
-.frame-fleuron svg {
-  width: 100%;
-  height: 100%;
-  display: block;
-}
-.frame-fleuron.tl {
-  top: 6px;
-  left: 8px;
-}
-.frame-fleuron.tr {
-  top: 6px;
-  right: 8px;
-  transform: scaleX(-1);
-}
-.frame-fleuron.bl {
-  bottom: 6px;
-  left: 8px;
-  transform: scaleY(-1);
-}
-.frame-fleuron.br {
-  bottom: 6px;
-  right: 8px;
-  transform: scale(-1, -1);
-}
-.grid-root {
-  position: absolute;
-  inset: 18px 20px;
-  display: flex;
-}
-.grid-root > * {
-  flex: 1;
-  min-width: 0;
-  min-height: 0;
-}
-
-/* ---- Session rail ----------------------------------------------------- */
-
-.session-rail {
-  flex: 0 0 232px;
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  background: var(--color-panel);
-  border-left: 2px solid var(--color-rule);
-  overflow: hidden;
-  transition: flex-basis 0.26s cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-.session-rail.collapsed {
-  flex-basis: 24px;
-}
-.rail-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 8px 0 14px;
-  height: 30px;
-  flex: 0 0 auto;
-  border-bottom: 2px solid var(--color-rule);
-}
-.session-rail.collapsed .rail-foot,
-.session-rail.collapsed .rail-list {
-  opacity: 0;
-  pointer-events: none;
-}
-/* Keep the header (and its toggle) interactive when collapsed — it is the only
-   affordance back to expanded. Just hide the title and center the chevron in
-   the 24px spine. */
-.session-rail.collapsed .rail-head {
-  padding: 0;
-  justify-content: center;
-  border-bottom-color: transparent;
-}
-.session-rail.collapsed .rail-title {
-  display: none;
-}
-.rail-title {
-  font-family: var(--font-pixel);
-  font-size: var(--fs-pixel);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--color-text-faint);
-  white-space: nowrap;
-}
-.rail-toggle {
-  background: transparent;
-  border: 2px solid var(--color-rule);
-  color: var(--color-text-faint);
-  cursor: pointer;
-  width: 18px;
-  height: 18px;
-  border-radius: 2px;
-  font-family: var(--font-mono);
-  font-size: var(--fs-xs);
-  line-height: 1;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  transition: color 0.18s ease, border-color 0.18s ease, transform 0.26s ease;
-}
-.rail-toggle:hover {
-  color: var(--color-accent-bright);
-  border-color: var(--color-accent-deep);
-}
-.session-rail.collapsed .rail-toggle {
-  transform: rotate(180deg);
-}
-.rail-spine {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%) rotate(180deg);
-  writing-mode: vertical-rl;
-  font-family: var(--font-pixel);
-  font-size: var(--fs-pixel);
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
-  color: var(--color-text-ghost);
-  white-space: nowrap;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.2s ease 0.1s;
-}
-.session-rail.collapsed .rail-spine {
-  opacity: 1;
-}
-.rail-list {
-  flex: 1;
-  overflow-y: auto;
-  scrollbar-width: thin;
-  transition: opacity 0.2s ease;
-}
-.rail-list::-webkit-scrollbar {
-  width: 6px;
-}
-.rail-list::-webkit-scrollbar-thumb {
-  background: var(--color-rule);
-}
-.rail-group-head {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  width: 100%;
-  padding: 10px 12px 5px;
-  cursor: pointer;
-  border: none;
-  border-bottom: 1px solid var(--color-rule-soft);
-  background: transparent;
-  text-align: left;
-  font: inherit;
-  color: inherit;
-}
-.rail-group-head:hover {
-  background: rgba(255, 255, 255, 0.02);
-}
-.rail-group-head.active .rg-plate {
-  color: var(--color-accent);
-}
-.rg-plate {
-  font-family: var(--font-pixel);
-  font-size: var(--fs-pixel);
-  color: var(--color-text-dim);
-  line-height: 1;
-}
-.rg-label {
-  font-family: var(--font-pixel);
-  font-size: var(--fs-pixel);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--color-text-faint);
-}
-.rg-count {
-  margin-left: auto;
-  font-family: var(--font-mono);
-  font-size: var(--fs-2xs);
-  color: var(--color-text-ghost);
-}
-.rail-row {
-  display: grid;
-  grid-template-columns: 1fr auto auto;
-  align-items: center;
-  border-bottom: 1px solid var(--color-rule-soft);
-  position: relative;
-  transition: background 0.15s ease;
-}
-.rail-row .mode-badge {
-  margin-right: 6px;
-}
-.rail-row:hover {
-  background: rgba(255, 255, 255, 0.025);
-}
-.rail-row.focused {
-  background: linear-gradient(90deg, rgba(232, 163, 61, 0.1) 0%, transparent 90%);
-}
-.rail-row.focused::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 2px;
-  background: var(--color-accent);
-}
-.rr-main {
-  display: grid;
-  grid-template-columns: 20px 1fr;
-  align-items: center;
-  column-gap: 8px;
-  padding: 6px 8px 6px 16px;
-  background: transparent;
-  border: none;
-  cursor: pointer;
-  text-align: left;
-  font: inherit;
-  color: inherit;
-  min-width: 0;
-}
-.rail-row .rr-text {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  overflow: hidden;
-}
-.rail-row .rr-common {
-  font-family: var(--font-mono);
-  font-weight: 500;
-  font-size: var(--fs-xs);
-  color: var(--color-text);
-  line-height: 1.05;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.rail-row .rr-num {
-  font-family: var(--font-pixel);
-  font-size: var(--fs-pixel);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--color-text-faint);
-}
-.rail-row .rr-close {
-  opacity: 0;
-  color: var(--color-text-faint);
-  font-family: var(--font-mono);
-  font-size: var(--fs-sm);
-  line-height: 1;
-  padding: 2px 5px;
-  margin-right: 8px;
-  border-radius: 2px;
-  background: transparent;
-  border: none;
-  cursor: pointer;
-  transition: opacity 0.15s ease, color 0.15s ease, background 0.15s ease;
-}
-.rail-row:hover .rr-close {
-  opacity: 0.6;
-}
-.rail-row .rr-close:hover {
-  opacity: 1;
-  color: var(--color-danger);
-  background: rgba(214, 96, 77, 0.12);
-}
-.rail-foot {
-  flex: 0 0 auto;
-  border-top: 2px solid var(--color-rule);
-  transition: opacity 0.2s ease;
-}
-.rail-new {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 9px;
-  padding: 10px 12px;
-  background: transparent;
-  border: none;
-  cursor: pointer;
-  font-family: var(--font-pixel);
-  font-size: var(--fs-pixel);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--color-text-dim);
-  transition: background 0.18s ease, color 0.18s ease;
-}
-.rail-new .plus {
-  font-family: var(--font-mono);
-  font-size: 15px;
-  line-height: 1;
-  color: var(--color-accent);
-  transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-.rail-new:hover {
-  background: rgba(232, 163, 61, 0.06);
-  color: var(--color-text);
-}
-.rail-new:hover .plus {
-  transform: rotate(90deg);
-  color: var(--color-accent-bright);
 }
 
 /* ---- Tabs ------------------------------------------------------------- */
@@ -608,60 +205,6 @@ body.dragging .divider::after {
     opacity: 1;
   }
 }
-
-/* New tabs append to the right edge; slide each one in from there so the eye
-   tracks where it landed. Runs once per tab on mount (keyed by ws.id). */
-.tab-enter {
-  animation: tab-in 0.3s var(--ease-out-quint) both;
-}
-@keyframes tab-in {
-  from {
-    opacity: 0;
-    transform: translateX(14px);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
-}
-.tab .plate-num {
-  font-family: var(--font-pixel);
-  font-size: var(--fs-pixel);
-  color: var(--color-text-ghost);
-  text-align: right;
-  line-height: 1;
-}
-.tab.active .plate-num,
-.tab:hover .plate-num {
-  color: var(--color-accent);
-}
-.tab .tab-text {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  overflow: hidden;
-}
-.tab .tab-end {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.tab .latin {
-  font-family: var(--font-mono);
-  font-weight: 500;
-  font-size: var(--fs-xs);
-  color: var(--color-text);
-  line-height: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.tab .common {
-  font-family: var(--font-pixel);
-  font-size: var(--fs-pixel);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--color-text-faint);
-}
 .tab .close {
   color: var(--color-text-faint);
   opacity: 0;
@@ -685,16 +228,6 @@ body.dragging .divider::after {
 }
 
 /* ---- Launcher (shadcn Popover content) ------------------------------- */
-
-/* One launch surface everywhere: a compact popover anchored to its trigger
-   (tab "+", pane split controls, rail "+"). `.modal-panel` is the shared shell;
-   `.popover-launch` sizes/animates it. */
-.modal-panel {
-  position: relative;
-  background: var(--color-panel);
-  border: 2px solid var(--color-rule);
-  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.6);
-}
 
 /* Stacked single column: agent picker over permission mode. */
 .launch-body {
@@ -725,7 +258,7 @@ body.dragging .divider::after {
 }
 
 /* Stagger the agent rows + mode options in as the launcher opens — the panel
-   itself slides in (pop-in / modal-in), then its contents cascade. */
+   itself slides in (pop-in), then its contents cascade. */
 .agent-row,
 .mode-opt {
   animation: row-in 0.34s var(--ease-out-quint) both;
@@ -923,14 +456,8 @@ body.dragging .divider::after {
 /* Keyboard users get a clear accent ring; mouse clicks stay clean (the
    :focus-visible heuristic suppresses it on pointer interaction). */
 .tab:focus-visible,
-.pane-ctl:focus-visible,
 .agent-row:focus-visible,
 .mode-opt:focus-visible,
-.rail-group-head:focus-visible,
-.rr-main:focus-visible,
-.rr-close:focus-visible,
-.rail-new:focus-visible,
-.rail-toggle:focus-visible,
 .start:focus-visible,
 .tab .close:focus-visible {
   outline: 2px solid var(--color-accent-bright);
@@ -942,18 +469,12 @@ body.dragging .divider::after {
 
 @media (prefers-reduced-motion: reduce) {
   .pane-leaf,
-  .modal-overlay,
-  .modal-fixed,
   .popover-launch,
-  .tab-enter,
   .tab.active::after,
   .agent-row,
   .mode-opt {
     animation: none;
   }
-  .session-rail,
-  .rail-toggle,
-  .rail-new .plus,
   .tab {
     transition: none;
   }
@@ -976,10 +497,9 @@ body.dragging .divider::after {
 }
 
 /* ---- Hub A tile grid -------------------------------------------------- */
-/* The Hub shell (App.tsx) wraps the split tree in `.hub-grid` instead of the
-   legacy `.grid-root` field-journal frame. Tiles are flush against a 1px rule
-   background; the focused pane gets a subtle inset ring (design tokens) rather
-   than the amber border + glow of the old skin. */
+/* The Hub shell (App.tsx) wraps the split tree in `.hub-grid`. Tiles are flush
+   against a 1px rule background; the focused pane gets a subtle inset ring
+   (design tokens) rather than the amber border + glow of the old skin. */
 .hub-grid {
   flex: 1;
   display: flex;
@@ -1001,7 +521,4 @@ body.dragging .divider::after {
 .hub-grid .pane-leaf.focused {
   border: none;
   box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--fg-0) 20%, transparent);
-}
-.hub-grid .pane-leaf.focused .pane-head {
-  background: var(--bg-1);
 }
