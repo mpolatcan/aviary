@@ -33,6 +33,19 @@ const DEFAULT_CONTAINER: &str = "codehub-runtime";
 const DEFAULT_IMAGE: &str = "ghcr.io/mpolatcan/codehub-runtime:0.1.2";
 const ADDR: &str = "127.0.0.1:4555";
 
+/// Origins permitted to open the `/events` WebSocket. WebSockets are exempt
+/// from CORS preflight, so unless the upgrade handler checks `Origin` itself,
+/// any cross-origin page can subscribe to the live pty broadcast (which
+/// mirrors every byte tmux paints — agent output, typed prompts, pasted
+/// secrets). Keep this list in sync with the Vite dev server origin.
+const ALLOWED_WS_ORIGINS: &[&str] = &[
+    "http://localhost:1420",
+    "http://127.0.0.1:1420",
+    // Tauri webview origin — defensive, in case the dev bridge is ever run
+    // alongside a Tauri build for debugging.
+    "tauri://localhost",
+];
+
 #[derive(Clone)]
 struct AppState {
     lifecycle: Arc<Lifecycle>,
@@ -506,7 +519,19 @@ async fn detach(State(st): State<AppState>, Path(id): Path<String>) -> StatusCod
     StatusCode::NO_CONTENT
 }
 
-async fn events(ws: WebSocketUpgrade, State(st): State<AppState>) -> impl IntoResponse {
+async fn events(
+    ws: WebSocketUpgrade,
+    headers: axum::http::HeaderMap,
+    State(st): State<AppState>,
+) -> axum::response::Response {
+    let origin = headers
+        .get(axum::http::header::ORIGIN)
+        .and_then(|v| v.to_str().ok());
+    let allowed = matches!(origin, Some(o) if ALLOWED_WS_ORIGINS.contains(&o));
+    if !allowed {
+        tracing::warn!("rejected /events upgrade from origin={:?}", origin);
+        return (StatusCode::FORBIDDEN, "forbidden origin").into_response();
+    }
     ws.on_upgrade(move |socket| client(socket, st.tx.subscribe()))
 }
 

@@ -22,6 +22,59 @@ pub enum DockerError {
     Io(#[from] std::io::Error),
 }
 
+/// Reject anything that wouldn't be a legitimate `/workspace`-relative tracked
+/// path coming from the frontend's `git status` list. Belt-and-braces against
+/// a cross-origin caller (see Finding 3 in the security report) reaching the
+/// HTTP bridge and asking for `path=/etc/passwd` — `git -C /workspace diff …
+/// -- /etc/passwd` would otherwise return the file's contents as a synthetic
+/// new-file diff.
+fn validate_workspace_relative(path: &str) -> Result<(), DockerError> {
+    use std::path::{Component, Path};
+    if path.is_empty() {
+        return Err(DockerError::InvalidPath("empty".into()));
+    }
+    if path.bytes().any(|b| b == 0 || b == b'\n' || b == b'\r') {
+        return Err(DockerError::InvalidPath("control characters".into()));
+    }
+    let p = Path::new(path);
+    if p.is_absolute() {
+        return Err(DockerError::InvalidPath(path.into()));
+    }
+    for component in p.components() {
+        if !matches!(component, Component::Normal(_)) {
+            return Err(DockerError::InvalidPath(path.into()));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod path_tests {
+    use super::validate_workspace_relative;
+
+    #[test]
+    fn accepts_relative_paths() {
+        for ok in ["a.txt", "src/lib.rs", "dir/sub/file.md", "a-b_c.1"] {
+            assert!(validate_workspace_relative(ok).is_ok(), "ok: {ok:?}");
+        }
+    }
+
+    #[test]
+    fn rejects_absolute_and_traversal_and_control() {
+        for bad in [
+            "",
+            "/etc/passwd",
+            "../etc/passwd",
+            "src/../../etc/passwd",
+            "./a",
+            "a\nb",
+            "a\0b",
+        ] {
+            assert!(validate_workspace_relative(bad).is_err(), "bad: {bad:?}");
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Clone)]
 pub struct SessionInfo {
     pub name: String,
@@ -992,8 +1045,12 @@ impl DockerClient {
     /// commit); if that yields nothing — a brand-new untracked file, or a repo
     /// with no commits yet — falls back to `diff --no-index /dev/null <path>` so
     /// the new file shows as all-added. `path` is passed after `--` so it can
-    /// never be read as an option. Errors only when the container is down.
+    /// never be read as an option, and is rejected if it escapes `/workspace`
+    /// (absolute, `..` segment, NUL/newline) — `git -C /workspace` would
+    /// otherwise happily diff arbitrary container files like `/etc/passwd`
+    /// when the diff bridge is reachable cross-origin.
     pub async fn git_diff(&self, path: &str) -> Result<String, DockerError> {
+        validate_workspace_relative(path)?;
         if !self.is_running().await? {
             return Err(DockerError::ContainerDown(self.container.clone()));
         }
