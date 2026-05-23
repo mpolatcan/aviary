@@ -3,7 +3,8 @@ import { useEffect, useState } from "react";
 import { AgentGlyph } from "../../components/primitives/AgentGlyph";
 import { StatusDot } from "../../components/primitives/StatusDot";
 import { Ico } from "../../components/primitives/icons";
-import { type GitStatus, ipc } from "../../lib/ipc";
+import { fmtTokens, useSessionUsage } from "../../hooks/useSessionUsage";
+import { type Cli, type GitStatus, type SessionActivity, ipc } from "../../lib/ipc";
 import { useOverlay } from "../../lib/overlay";
 import { useStore } from "../../lib/store";
 import { DiffViewer } from "./DiffViewer";
@@ -196,53 +197,95 @@ function Activity({ running }: { running: boolean }) {
     <div className="scroll" style={{ flex: 1, overflow: "auto", padding: "6px 8px" }}>
       {sessions.map(([name, m]) => {
         const act = activity[name];
-        const working = act?.state === "working";
+        // Prefer the backend-sourced id (session_activity, registered at launch
+        // and stable across a reload) over the in-memory store meta, which a
+        // reload re-bootstraps without it. Same source the companion uses, so
+        // both agree.
+        const claudeId = act?.claudeId ?? (m.cli === "claude" ? m.claudeId : undefined);
         return (
-          <button
-            type="button"
+          <ActivityRow
             key={name}
-            onClick={() => open(name)}
-            title={`${m.alias} — jump to session`}
-            className="rail-file"
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              width: "100%",
-              padding: "6px",
-              borderRadius: 4,
-              border: "none",
-              background: "transparent",
-              cursor: "pointer",
-              textAlign: "left",
-            }}
-          >
-            <StatusDot status={working ? "live" : "idle"} pulse={working} />
-            <AgentGlyph agent={m.cli} size={12} color={`var(--a-${m.cli})`} />
-            <span
-              className="mono"
-              style={{
-                fontSize: 11.5,
-                color: "var(--fg-0)",
-                flex: 1,
-                minWidth: 0,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {m.alias}
-            </span>
-            <span
-              className="mono"
-              style={{ fontSize: 10.5, color: working ? "var(--live)" : "var(--fg-3)" }}
-            >
-              {working ? "working" : act ? `idle ${fmtIdle(act.idleMs)}` : "idle"}
-            </span>
-          </button>
+            alias={m.alias}
+            cli={m.cli}
+            claudeId={claudeId ?? undefined}
+            act={act}
+            onOpen={() => open(name)}
+          />
         );
       })}
     </div>
+  );
+}
+
+// One live session row: working/idle dot + identity + quiet-duration, and — for
+// Claude sessions — a real turn + token tally from that session's transcript.
+// Its own component so the per-session usage poll is a top-level hook (not
+// called inside a map callback). Token line is omitted, never zero-faked, until
+// the transcript has usable data.
+function ActivityRow({
+  alias,
+  cli,
+  claudeId,
+  act,
+  onOpen,
+}: {
+  alias: string;
+  cli: Cli;
+  claudeId: string | undefined;
+  act: SessionActivity | undefined;
+  onOpen: () => void;
+}) {
+  const working = act?.state === "working";
+  const usage = useSessionUsage(claudeId);
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      title={`${alias} — jump to session`}
+      className="rail-file"
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        width: "100%",
+        padding: "6px",
+        borderRadius: 4,
+        border: "none",
+        background: "transparent",
+        cursor: "pointer",
+        textAlign: "left",
+      }}
+    >
+      <StatusDot status={working ? "live" : "idle"} pulse={working} />
+      <AgentGlyph agent={cli} size={12} color={`var(--a-${cli})`} />
+      <span style={{ flex: 1, minWidth: 0 }}>
+        <span
+          className="mono"
+          style={{
+            display: "block",
+            fontSize: 11.5,
+            color: "var(--fg-0)",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {alias}
+        </span>
+        {usage && (
+          <span className="mono tnum" style={{ fontSize: 10, color: "var(--fg-3)" }}>
+            {usage.turns} turn{usage.turns === 1 ? "" : "s"} ·{" "}
+            {fmtTokens(usage.tokensIn + usage.tokensOut)} tok
+          </span>
+        )}
+      </span>
+      <span
+        className="mono"
+        style={{ fontSize: 10.5, color: working ? "var(--live)" : "var(--fg-3)", flexShrink: 0 }}
+      >
+        {working ? "working" : act ? `idle ${fmtIdle(act.idleMs)}` : "idle"}
+      </span>
+    </button>
   );
 }
 

@@ -350,10 +350,12 @@ async fn create_session(
         )
         .await
         .map_err(err)?;
-    // Mirror lib.rs: record agent identity for the activity snapshot.
+    // Mirror lib.rs: record agent identity (+ Claude transcript id) for the
+    // activity snapshot.
+    let claude_id = body.resume.as_deref().or(body.session_id.as_deref());
     st.registry
         .activity()
-        .register(&body.name, cli.binary(), &alias);
+        .register(&body.name, cli.binary(), &alias, claude_id);
     Ok(StatusCode::NO_CONTENT)
 }
 

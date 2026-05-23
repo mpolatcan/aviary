@@ -42,8 +42,12 @@ pub enum ActivityState {
 /// real throughput hint). `cli` / `alias` are the agent identity registered at
 /// session creation — they let a satellite view (the always-on-top companion,
 /// which runs in its own webview and cannot read the main store) render the
-/// agent glyph + name without re-deriving them. Both are `Option` so an entry
-/// created by output before any label is registered still serializes honestly.
+/// agent glyph + name without re-deriving them. `claudeId` is the Claude
+/// `--session-id` (or resumed id) the session launched with, so that satellite
+/// view can read this session's own transcript for a live token tally
+/// (`claude_session_usage`) — `None` for non-Claude agents. All `Option` so an
+/// entry created by output before any label is registered still serializes
+/// honestly.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionActivity {
@@ -53,6 +57,7 @@ pub struct SessionActivity {
     pub bytes: u64,
     pub cli: Option<String>,
     pub alias: Option<String>,
+    pub claude_id: Option<String>,
 }
 
 #[derive(Default)]
@@ -63,6 +68,7 @@ struct Entry {
     bytes: u64,
     cli: Option<String>,
     alias: Option<String>,
+    claude_id: Option<String>,
 }
 
 /// Shared, in-memory per-session activity. Fed from the pty output pump (via
@@ -89,15 +95,18 @@ impl ActivityTracker {
         entry.bytes = entry.bytes.saturating_add(len as u64);
     }
 
-    /// Attach the agent identity (cli + display alias) to a session. Called when
-    /// the session is created so the activity snapshot can carry who each session
-    /// is, not just its tmux name. Pre-creates an idle entry if output hasn't
-    /// started yet, so a freshly-spawned agent shows up immediately.
-    pub fn register(&self, session: &str, cli: &str, alias: &str) {
+    /// Attach the agent identity (cli + display alias, and the Claude transcript
+    /// id for Claude sessions) to a session. Called when the session is created
+    /// so the activity snapshot can carry who each session is — not just its tmux
+    /// name — and, for Claude, which transcript holds its live token tally.
+    /// Pre-creates an idle entry if output hasn't started yet, so a freshly
+    /// spawned agent shows up immediately.
+    pub fn register(&self, session: &str, cli: &str, alias: &str, claude_id: Option<&str>) {
         let mut map = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let entry = map.entry(session.to_string()).or_default();
         entry.cli = Some(cli.to_string());
         entry.alias = Some(alias.to_string());
+        entry.claude_id = claude_id.map(|s| s.to_string());
     }
 
     /// Forget a session (its tmux session was killed / pane detached). Keeps the
@@ -134,6 +143,7 @@ impl ActivityTracker {
                     bytes: e.bytes,
                     cli: e.cli.clone(),
                     alias: e.alias.clone(),
+                    claude_id: e.claude_id.clone(),
                 }
             })
             .collect()
@@ -186,12 +196,13 @@ mod tests {
     #[test]
     fn register_attaches_identity_and_survives_output() {
         let t = ActivityTracker::new();
-        t.register("s1", "claude", "Owl 1");
+        t.register("s1", "claude", "Claude 1", Some("abc-123"));
         t.mark("s1", 7);
         let snap = t.snapshot();
         assert_eq!(snap.len(), 1);
         assert_eq!(snap[0].cli.as_deref(), Some("claude"));
-        assert_eq!(snap[0].alias.as_deref(), Some("Owl 1"));
+        assert_eq!(snap[0].alias.as_deref(), Some("Claude 1"));
+        assert_eq!(snap[0].claude_id.as_deref(), Some("abc-123"));
         assert_eq!(snap[0].bytes, 7);
         assert_eq!(snap[0].state, ActivityState::Working);
     }
@@ -199,12 +210,14 @@ mod tests {
     #[test]
     fn registered_but_silent_session_is_idle() {
         let t = ActivityTracker::new();
-        t.register("s1", "codex", "Fox 1");
+        // A non-Claude agent registers no transcript id.
+        t.register("s1", "codex", "Codex 1", None);
         let snap = t.snapshot();
         assert_eq!(snap.len(), 1);
         assert_eq!(snap[0].state, ActivityState::Idle);
         assert_eq!(snap[0].idle_ms, 0);
         assert_eq!(snap[0].bytes, 0);
-        assert_eq!(snap[0].alias.as_deref(), Some("Fox 1"));
+        assert_eq!(snap[0].alias.as_deref(), Some("Codex 1"));
+        assert_eq!(snap[0].claude_id, None);
     }
 }

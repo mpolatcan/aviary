@@ -314,10 +314,13 @@ async fn create_session(
         .map_err(|e| e.to_string())?;
     // Record the agent identity so the activity snapshot (and the companion
     // window built on it) can show who each session is, not just its tmux name.
+    // For Claude, the transcript id it launched with (resumed id, else the fresh
+    // --session-id) rides along so satellite views can read a live token tally.
+    let claude_id = resume.as_deref().or(session_id.as_deref());
     state
         .registry
         .activity()
-        .register(&name, cli.binary(), &alias);
+        .register(&name, cli.binary(), &alias, claude_id);
     Ok(())
 }
 

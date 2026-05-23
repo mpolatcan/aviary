@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { AGENT_META, AgentGlyph } from "../components/primitives/AgentGlyph";
 import { Ico } from "../components/primitives/icons";
+import { fmtTokens, useSessionUsage } from "../hooks/useSessionUsage";
 import { type SessionActivity, ipc } from "../lib/ipc";
 
 // Content of the always-on-top companion window (P5). It runs in its own webview
@@ -116,6 +117,9 @@ function Row({ act }: { act: SessionActivity }) {
   const accent = (act.cli && AGENT_META[act.cli]?.accent) || "var(--fg-1)";
   const name = act.alias ?? act.session;
   const ring = working ? "var(--live)" : "var(--bd)";
+  // Live token tally from this Claude session's transcript (null for non-Claude
+  // agents and before the first response) — real numbers only, never faked.
+  const usage = useSessionUsage(act.claudeId);
 
   return (
     <button
@@ -177,6 +181,13 @@ function Row({ act }: { act: SessionActivity }) {
           }}
         >
           {working ? "working" : `idle ${fmtIdle(act.idleMs)}`}
+          {usage && (
+            <span style={{ color: "var(--fg-3)" }}>
+              {" · "}
+              {usage.turns} turn{usage.turns === 1 ? "" : "s"} ·{" "}
+              {fmtTokens(usage.tokensIn + usage.tokensOut)} tok
+            </span>
+          )}
         </span>
       </span>
       <span className={`dot ${working ? "live pulse" : "idle"}`} style={{ flexShrink: 0 }} />

@@ -39,6 +39,11 @@ export interface SessionActivity {
   // these to render the glyph + name; UI falls back when absent.
   cli: string | null;
   alias: string | null;
+  // Claude `--session-id`/resumed id this session launched with, so a satellite
+  // view (companion) can read its transcript for a live token tally. Null for
+  // non-Claude agents (no transcript) or entries created by output before the
+  // identity was registered.
+  claudeId: string | null;
 }
 
 // Tier-1 reads (BACKEND_PLAN.md). docker_info backs the empty-state daemon pill;
