@@ -83,6 +83,38 @@ docker exec -it codehub-runtime ps -ef | grep -E "tmux|claude|codex"
 | K6 | Pick Auto mode | Pane gets an `AUTO` badge; `create_session` sends `mode: "auto"` |
 | K7 | Select Antigravity | Only Standard selectable (Auto/YOLO disabled) |
 
+## Shell pane (PR #51)
+
+| # | Scenario | Expected |
+|---|---|---|
+| SH1 | Launcher → "Pane type" → Shell → Open | Tab labelled "Shell N · Shell", terminal shows `root@<id>:/workspace#` bash prompt; `tmux ls` shows `shell-xxxxx` |
+| SH2 | Selecting Shell in the launcher | Mode segment (Standard/Auto/YOLO) is replaced by a plain-bash note; no permission mode sent |
+| SH3 | Shell pane header metrics | ctx/turn/tokens/cost/edits all em-dash (no agent telemetry); no version shown |
+| SH4 | Close a Shell tab | tmux session gone (S3 invariant holds for shell too) |
+| SH5 | Run a command in the shell (`ls /workspace`) | Real output; cwd is `/workspace` |
+
+## Hub layout toggle (PR #51)
+
+| # | Scenario | Expected |
+|---|---|---|
+| HL1 | Tab bar → "Compare grid layout" with ≥2 sessions | Every live session tiles side by side; each keeps its own live terminal + header |
+| HL2 | Toggle back to "Tabs layout" | Returns to per-workspace split grid; **scrollback preserved** in every pane (panes reparented, not disposed) |
+| HL3 | Grid toggle with 0 sessions | Grid button disabled |
+| HL4 | Reload app after choosing Grid | Layout persists (config `hubLayout`) |
+
+## Settings — live preferences (PR #51)
+
+| # | Scenario | Expected |
+|---|---|---|
+| ST1 | Appearance → Density → Compact | Tab bar shrinks (40→32px), pane headers/dividers/launcher tighten immediately; `data-density="compact"` on `<html>` |
+| ST2 | Density → Comfortable | Reverts; attribute cleared. Survives reload (config) |
+| ST3 | General → Restore sessions on launch = off, quit + relaunch | Hub starts clean; sessions still alive in container (`tmux ls` non-empty) but not adopted |
+| ST4 | Restore on, Reopen last workspace on; focus a tab, quit, relaunch | That session's tab is re-selected (focus restored from localStorage) |
+| ST5 | Restore = off | "Reopen last workspace" toggle is disabled |
+| ST6 | Agents pane → click an agent row → Configure | Opens Agent detail; back button returns to the list |
+| ST7 | Agent detail for Claude (runtime running) | Real account, model, permission mode, MCP/sub-agents/skills/plugins with honest "none configured" empties |
+| ST8 | Agent detail for Codex / Antigravity | Version + key presence + an honest "no per-agent config tree read" note (no fabricated sections) |
+
 ## Known limitations (don't test against)
 
 - Antigravity CLI install URL not yet confirmed — currently commented out in `runtime/Dockerfile`. Selecting Antigravity in the modal will create a tmux session that exits immediately because the `antigravity` binary is missing.
@@ -94,6 +126,8 @@ docker exec -it codehub-runtime ps -ef | grep -E "tmux|claude|codex"
 - [ ] L1, L3, L5, L6
 - [ ] S3 (the bug user reported), S4, S5, S7, S8, S9
 - [ ] K2 (⌘W must kill tmux — same invariant as S3)
+- [ ] SH4 (shell close kills tmux — S3 invariant for the shell pane)
+- [ ] HL2 (layout toggle preserves scrollback — panes reparented, not disposed)
 - [ ] P1, P5, P7
 - [ ] V1, V2
 - [ ] U3, U4, U7

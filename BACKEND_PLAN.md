@@ -277,9 +277,13 @@ per tab) need the Tier-3 multi-container work and are deferred.
     that conflict with CodeHub's single shared-runtime model; a faithful port would
     be almost entirely fabricated. Its honest subset already lives in Dashboard +
     Containers.
-  - **Hub B** (`main-hub-b.jsx`) — **dropped** (not stubbed). An alternate Hub
-    layout; the primary Hub A shipped in P3. A second selectable layout is pure
-    redundancy with no new data, so it's not ported.
+  - **Hub B** (`main-hub-b.jsx`) — **SHIPPED (PR #51)** as an opt-in layout, not
+    a separate screen. A `CompareGrid` tiles every live session side by side;
+    the tab bar toggles Tabs ↔ Compare grid, persisted via the `hubLayout`
+    config field. Reuses the existing panes registry (reparented, scrollback
+    survives the toggle) and per-session headers — no new data, no new backend.
+    (Originally deferred as redundant; revisited because comparing agents at a
+    glance is genuinely useful and free given the pane machinery.)
 - **Broadcast (P4).** ~~Send one prompt to many agents~~ **Send DONE / compare
   blocked.** The design's value — side-by-side answer columns + per-agent
   token/cost/elapsed/winner — is fabrication-blocked (no structured per-turn
