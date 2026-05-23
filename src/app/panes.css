@@ -12,6 +12,36 @@
   opacity: 0;
 }
 
+/* ---- Density ----------------------------------------------------------
+   "comfortable" (default) vs "compact", set as data-density on <html> by the
+   config store (store.ts applyDensity). The chrome that reads these vars —
+   tab bar height + pane-head padding (HubTabs/PaneHead) — tightens in compact;
+   the CSS-owned chrome below (tabs, splitter, launcher) tightens via the
+   [data-density="compact"] overrides. Terminal scrollback is untouched. */
+:root {
+  --tabbar-h: 40px;
+  --panehead-py: 7px;
+}
+[data-density="compact"] {
+  --tabbar-h: 32px;
+  --panehead-py: 4px;
+}
+[data-density="compact"] .tab {
+  min-width: 132px;
+  column-gap: 7px;
+  padding: 0 10px 0 9px;
+}
+[data-density="compact"] .divider.col {
+  width: 6px;
+}
+[data-density="compact"] .divider.row {
+  height: 6px;
+}
+[data-density="compact"] .launch-col {
+  padding: 10px 12px;
+  gap: 9px;
+}
+
 /* ---- Split nodes ------------------------------------------------------ */
 
 .split {
@@ -521,4 +551,28 @@ body.dragging .divider::after {
 .hub-grid .pane-leaf.focused {
   border: none;
   box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--fg-0) 20%, transparent);
+}
+
+/* ---- Hub B compare grid ----------------------------------------------- */
+/* The grid layout (settings.hubLayout === "grid") tiles every live session as
+   its own pane, 1px-rule background like the split grid. Column count is set
+   inline (sqrt of the tile count). Tiles reuse `.pane-leaf` chrome. */
+.compare-grid {
+  flex: 1;
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bd-soft);
+}
+.compare-grid .pane-leaf {
+  margin: 0;
+  background: var(--bg-0);
+  border: none;
+  animation: none;
+}
+.compare-grid .pane-leaf.focused {
+  border: none;
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--fg-0) 36%, transparent);
+  z-index: 1;
 }

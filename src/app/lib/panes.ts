@@ -4,6 +4,7 @@ import {
   destroyPane as destroyTerminal,
   fitPane,
   focusPane,
+  setPaneFontSize,
 } from "../../terminal";
 
 // Pane registry — xterm surfaces live here, OUTSIDE React. React renders empty
@@ -19,12 +20,26 @@ document.body.appendChild(stash);
 
 const panes = new Map<string, Pane>();
 
+// Terminal font size for new + existing panes, fed from the persisted config
+// store. Kept module-level (not in the React/Zustand tree) so the framework-
+// agnostic pane registry stays decoupled — the store pushes changes in via
+// setFontSize rather than panes.ts importing the store (which would cycle).
+let currentFontSize = 13;
+
 // Create + attach a pane's terminal to the backend. Awaited by store actions
 // before the layout references the session, so PaneMount always finds it.
 export async function spawnPane(name: string): Promise<void> {
   if (panes.has(name)) return;
-  const pane = await createPane(stash, name);
+  const pane = await createPane(stash, name, currentFontSize);
   panes.set(name, pane);
+}
+
+// Apply a new terminal font size to every open pane and remember it for panes
+// spawned later. No-op when unchanged.
+export function setFontSize(size: number): void {
+  if (size === currentFontSize) return;
+  currentFontSize = size;
+  for (const pane of panes.values()) setPaneFontSize(pane, size);
 }
 
 export function getPane(name: string): Pane | undefined {

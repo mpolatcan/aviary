@@ -8,7 +8,7 @@ import { fmtTokens, useSessionUsage } from "../hooks/useSessionUsage";
 import { MODE_BY_ID, SPEC_BY_CLI } from "../lib/catalog";
 import type { Cli, Mode } from "../lib/ipc";
 import { splitKey, useLauncher } from "../lib/launcher";
-import { useStore } from "../lib/store";
+import { confirmCloseRunningSession, useStore } from "../lib/store";
 import type { SplitDir } from "../lib/tree";
 import { LaunchPanel } from "./LaunchPanel";
 import { Popover, PopoverAnchor, PopoverContent } from "./ui/popover";
@@ -48,7 +48,8 @@ export function PaneHead({ session }: { session: string }) {
   const spec = SPEC_BY_CLI[meta.cli];
   const accent = `var(--a-${meta.cli})`;
   const badge = MODE_BY_ID[meta.mode].badge;
-  const version = agentVersions?.[meta.cli]?.version ?? null;
+  // Shell panes have no CLI version to show; agent versions are keyed by agent.
+  const version = meta.cli === "shell" ? null : (agentVersions?.[meta.cli]?.version ?? null);
   const key = splitKey(session);
   const isOpen = openKey === key;
   // Real per-session signal from pane output flow (session_activity): the agent
@@ -77,7 +78,14 @@ export function PaneHead({ session }: { session: string }) {
       }}
     >
       {/* identity row */}
-      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 12px 5px" }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+          padding: "var(--panehead-py, 7px) 12px 5px",
+        }}
+      >
         <StatusDot status={status} pulse={working} />
         <AgentGlyph agent={meta.cli} size={13} color={accent} />
 
@@ -181,6 +189,7 @@ export function PaneHead({ session }: { session: string }) {
           style={{ width: 20, height: 20 }}
           onClick={(e) => {
             e.stopPropagation();
+            if (!confirmCloseRunningSession(session)) return;
             void closeSession(session);
           }}
         >
@@ -194,7 +203,14 @@ export function PaneHead({ session }: { session: string }) {
           read last turn) shown as a bare count: the transcript has no window max
           and it varies by model/version, so no fabricated used/max ratio. cost
           stays em-dash: an estimate, surfaced on Usage with its disclosure. */}
-      <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "0 12px 7px" }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 14,
+          padding: "0 12px var(--panehead-py, 7px)",
+        }}
+      >
         <MetricStat label="ctx" value={usage ? fmtTokens(usage.contextUsed) : "—"} />
         <span className="vr" style={{ height: 16 }} />
         <MetricStat label="turn" value={usage ? String(usage.turns) : "—"} />

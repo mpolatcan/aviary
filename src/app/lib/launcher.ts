@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { create } from "zustand";
-import { MODE_SUPPORT } from "./catalog";
+import { modesFor } from "./catalog";
 import type { Cli, Mode } from "./ipc";
 import type { SplitDir } from "./tree";
 
@@ -47,7 +47,7 @@ export function useLaunchChoice(initialCli: Cli = "claude") {
 
   const setCli = (next: Cli) => {
     setCliRaw(next);
-    if (!MODE_SUPPORT[next].includes(mode)) setMode("standard");
+    if (!modesFor(next).includes(mode)) setMode("standard");
   };
 
   return { cli, mode, setCli, setMode };

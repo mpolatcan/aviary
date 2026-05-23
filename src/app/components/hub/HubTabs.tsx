@@ -36,6 +36,9 @@ export function HubTabs() {
   const setBroadcast = useOverlay((s) => s.setBroadcast);
   const running = useStore((s) => s.status?.state === "running");
   const hasSessions = useStore((s) => s.workspaces.length > 0);
+  // Hub layout toggle (tabs ↔ compare grid), persisted via the config store.
+  const layout = useStore((s) => s.config?.hubLayout ?? "tabs");
+  const updateConfig = useStore((s) => s.updateConfig);
 
   const stripRef = useRef<HTMLDivElement>(null);
   const prevCount = useRef(workspaces.length);
@@ -55,7 +58,7 @@ export function HubTabs() {
   return (
     <div
       style={{
-        height: 40,
+        height: "var(--tabbar-h, 40px)",
         display: "flex",
         alignItems: "stretch",
         borderBottom: "1px solid var(--bd-soft)",
@@ -178,6 +181,27 @@ export function HubTabs() {
       {/* trailing actions — Diff is live (combined /workspace diff); files +
           notifications land in later phases. */}
       <div style={{ display: "flex", alignItems: "center", gap: 2, padding: "0 8px" }}>
+        {/* layout toggle: per-workspace tabs vs the compare grid (Hub B) */}
+        <IconBtn
+          title="Tabs layout"
+          onClick={() => void updateConfig({ hubLayout: "tabs" })}
+          style={
+            layout === "tabs" ? { background: "var(--bg-3)", color: "var(--fg-0)" } : undefined
+          }
+        >
+          {Ico.hub}
+        </IconBtn>
+        <IconBtn
+          title="Compare grid layout"
+          disabled={!hasSessions}
+          onClick={() => void updateConfig({ hubLayout: "grid" })}
+          style={
+            layout === "grid" ? { background: "var(--bg-3)", color: "var(--fg-0)" } : undefined
+          }
+        >
+          {Ico.grid}
+        </IconBtn>
+        <span className="vr" style={{ height: 16, margin: "0 4px" }} />
         <IconBtn
           title={running ? "Browse /workspace files" : "Files (runtime not running)"}
           disabled={!running}

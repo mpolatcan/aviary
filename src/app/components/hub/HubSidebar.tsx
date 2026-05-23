@@ -6,7 +6,7 @@ import { Ico } from "../../components/primitives/icons";
 import { MODE_BY_ID, SPEC_BY_CLI } from "../../lib/catalog";
 import { type Cli, type Mode, ipc } from "../../lib/ipc";
 import { useLauncher } from "../../lib/launcher";
-import { useStore } from "../../lib/store";
+import { confirmCloseRunningSession, useStore } from "../../lib/store";
 import { leavesList } from "../../lib/tree";
 import { Button } from "../../ui/button";
 import { LaunchPanel } from "../LaunchPanel";
@@ -310,6 +310,7 @@ export function HubSidebar() {
                                 aria-label="close"
                                 onClick={(e) => {
                                   e.stopPropagation();
+                                  if (!confirmCloseRunningSession(session)) return;
                                   void closeSession(session);
                                 }}
                                 style={{

@@ -2,6 +2,7 @@
 // devserver.rs) can reuse the same docker / pty / lifecycle logic without going
 // through Tauri.
 pub mod activity;
+pub mod config;
 #[cfg(feature = "devserver")]
 pub mod devserver;
 pub mod docker;
@@ -9,10 +10,11 @@ pub mod lifecycle;
 pub mod pty;
 
 use activity::SessionActivity;
+use config::{ConfigStore, Settings};
 use docker::{
-    AgentVersion, ClaudeIntegrations, ClaudeSession, ClaudeUsage, Cli, CommitInfo, ContainerStats,
-    DockerClient, FileEntry, GitStatus, ImageInfo, LaunchMode, MountInfo, ProcessInfo,
-    RuntimeHealth, SessionUsage,
+    AgentConfig, AgentVersion, ClaudeIntegrations, ClaudeSession, ClaudeUsage, Cli, CommitInfo,
+    ContainerStats, DockerClient, FileEntry, GitStatus, ImageInfo, LaunchMode, MountInfo,
+    ProcessInfo, RuntimeHealth, SessionUsage,
 };
 use lifecycle::{AppInfo, ContainerStatus, DockerInfo, KeyStatus, Lifecycle};
 use pty::{PaneEmitter, PtyRegistry, SessionInfo};
@@ -37,6 +39,7 @@ pub struct AppState {
     pub lifecycle: Arc<Lifecycle>,
     pub docker: Arc<DockerClient>,
     pub registry: Arc<PtyRegistry>,
+    pub config: Arc<ConfigStore>,
 }
 
 const DEFAULT_CONTAINER: &str = "codehub-runtime";
@@ -112,6 +115,20 @@ fn agent_key_status() -> Result<HashMap<String, KeyStatus>, String> {
 #[tauri::command]
 fn app_info() -> Result<AppInfo, String> {
     Ok(lifecycle::app_info())
+}
+
+/// Current persisted UI preferences (Settings screen). In-memory snapshot —
+/// never fails.
+#[tauri::command]
+fn get_config(state: tauri::State<'_, AppState>) -> Result<Settings, String> {
+    Ok(state.config.get())
+}
+
+/// Replace the persisted UI preferences and write them to disk. Returns the
+/// stored settings so the frontend can confirm what landed.
+#[tauri::command]
+fn set_config(config: Settings, state: tauri::State<'_, AppState>) -> Result<Settings, String> {
+    state.config.set(config)
 }
 
 /// `<cli> --version` for each agent inside the runtime container.
@@ -274,6 +291,19 @@ async fn claude_integrations(
     state
         .docker
         .claude_integrations()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// The runtime Claude's configurable surface (Agent settings detail): active
+/// model, default permission mode, sub-agents, skills, plugins and installed
+/// marketplaces, all read from on-disk config. Factual only; empty collections
+/// are honest, not sample data. Errs only when the container is down.
+#[tauri::command]
+async fn claude_agent_config(state: tauri::State<'_, AppState>) -> Result<AgentConfig, String> {
+    state
+        .docker
+        .claude_agent_config()
         .await
         .map_err(|e| e.to_string())
 }
@@ -570,11 +600,14 @@ pub fn run() {
             )?);
             let docker = Arc::new(lifecycle.docker_client());
             let registry = Arc::new(PtyRegistry::new());
+            // UI preferences — separate file from the container config mount.
+            let config = Arc::new(ConfigStore::load(app_data.join("settings.json")));
 
             app.manage(AppState {
                 lifecycle: lifecycle.clone(),
                 docker,
                 registry,
+                config,
             });
 
             // Kick off runtime provisioning in background; frontend listens for status events.
@@ -601,6 +634,8 @@ pub fn run() {
             container_restart,
             docker_info,
             app_info,
+            get_config,
+            set_config,
             agent_key_status,
             agent_versions,
             container_stats,
@@ -618,6 +653,7 @@ pub fn run() {
             claude_sessions,
             claude_session_usage,
             claude_integrations,
+            claude_agent_config,
             container_git_log,
             list_sessions,
             create_session,

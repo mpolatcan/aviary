@@ -12,6 +12,7 @@
 //! NOT compiled into the shipped app — gated behind the `devserver` feature and
 //! built only via `cargo run --bin codehub-devserver --features devserver`.
 
+use crate::config::{ConfigStore, Settings};
 use crate::docker::{Cli, DockerClient, LaunchMode};
 use crate::lifecycle::Lifecycle;
 use crate::pty::{PaneEmitter, PtyRegistry};
@@ -37,6 +38,7 @@ struct AppState {
     lifecycle: Arc<Lifecycle>,
     docker: Arc<DockerClient>,
     registry: Arc<PtyRegistry>,
+    config: Arc<ConfigStore>,
     // Pre-serialized `{event, payload}` frames fanned out to every WS client.
     tx: broadcast::Sender<String>,
 }
@@ -104,6 +106,7 @@ pub async fn serve() {
     );
     let docker = Arc::new(lifecycle.docker_client());
     let registry = Arc::new(PtyRegistry::new());
+    let config = Arc::new(ConfigStore::load(data_dir.join("settings.json")));
     let (tx, _) = broadcast::channel::<String>(1024);
 
     // Provision the runtime in the background, mirroring lib.rs setup; the
@@ -126,6 +129,7 @@ pub async fn serve() {
         lifecycle,
         docker,
         registry,
+        config,
         tx,
     };
 
@@ -133,6 +137,7 @@ pub async fn serve() {
         .route("/status", get(status))
         .route("/docker-info", get(docker_info))
         .route("/app-info", get(app_info))
+        .route("/config", get(get_config).put(set_config))
         .route("/agent-key-status", get(agent_key_status))
         .route("/agent-versions", get(agent_versions))
         .route("/container-stats", get(container_stats))
@@ -150,6 +155,7 @@ pub async fn serve() {
         .route("/claude-sessions", get(claude_sessions))
         .route("/claude-session-usage", get(claude_session_usage))
         .route("/claude-integrations", get(claude_integrations))
+        .route("/claude-agent-config", get(claude_agent_config))
         .route("/container-git-log", get(container_git_log))
         .route("/session-activity", get(session_activity))
         .route("/sessions", get(list_sessions).post(create_session))
@@ -177,6 +183,20 @@ async fn docker_info(State(st): State<AppState>) -> impl IntoResponse {
 
 async fn app_info() -> impl IntoResponse {
     Json(crate::lifecycle::app_info())
+}
+
+async fn get_config(State(st): State<AppState>) -> impl IntoResponse {
+    Json(st.config.get())
+}
+
+async fn set_config(
+    State(st): State<AppState>,
+    Json(body): Json<Settings>,
+) -> Result<impl IntoResponse, ApiError> {
+    st.config
+        .set(body)
+        .map(Json)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))
 }
 
 async fn agent_key_status() -> impl IntoResponse {
@@ -281,6 +301,10 @@ async fn claude_sessions(State(st): State<AppState>) -> Result<impl IntoResponse
 
 async fn claude_integrations(State(st): State<AppState>) -> Result<impl IntoResponse, ApiError> {
     st.docker.claude_integrations().await.map(Json).map_err(err)
+}
+
+async fn claude_agent_config(State(st): State<AppState>) -> Result<impl IntoResponse, ApiError> {
+    st.docker.claude_agent_config().await.map(Json).map_err(err)
 }
 
 #[derive(Deserialize)]

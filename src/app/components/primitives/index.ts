@@ -31,5 +31,8 @@ export type { LogoProps } from "./Logo";
 export { IconBtn } from "./IconBtn";
 export type { IconBtnProps } from "./IconBtn";
 
+export { Segmented } from "./Segmented";
+export type { SegmentedOption, SegmentedProps } from "./Segmented";
+
 export { Ico } from "./icons";
 export type { IcoKey } from "./icons";

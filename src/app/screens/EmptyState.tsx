@@ -19,7 +19,7 @@ import { Logo } from "@/app/components/primitives/Logo";
 import { StatusDot } from "@/app/components/primitives/StatusDot";
 import { Ico } from "@/app/components/primitives/icons";
 import { CLIS } from "@/app/lib/catalog";
-import type { Cli } from "@/app/lib/ipc";
+import type { AgentCli, Cli } from "@/app/lib/ipc";
 import { useStore } from "@/app/lib/store";
 import { Button } from "@/app/ui/button";
 
@@ -28,7 +28,7 @@ export interface EmptyStateProps {
 }
 
 // Static per-agent descriptions; version + key presence come from the store.
-const AGENT_DESC: Record<Cli, string> = {
+const AGENT_DESC: Record<AgentCli, string> = {
   claude: "Long-context refactors, planned edits, deep code reading.",
   codex: "Snappy iteration, safe shell tools, focused diffs.",
   antigravity: "Multi-step automations, profiling, longer-running analyses.",

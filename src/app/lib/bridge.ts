@@ -73,6 +73,10 @@ async function httpInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
       ) as Promise<T>;
     case "app_info":
       return jget("/app-info") as Promise<T>;
+    case "get_config":
+      return jget("/config") as Promise<T>;
+    case "set_config":
+      return jsend("PUT", "/config", args.config) as Promise<T>;
     case "container_git_diff_all":
       return jget("/container-git-diff-all") as Promise<T>;
     case "container_top":
@@ -87,6 +91,8 @@ async function httpInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
       return jget("/claude-sessions") as Promise<T>;
     case "claude_integrations":
       return jget("/claude-integrations") as Promise<T>;
+    case "claude_agent_config":
+      return jget("/claude-agent-config") as Promise<T>;
     case "claude_session_usage":
       return jget(`/claude-session-usage?id=${encodeURIComponent(String(args.id))}`) as Promise<T>;
     case "list_sessions":

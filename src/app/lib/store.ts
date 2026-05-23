@@ -1,7 +1,9 @@
 import { create } from "zustand";
 import { SPEC_BY_CLI } from "./catalog";
 import type {
+  AgentCli,
   AgentVersion,
+  AppSettings,
   Cli,
   ContainerStatus,
   DockerInfo,
@@ -56,8 +58,12 @@ interface CodeHubState {
   // Tier-1 reads (BACKEND_PLAN.md), fetched once the runtime is reachable.
   // Presence/version metadata only — never secret values.
   dockerInfo: DockerInfo | null;
-  keyStatus: Record<Cli, KeyStatus> | null;
-  agentVersions: Record<Cli, AgentVersion> | null;
+  keyStatus: Record<AgentCli, KeyStatus> | null;
+  agentVersions: Record<AgentCli, AgentVersion> | null;
+
+  // Persisted UI preferences (settings.json). Null until the first load resolves;
+  // the Settings screen reads + writes it through updateConfig.
+  config: AppSettings | null;
 
   // imperative bookkeeping (non-reactive counters)
   plateCounter: number;
@@ -79,6 +85,10 @@ interface CodeHubState {
   switchWorkspace: (id: string) => void;
   renameSession: (name: string, alias: string) => void;
   commitRatio: (wsId: string, nodeId: number, ratio: number) => void;
+  loadConfig: () => Promise<void>;
+  // Merge a patch into the persisted settings. Optimistic: applies locally, then
+  // writes through to the backend; reverts on failure.
+  updateConfig: (patch: Partial<AppSettings>) => Promise<void>;
 }
 
 function updateWs(list: Workspace[], id: string, fn: (w: Workspace) => Workspace): Workspace[] {
@@ -137,6 +147,7 @@ export const useStore = create<CodeHubState>((set, get) => {
     dockerInfo: null,
     keyStatus: null,
     agentVersions: null,
+    config: null,
     plateCounter: 0,
     sessionCounter: 0,
     bootstrapped: false,
@@ -311,6 +322,7 @@ export const useStore = create<CodeHubState>((set, get) => {
         workspaces: updateWs(s.workspaces, meta.workspaceId, (w) => ({ ...w, focused: name })),
       }));
       registry.focus(name);
+      rememberLastSession(name);
     },
 
     switchWorkspace: (id) => {
@@ -318,6 +330,8 @@ export const useStore = create<CodeHubState>((set, get) => {
       // Switching tabs leaves any open session-detail view (same contract as
       // setView) — otherwise the sidebar tab click is a silent no-op behind it.
       set({ activeWorkspaceId: id, detailSession: null });
+      const ws = get().workspaces.find((w) => w.id === id);
+      if (ws?.focused) rememberLastSession(ws.focused);
     },
 
     renameSession: (name, alias) => {
@@ -348,11 +362,70 @@ export const useStore = create<CodeHubState>((set, get) => {
         })),
       }));
     },
+
+    loadConfig: async () => {
+      try {
+        const config = await ipc.getConfig();
+        set({ config });
+        registry.setFontSize(config.terminalFontSize);
+        applyDensity(config.density);
+      } catch (e) {
+        console.warn("get_config failed", e);
+      }
+    },
+
+    updateConfig: async (patch) => {
+      const prev = get().config;
+      if (!prev) return;
+      const next = { ...prev, ...patch };
+      set({ config: next }); // optimistic
+      registry.setFontSize(next.terminalFontSize); // apply to live panes immediately
+      applyDensity(next.density);
+      try {
+        // Backend echoes the stored object back; trust it as the source of truth.
+        set({ config: await ipc.setConfig(next) });
+      } catch (e) {
+        console.warn("set_config failed; reverting", e);
+        set({ config: prev });
+        registry.setFontSize(prev.terminalFontSize);
+        applyDensity(prev.density);
+      }
+    },
   };
 });
 
 type Get = () => CodeHubState;
 type Set = (partial: Partial<CodeHubState> | ((s: CodeHubState) => Partial<CodeHubState>)) => void;
+
+// Last-focused tmux session name, persisted to localStorage so "Reopen last
+// workspace" can re-select it after the next launch's session adoption. We key
+// off the session NAME (stable across restarts — it's the tmux session id) and
+// not the workspace id (regenerated every launch). Best-effort; a storage
+// failure (private mode, quota) must never break focusing.
+const LAST_SESSION_KEY = "codehub:lastActiveSession";
+function rememberLastSession(name: string) {
+  try {
+    localStorage.setItem(LAST_SESSION_KEY, name);
+  } catch {
+    // ignore — persistence is a nicety, not a requirement
+  }
+}
+function recallLastSession(): string | null {
+  try {
+    return localStorage.getItem(LAST_SESSION_KEY);
+  } catch {
+    return null;
+  }
+}
+
+// Reflect the density preference onto the document root so the structural CSS
+// (panes.css `[data-density="compact"]` overrides) can tighten the chrome.
+// "comfortable" clears the attribute (the default styling).
+function applyDensity(density: string) {
+  if (typeof document === "undefined") return;
+  if (density === "compact") document.documentElement.dataset.density = "compact";
+  else delete document.documentElement.dataset.density;
+}
 
 function removeWorkspace(get: Get, set: Set, id: string) {
   const list = get().workspaces;
@@ -387,6 +460,15 @@ async function bootstrap(
     .then((agentVersions) => set({ agentVersions }))
     .catch((e) => console.warn("agent_versions failed", e));
 
+  // Startup behaviors are persisted prefs; the config load races the lifecycle
+  // event that triggered us, so ensure it's resolved before reading the flags.
+  if (!get().config) await get().loadConfig();
+  const cfg = get().config;
+  // "Restore sessions on launch" (default on): adopt the tmux sessions that
+  // survived the last quit. When off we leave them running in the container
+  // untouched (non-destructive) but start the Hub clean.
+  if (cfg && !cfg.restoreSessionsOnLaunch) return;
+
   try {
     const sessions = await ipc.listSessions();
     for (const s of sessions) {
@@ -409,6 +491,17 @@ async function bootstrap(
       // Mode of a pre-existing tmux session is unknown; show it as Standard.
       registerMeta(s.name, cli, "standard", ws.id);
     }
+    // "Reopen last workspace" (default on): re-select the tab whose session was
+    // focused at quit, if it's among the adopted ones. Otherwise the first
+    // adopted workspace stays active (set in the loop above).
+    if (!cfg || cfg.reopenLastWorkspace) {
+      const last = recallLastSession();
+      const wsId = last ? get().sessionMeta[last]?.workspaceId : undefined;
+      if (wsId) {
+        set({ activeWorkspaceId: wsId });
+        registry.focus(last as string);
+      }
+    }
   } catch (e) {
     console.error("list_sessions failed", e);
   }
@@ -421,7 +514,9 @@ let lifecycleStarted = false;
 export async function initLifecycle(): Promise<void> {
   if (lifecycleStarted) return;
   lifecycleStarted = true;
-  const { setStatus, setError } = useStore.getState();
+  const { setStatus, setError, loadConfig } = useStore.getState();
+  // UI prefs don't depend on the container, so load them eagerly at app start.
+  void loadConfig();
   void onLifecycle(setStatus);
   void onLifecycleError(setError);
   try {
@@ -429,6 +524,20 @@ export async function initLifecycle(): Promise<void> {
   } catch {
     setError("unreachable");
   }
+}
+
+// Guard for close actions (⌘W, pane + sidebar close buttons). Returns true when
+// it's OK to proceed: either confirmation is off, the agent is idle, or the user
+// confirmed. Honors the persisted `confirmCloseRunningAgent` preference and the
+// live working/idle signal. Kept as a free function (not a store action) because
+// it needs the synchronous window.confirm at the call site.
+export function confirmCloseRunningSession(name: string): boolean {
+  const s = useStore.getState();
+  const needsConfirm = s.config?.confirmCloseRunningAgent ?? true;
+  const working = s.sessionActivity[name]?.state === "working";
+  if (!needsConfirm || !working) return true;
+  const alias = s.sessionMeta[name]?.alias ?? name;
+  return window.confirm(`${alias} is still working. Close it anyway? Scrollback is kept.`);
 }
 
 // Convenience selectors.

@@ -45,14 +45,18 @@ const TERM_THEME = {
 // The pane's xterm surface is created once, parked in `stash`, and then moved
 // between split-tree leaf bodies on every layout render. xterm keeps its
 // buffer across reparenting as long as the Terminal is not disposed.
-export async function createPane(stash: HTMLElement, sessionName: string): Promise<Pane> {
+export async function createPane(
+  stash: HTMLElement,
+  sessionName: string,
+  fontSize = 13,
+): Promise<Pane> {
   const el = document.createElement("div");
   el.className = "term-surface";
   stash.appendChild(el);
 
   const term = new Terminal({
     fontFamily: '"JetBrains Mono", "DM Mono", ui-monospace, "SF Mono", Menlo, monospace',
-    fontSize: 13,
+    fontSize,
     fontWeight: 400,
     lineHeight: 1.25,
     letterSpacing: 0,
@@ -133,4 +137,13 @@ export function focusPane(pane: Pane) {
     fitPane(pane);
     pane.term.focus();
   });
+}
+
+// Live font-size change: update the xterm option then reflow so the grid
+// re-measures to the new cell size (and the backend pty is resized via the
+// caller's fit path).
+export function setPaneFontSize(pane: Pane, fontSize: number) {
+  if (pane.term.options.fontSize === fontSize) return;
+  pane.term.options.fontSize = fontSize;
+  fitPane(pane);
 }

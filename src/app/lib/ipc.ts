@@ -20,7 +20,13 @@ export interface SessionInfo {
   created: number;
 }
 
-export type Cli = "claude" | "codex" | "antigravity";
+// The AI coding agents (version/key-probed, mode-aware). Distinct from `Cli`,
+// which also includes the non-agent "shell" pane type.
+export type AgentCli = "claude" | "codex" | "antigravity";
+// Everything a session/pane can run: an agent, or a plain bash shell (Workspace
+// screen's SHELL pane). Shell rides the same session machinery but has no
+// permission modes and no version/key status.
+export type Cli = AgentCli | "shell";
 export type Mode = "standard" | "auto" | "yolo";
 
 // Per-session activity derived from pane output flow (BACKEND_PLAN.md). "working"
@@ -64,6 +70,27 @@ export interface KeyStatus {
 
 export interface AgentVersion {
   version: string | null;
+}
+
+// Persisted UI preferences (config::Settings in the backend). Mirrors the Rust
+// struct field-for-field; every field is always present (the backend fills
+// defaults), so this is never partial.
+export interface AppSettings {
+  // Appearance
+  terminalFontSize: number;
+  density: string;
+  // Hub main-region layout: "tabs" | "grid" (the compare grid).
+  hubLayout: string;
+  // General
+  confirmCloseRunningAgent: boolean;
+  restoreSessionsOnLaunch: boolean;
+  reopenLastWorkspace: boolean;
+  // Agent defaults
+  defaultAgent: Cli;
+  // Notifications
+  notifyAwaitInput: boolean;
+  notifyTurnFinish: boolean;
+  playSound: boolean;
 }
 
 // Build + host platform identity (Settings → About). All compile-time / runtime
@@ -283,13 +310,58 @@ export interface ClaudeIntegrations {
   mcpServers: McpServer[];
 }
 
+// One sub-agent from `.claude/agents/<name>.md` (Agent settings). All factual —
+// parsed from the file's YAML frontmatter; absent keys are null/empty.
+export interface SubAgentInfo {
+  name: string;
+  description: string | null;
+  model: string | null;
+  tools: string[];
+  // "user" (~/.claude) or "project" (/workspace/.claude).
+  scope: string;
+}
+
+// One skill from `.claude/skills/<name>/SKILL.md` (Agent settings).
+export interface SkillInfo {
+  name: string;
+  description: string | null;
+  scope: string;
+}
+
+// One installed plugin, from the `enabledPlugins` map in ~/.claude.json.
+export interface PluginInfo {
+  name: string;
+  marketplace: string | null;
+  enabled: boolean;
+}
+
+// The runtime Claude's configurable surface (Agent settings detail): active
+// model + default permission mode + sub-agents/skills/plugins/marketplaces, all
+// read from on-disk config. Empty collections are the honest truth — the UI
+// shows "none configured", never sample data.
+export interface AgentConfig {
+  model: string | null;
+  permissionMode: string | null;
+  subagents: SubAgentInfo[];
+  skills: SkillInfo[];
+  plugins: PluginInfo[];
+  marketplaces: string[];
+}
+
 export const ipc = {
   containerStatus: () => invoke<ContainerStatus>("container_status"),
   dockerInfo: () => invoke<DockerInfo>("docker_info"),
   // Build + host platform identity for Settings → About.
   appInfo: () => invoke<AppInfo>("app_info"),
-  agentKeyStatus: () => invoke<Record<Cli, KeyStatus>>("agent_key_status"),
-  agentVersions: () => invoke<Record<Cli, AgentVersion>>("agent_versions"),
+  // Persisted UI preferences (Settings screen), backed by settings.json in the
+  // app-data dir. getConfig returns the current snapshot; setConfig writes the
+  // whole object and echoes back what landed.
+  getConfig: () => invoke<AppSettings>("get_config"),
+  setConfig: (config: AppSettings) => invoke<AppSettings>("set_config", { config }),
+  // Agent-only maps (the backend probes claude/codex/antigravity; shell has no
+  // version or key to report).
+  agentKeyStatus: () => invoke<Record<AgentCli, KeyStatus>>("agent_key_status"),
+  agentVersions: () => invoke<Record<AgentCli, AgentVersion>>("agent_versions"),
   containerStats: () => invoke<ContainerStats>("container_stats"),
   // Tail of the runtime container log; defaults to 200 lines server-side.
   containerLogs: (tail?: number) => invoke<string[]>("container_logs", { tail }),
@@ -328,6 +400,10 @@ export const ipc = {
   // What the runtime's Claude is connected to (Integrations view): signed-in
   // account + configured MCP servers, read from on-disk config. Identity only.
   claudeIntegrations: () => invoke<ClaudeIntegrations>("claude_integrations"),
+  // The runtime Claude's configurable surface (Agent settings detail): active
+  // model + permission mode + sub-agents/skills/plugins/marketplaces, all read
+  // from on-disk config. Factual; empty collections render as honest empty states.
+  claudeAgentConfig: () => invoke<AgentConfig>("claude_agent_config"),
   listSessions: () => invoke<SessionInfo[]>("list_sessions"),
   // `resume` (a Claude transcript id) relaunches that conversation with
   // `claude --resume <id>`. `sessionId` pins a fresh Claude session to a known

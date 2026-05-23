@@ -3,6 +3,7 @@ import { Grid } from "./components/Grid";
 import { ActivityRail } from "./components/hub/ActivityRail";
 import { BroadcastModal } from "./components/hub/BroadcastModal";
 import { CommandPalette } from "./components/hub/CommandPalette";
+import { CompareGrid } from "./components/hub/CompareGrid";
 import { HubSidebar } from "./components/hub/HubSidebar";
 import { HubStatusBar } from "./components/hub/HubStatusBar";
 import { HubTabs } from "./components/hub/HubTabs";
@@ -94,6 +95,7 @@ export function App() {
 function HubView() {
   const active = useStore(activeWorkspace);
   const openLaunch = useLauncher((s) => s.open);
+  const grid = useStore((s) => s.config?.hubLayout === "grid");
   // Real working/idle signal for PaneHead + the rail's Activity section.
   useActivityPoll();
 
@@ -110,12 +112,18 @@ function HubView() {
       >
         <HubTabs />
         {active?.root ? (
-          <>
-            <WorkspaceBar />
-            <div className="hub-grid">
-              <Grid ws={active} />
-            </div>
-          </>
+          grid ? (
+            // Compare grid: every session tiled side-by-side; no per-workspace
+            // split bar (splits are a single-workspace concept).
+            <CompareGrid />
+          ) : (
+            <>
+              <WorkspaceBar />
+              <div className="hub-grid">
+                <Grid ws={active} />
+              </div>
+            </>
+          )
         ) : (
           <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
             {/* New-agent flow opens the shared launcher anchored in the sidebar. */}

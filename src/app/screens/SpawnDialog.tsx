@@ -16,7 +16,7 @@ import { StatusBadge } from "@/app/components/primitives/StatusBadge";
 import { Tag } from "@/app/components/primitives/Tag";
 import { Ico } from "@/app/components/primitives/icons";
 import { CLIS } from "@/app/lib/catalog";
-import type { Cli } from "@/app/lib/ipc";
+import type { AgentCli, Cli } from "@/app/lib/ipc";
 import { Button } from "@/app/ui/button";
 import { type ReactNode, useState } from "react";
 
@@ -27,7 +27,7 @@ export interface SpawnDialogProps {
 }
 
 // Per-agent model/window hint shown under the glyph. Static catalog copy.
-const MODEL_HINT: Record<Cli, string> = {
+const MODEL_HINT: Record<AgentCli, string> = {
   claude: "opus-4.7 · 1M",
   codex: "o4-mini · 200k",
   antigravity: "g-2.5 · 1M",
@@ -366,7 +366,7 @@ function AgentCard({
         {meta.name}
       </div>
       <div className="mono" style={{ fontSize: 10.5, color: "var(--fg-2)" }}>
-        {agent in MODEL_HINT ? MODEL_HINT[agent as Cli] : ""}
+        {agent in MODEL_HINT ? MODEL_HINT[agent as AgentCli] : ""}
       </div>
     </button>
   );

@@ -64,7 +64,7 @@ export function SessionDetail({ session }: { session: string }) {
   const spec = SPEC_BY_CLI[meta.cli];
   const accent = `var(--a-${meta.cli})`;
   const badge = MODE_BY_ID[meta.mode].badge;
-  const version = agentVersions?.[meta.cli]?.version ?? null;
+  const version = meta.cli === "shell" ? null : (agentVersions?.[meta.cli]?.version ?? null);
 
   return (
     <main

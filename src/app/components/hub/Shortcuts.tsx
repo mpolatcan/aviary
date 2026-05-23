@@ -11,7 +11,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../../ui/dialo
 
 type Sc = { keys: string[]; desc: string };
 
-const GROUPS: { title: string; items: Sc[] }[] = [
+// Single source of truth for the working key bindings — consumed both by this
+// ⌘/ dialog and the Settings → Keyboard shortcuts pane.
+export const SHORTCUT_GROUPS: { title: string; items: Sc[] }[] = [
   {
     title: "Workspace",
     items: [
@@ -42,7 +44,7 @@ export function Shortcuts() {
           <DialogTitle style={{ fontSize: 16 }}>Keyboard shortcuts</DialogTitle>
         </DialogHeader>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 22, marginTop: 8 }}>
-          {GROUPS.map((g) => (
+          {SHORTCUT_GROUPS.map((g) => (
             <div key={g.title}>
               <div className="lbl" style={{ marginBottom: 10, color: "var(--fg-1)", fontSize: 11 }}>
                 {g.title}

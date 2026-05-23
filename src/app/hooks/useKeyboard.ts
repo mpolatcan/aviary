@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { splitKey, useLauncher } from "../lib/launcher";
 import { useOverlay } from "../lib/overlay";
-import { useStore } from "../lib/store";
+import { confirmCloseRunningSession, useStore } from "../lib/store";
 import type { SplitDir } from "../lib/tree";
 
 // Split the focused pane along its longer visible axis — wider panes split into
@@ -78,6 +78,7 @@ export function useKeyboard() {
         case "w":
           if (!ws?.focused) return;
           e.preventDefault();
+          if (!confirmCloseRunningSession(ws.focused)) return;
           void store.closeSession(ws.focused);
           break;
         case "\\": {

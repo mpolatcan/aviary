@@ -1,5 +1,6 @@
 import type { Cli, Mode } from "../lib/ipc";
 import { useLaunchChoice } from "../lib/launcher";
+import { useStore } from "../lib/store";
 import { LauncherBody } from "./LauncherBody";
 
 interface Props {
@@ -13,7 +14,10 @@ interface Props {
 // trigger drives it open. Keeps copy + layout identical everywhere; the primary
 // button copy is standardised to "Open session".
 export function LaunchPanel({ kicker, onLaunch }: Props) {
-  const { cli, mode, setCli, setMode } = useLaunchChoice();
+  // Pre-select the agent from the persisted default (Settings → Agents). Falls
+  // back to Claude until config loads.
+  const defaultAgent = useStore((s) => s.config?.defaultAgent ?? "claude");
+  const { cli, mode, setCli, setMode } = useLaunchChoice(defaultAgent);
   return (
     <div
       className={mode === "yolo" ? "yolo-armed" : undefined}

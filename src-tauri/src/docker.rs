@@ -325,12 +325,74 @@ pub struct ClaudeIntegrations {
     pub mcp_servers: Vec<McpServer>,
 }
 
+/// One sub-agent definition read from `.claude/agents/<name>.md` (user scope in
+/// `/config/claude/agents`, project scope in `/workspace/.claude/agents`). Every
+/// field is FACTUAL, parsed from the file's YAML frontmatter (`name`,
+/// `description`, `model`, `tools`); a missing key is `None`/empty, never
+/// invented. Backs the Agent settings "Sub-agents" section.
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SubAgentInfo {
+    pub name: String,
+    pub description: Option<String>,
+    pub model: Option<String>,
+    pub tools: Vec<String>,
+    /// "user" (`/config/claude`) or "project" (`/workspace/.claude`).
+    pub scope: String,
+}
+
+/// One skill read from `.claude/skills/<name>/SKILL.md`. `name`/`description`
+/// come from the file's frontmatter (falling back to the directory name);
+/// FACTUAL only. Backs the Agent settings "Skills" section.
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillInfo {
+    pub name: String,
+    pub description: Option<String>,
+    pub scope: String,
+}
+
+/// One installed plugin, derived from the `enabledPlugins` map in
+/// `~/.claude.json` (the `<plugin>@<marketplace>` keys). `enabled` reflects the
+/// stored boolean. FACTUAL — no version/description is fabricated when the
+/// catalog has none.
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginInfo {
+    pub name: String,
+    pub marketplace: Option<String>,
+    pub enabled: bool,
+}
+
+/// The runtime Claude's configurable surface, read from on-disk config
+/// (`~/.claude.json`, `settings.json`, `.claude/agents`, `.claude/skills`,
+/// `plugins/known_marketplaces.json`). All FACTUAL: the active `model`, the
+/// default `permission_mode`, configured sub-agents/skills/plugins and
+/// installed marketplaces. Empty collections are reported honestly (the UI shows
+/// a "none configured" state) rather than filled with sample data. No credential
+/// is surfaced. Backs the Agent settings detail screen.
+#[derive(Debug, Serialize, Clone, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentConfig {
+    pub model: Option<String>,
+    pub permission_mode: Option<String>,
+    pub subagents: Vec<SubAgentInfo>,
+    pub skills: Vec<SkillInfo>,
+    pub plugins: Vec<PluginInfo>,
+    pub marketplaces: Vec<String>,
+}
+
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum Cli {
     Claude,
     Codex,
     Antigravity,
+    /// Not an AI agent — a plain interactive `bash` shell in the container
+    /// (Workspace screen's SHELL pane type). It rides the same tmux/pty session
+    /// machinery as the agent CLIs; it just launches a shell and has no
+    /// permission modes or version/key probing.
+    Shell,
 }
 
 impl Cli {
@@ -339,6 +401,7 @@ impl Cli {
             Cli::Claude => "claude",
             Cli::Codex => "codex",
             Cli::Antigravity => "antigravity",
+            Cli::Shell => "bash",
         }
     }
 
@@ -347,6 +410,7 @@ impl Cli {
             "claude" | "claude-code" => Ok(Cli::Claude),
             "codex" | "openai" => Ok(Cli::Codex),
             "antigravity" | "google" => Ok(Cli::Antigravity),
+            "shell" | "bash" => Ok(Cli::Shell),
             other => Err(DockerError::UnknownCli(other.into())),
         }
     }
@@ -1202,6 +1266,268 @@ impl DockerClient {
             .unwrap_or_default();
         Ok(parse_claude_integrations(&cfg, &mcp))
     }
+
+    /// The runtime Claude's configurable surface (Agent settings detail), read
+    /// entirely from on-disk config. Active model + default permission mode come
+    /// from `~/.claude.json` and `settings.json`; sub-agents and skills are read
+    /// from the `.claude/agents` and `.claude/skills` trees (user + project
+    /// scope); plugins + marketplaces from the plugins config. Every read is
+    /// best-effort: a missing file just contributes nothing, so the result is
+    /// always a valid (possibly-empty) [`AgentConfig`] rather than an error.
+    /// Errors only when the container is down. Identity/config only — no secret.
+    pub async fn claude_agent_config(&self) -> Result<AgentConfig, DockerError> {
+        if !self.is_running().await? {
+            return Err(DockerError::ContainerDown(self.container.clone()));
+        }
+        let cfg = self
+            .exec_capture(vec!["cat", "/config/claude/.claude.json"])
+            .await
+            .unwrap_or_default();
+        let settings = self
+            .exec_capture(vec!["cat", "/config/claude/settings.json"])
+            .await
+            .unwrap_or_default();
+        let marketplaces = self
+            .exec_capture(vec![
+                "cat",
+                "/config/claude/plugins/known_marketplaces.json",
+            ])
+            .await
+            .unwrap_or_default();
+        // Concatenate every agent .md (user + project scope) with a delimiter
+        // line carrying the path, so one read covers both scopes and the parser
+        // can attribute each file. Missing dirs are silenced by `2>/dev/null`.
+        let agents_raw = self
+            .exec_capture(vec![
+                "sh",
+                "-c",
+                "for f in /config/claude/agents/*.md /workspace/.claude/agents/*.md; do [ -f \"$f\" ] && printf '===CODEHUB-FILE:%s===\\n' \"$f\" && cat \"$f\"; done 2>/dev/null || true",
+            ])
+            .await
+            .unwrap_or_default();
+        let skills_raw = self
+            .exec_capture(vec![
+                "sh",
+                "-c",
+                "for f in /config/claude/skills/*/SKILL.md /workspace/.claude/skills/*/SKILL.md; do [ -f \"$f\" ] && printf '===CODEHUB-FILE:%s===\\n' \"$f\" && cat \"$f\"; done 2>/dev/null || true",
+            ])
+            .await
+            .unwrap_or_default();
+        Ok(parse_agent_config(
+            &cfg,
+            &settings,
+            &agents_raw,
+            &skills_raw,
+            &marketplaces,
+        ))
+    }
+}
+
+/// Scope label for a `.claude` config path: "project" under `/workspace`, else
+/// "user" (the `/config/claude` home).
+fn scope_for_path(path: &str) -> String {
+    if path.starts_with("/workspace/") {
+        "project".to_string()
+    } else {
+        "user".to_string()
+    }
+}
+
+/// Parse a markdown file's leading YAML frontmatter (the block delimited by a
+/// `---` line at the very top and the next `---`) into key→value strings. Only
+/// scalar `key: value` lines are read; nested structures collapse to their raw
+/// text. Returns an empty map when there is no frontmatter. Deliberately tiny —
+/// we read only a handful of known keys and never execute or fully parse YAML.
+fn parse_frontmatter(body: &str) -> std::collections::HashMap<String, String> {
+    use std::collections::HashMap;
+    let mut map = HashMap::new();
+    let mut lines = body.lines();
+    // Frontmatter must start on the first non-empty line with a `---` fence.
+    let mut started = false;
+    for line in lines.by_ref() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        started = line.trim() == "---";
+        break;
+    }
+    if !started {
+        return map;
+    }
+    for line in lines {
+        if line.trim() == "---" {
+            break;
+        }
+        if let Some((k, v)) = line.split_once(':') {
+            let key = k.trim().to_string();
+            let val = v.trim().trim_matches(['"', '\'']).to_string();
+            if !key.is_empty() {
+                map.insert(key, val);
+            }
+        }
+    }
+    map
+}
+
+/// Split a frontmatter `tools` value into individual tool names. Accepts a YAML
+/// inline array (`[Read, Edit]`) or a comma/space-separated list (`Read, Edit`).
+fn parse_tools_field(raw: &str) -> Vec<String> {
+    raw.trim()
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .split([',', ' '])
+        .map(|t| t.trim().trim_matches(['"', '\'']))
+        .filter(|t| !t.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+/// Split a `===CODEHUB-FILE:<path>===\n<body>` bundle (as emitted by the agent/
+/// skill `cat` loops) into `(path, body)` pairs. The delimiter is unique enough
+/// that real file content can't forge it.
+fn split_file_bundle(raw: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for chunk in raw.split("===CODEHUB-FILE:") {
+        let chunk = chunk.trim_start_matches('\n');
+        if chunk.is_empty() {
+            continue;
+        }
+        let Some((path_line, body)) = chunk.split_once('\n') else {
+            continue;
+        };
+        let path = path_line.trim_end_matches("===").trim();
+        if path.is_empty() {
+            continue;
+        }
+        out.push((path.to_string(), body.to_string()));
+    }
+    out
+}
+
+/// File stem of a `/a/b/name.md` path (no dir, no extension). Used as the
+/// fallback sub-agent name when the frontmatter omits one.
+fn file_stem(path: &str) -> String {
+    path.rsplit('/')
+        .next()
+        .unwrap_or(path)
+        .trim_end_matches(".md")
+        .to_string()
+}
+
+/// Parent directory name of a `.../skills/<name>/SKILL.md` path — the skill's
+/// name when the frontmatter omits one.
+fn skill_dir_name(path: &str) -> String {
+    path.rsplit('/').nth(1).unwrap_or("skill").to_string()
+}
+
+/// Fold the on-disk config reads into an [`AgentConfig`]. Pulled out of the async
+/// method so the parsing is unit-testable without a container. Every field is
+/// derived from real input; absent input yields empty/None, never sample data.
+fn parse_agent_config(
+    cfg: &str,
+    settings: &str,
+    agents_raw: &str,
+    skills_raw: &str,
+    marketplaces_raw: &str,
+) -> AgentConfig {
+    let cfg: serde_json::Value = serde_json::from_str(cfg).unwrap_or_default();
+    let settings: serde_json::Value = serde_json::from_str(settings).unwrap_or_default();
+
+    let model = cfg
+        .get("model")
+        .and_then(|m| m.as_str())
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+
+    let permission_mode = settings
+        .get("permissions")
+        .and_then(|p| p.get("defaultMode"))
+        .and_then(|m| m.as_str())
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+
+    // Sub-agents: one card per `.claude/agents/*.md`, frontmatter-parsed.
+    let mut subagents: Vec<SubAgentInfo> = split_file_bundle(agents_raw)
+        .into_iter()
+        .map(|(path, body)| {
+            let fm = parse_frontmatter(&body);
+            let name = fm
+                .get("name")
+                .filter(|s| !s.is_empty())
+                .cloned()
+                .unwrap_or_else(|| file_stem(&path));
+            SubAgentInfo {
+                name,
+                description: fm.get("description").filter(|s| !s.is_empty()).cloned(),
+                model: fm.get("model").filter(|s| !s.is_empty()).cloned(),
+                tools: fm
+                    .get("tools")
+                    .map(|t| parse_tools_field(t))
+                    .unwrap_or_default(),
+                scope: scope_for_path(&path),
+            }
+        })
+        .collect();
+    subagents.sort_by(|a, b| a.scope.cmp(&b.scope).then(a.name.cmp(&b.name)));
+
+    // Skills: one per `.claude/skills/*/SKILL.md`.
+    let mut skills: Vec<SkillInfo> = split_file_bundle(skills_raw)
+        .into_iter()
+        .map(|(path, body)| {
+            let fm = parse_frontmatter(&body);
+            let name = fm
+                .get("name")
+                .filter(|s| !s.is_empty())
+                .cloned()
+                .unwrap_or_else(|| skill_dir_name(&path));
+            SkillInfo {
+                name,
+                description: fm.get("description").filter(|s| !s.is_empty()).cloned(),
+                scope: scope_for_path(&path),
+            }
+        })
+        .collect();
+    skills.sort_by(|a, b| a.scope.cmp(&b.scope).then(a.name.cmp(&b.name)));
+
+    // Plugins: the `enabledPlugins` map keys are `<plugin>@<marketplace>`.
+    let mut plugins: Vec<PluginInfo> = cfg
+        .get("enabledPlugins")
+        .and_then(|p| p.as_object())
+        .map(|map| {
+            map.iter()
+                .map(|(key, val)| {
+                    let (name, marketplace) = key
+                        .split_once('@')
+                        .map(|(n, m)| (n.to_string(), Some(m.to_string())))
+                        .unwrap_or_else(|| (key.clone(), None));
+                    PluginInfo {
+                        name,
+                        marketplace,
+                        enabled: val.as_bool().unwrap_or(false),
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    plugins.sort_by(|a, b| a.name.cmp(&b.name));
+
+    // Installed marketplaces: the top-level keys of known_marketplaces.json.
+    let marketplaces_json: serde_json::Value =
+        serde_json::from_str(marketplaces_raw).unwrap_or_default();
+    let mut marketplaces: Vec<String> = marketplaces_json
+        .as_object()
+        .map(|m| m.keys().cloned().collect())
+        .unwrap_or_default();
+    marketplaces.sort();
+
+    AgentConfig {
+        model,
+        permission_mode,
+        subagents,
+        skills,
+        plugins,
+        marketplaces,
+    }
 }
 
 /// Prettify Claude's `organizationType` into a plan label: `claude_max` → "Max",
@@ -2044,8 +2370,9 @@ pub struct AttachHandles {
 mod tests {
     use super::{
         clip_title, count_session_edits, is_session_id, is_synthetic_prompt, is_version_like,
-        latest_context_used, parse_claude_integrations, parse_claude_sessions, parse_claude_usage,
-        parse_find, parse_git_log, parse_git_status, parse_top, workspace_path,
+        latest_context_used, parse_agent_config, parse_claude_integrations, parse_claude_sessions,
+        parse_claude_usage, parse_find, parse_frontmatter, parse_git_log, parse_git_status,
+        parse_tools_field, parse_top, workspace_path,
     };
 
     #[test]
@@ -2463,6 +2790,62 @@ mod tests {
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].title, "refactor the auth middleware");
         assert_eq!(sessions[0].turns, 2);
+    }
+
+    #[test]
+    fn frontmatter_and_tools_parse() {
+        let md = "---\nname: code-reviewer\ndescription: \"Reviews diffs\"\nmodel: sonnet-4.7\ntools: [Read, Grep, Bash]\n---\nbody text here";
+        let fm = parse_frontmatter(md);
+        assert_eq!(fm.get("name").map(String::as_str), Some("code-reviewer"));
+        assert_eq!(
+            fm.get("description").map(String::as_str),
+            Some("Reviews diffs")
+        );
+        assert_eq!(fm.get("model").map(String::as_str), Some("sonnet-4.7"));
+        assert_eq!(
+            parse_tools_field(fm.get("tools").unwrap()),
+            vec!["Read", "Grep", "Bash"]
+        );
+        // Comma list (no brackets) also works.
+        assert_eq!(parse_tools_field("Read, Edit"), vec!["Read", "Edit"]);
+        // No frontmatter → empty.
+        assert!(parse_frontmatter("just a plain file").is_empty());
+    }
+
+    #[test]
+    fn agent_config_reads_real_fields_and_empty_is_honest() {
+        let cfg = r#"{
+            "model": "claude-opus-4-7",
+            "enabledPlugins": { "eslint@official": true, "prettier@official": false }
+        }"#;
+        let settings = r#"{"permissions":{"defaultMode":"auto"},"theme":"dark"}"#;
+        let agents = "===CODEHUB-FILE:/config/claude/agents/reviewer.md===\n---\nname: reviewer\ndescription: Reviews code\nmodel: sonnet-4.7\ntools: [Read, Grep]\n---\nprompt\n===CODEHUB-FILE:/workspace/.claude/agents/tester.md===\n---\ndescription: Writes tests\n---\nx";
+        let skills = "===CODEHUB-FILE:/config/claude/skills/write-commit/SKILL.md===\n---\nname: write-commit\ndescription: git commit helper\n---\nbody";
+        let marketplaces = r#"{"claude-plugins-official":{"source":{}}}"#;
+        let c = parse_agent_config(cfg, settings, agents, skills, marketplaces);
+
+        assert_eq!(c.model.as_deref(), Some("claude-opus-4-7"));
+        assert_eq!(c.permission_mode.as_deref(), Some("auto"));
+        // Two sub-agents, sorted project < user; the project one falls back to
+        // its file stem for the name (no frontmatter `name`).
+        assert_eq!(c.subagents.len(), 2);
+        assert_eq!(c.subagents[0].scope, "project");
+        assert_eq!(c.subagents[0].name, "tester");
+        assert_eq!(c.subagents[1].name, "reviewer");
+        assert_eq!(c.subagents[1].tools, vec!["Read", "Grep"]);
+        assert_eq!(c.skills.len(), 1);
+        assert_eq!(c.skills[0].name, "write-commit");
+        // Plugins: both enabled+disabled surfaced with their marketplace split.
+        assert_eq!(c.plugins.len(), 2);
+        assert_eq!(c.plugins[0].name, "eslint");
+        assert_eq!(c.plugins[0].marketplace.as_deref(), Some("official"));
+        assert!(c.plugins[0].enabled);
+        assert!(!c.plugins[1].enabled);
+        assert_eq!(c.marketplaces, vec!["claude-plugins-official"]);
+
+        // Empty input → an all-empty config, never sample data.
+        let empty = parse_agent_config("", "", "", "", "");
+        assert_eq!(empty, super::AgentConfig::default());
     }
 
     #[test]

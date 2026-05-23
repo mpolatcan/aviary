@@ -13,6 +13,7 @@ export const AGENT_META: Record<string, { name: string; short: string; accent: s
   claude: { name: "Claude Code", short: "CC", accent: "var(--a-claude)" },
   codex: { name: "Codex", short: "CX", accent: "var(--a-codex)" },
   antigravity: { name: "Antigravity", short: "AG", accent: "var(--a-antigravity)" },
+  shell: { name: "Shell", short: "SH", accent: "var(--a-shell)" },
 };
 
 export function AgentGlyph({ agent, size = 14, color, style }: AgentGlyphProps) {
@@ -81,6 +82,41 @@ export function AgentGlyph({ agent, size = 14, color, style }: AgentGlyphProps) 
           strokeLinejoin="round"
         />
         <circle cx="8" cy="9" r="1.1" fill={stroke} />
+      </svg>
+    );
+  }
+
+  if (agent === "shell") {
+    // A terminal prompt: chevron + cursor underscore.
+    return (
+      <svg width={s} height={s} viewBox="0 0 16 16" style={style} role="img" aria-label="Shell">
+        <rect
+          x="2"
+          y="3"
+          width="12"
+          height="10"
+          rx="1.5"
+          stroke={stroke}
+          strokeWidth="1.3"
+          fill="none"
+        />
+        <path
+          d="M4.8 6.5 L6.8 8 L4.8 9.5"
+          stroke={stroke}
+          strokeWidth="1.3"
+          fill="none"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+        <line
+          x1="8"
+          y1="10"
+          x2="11"
+          y2="10"
+          stroke={stroke}
+          strokeWidth="1.3"
+          strokeLinecap="round"
+        />
       </svg>
     );
   }

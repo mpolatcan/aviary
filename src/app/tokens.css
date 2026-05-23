@@ -45,6 +45,7 @@
   --a-claude: oklch(0.78 0.13 35);
   --a-codex: oklch(0.78 0.1 265);
   --a-antigravity: oklch(0.78 0.13 200);
+  --a-shell: oklch(0.8 0.13 150);
 
   /* type */
   --sans: "Geist", ui-sans-serif, sans-serif;
@@ -122,6 +123,7 @@
   --a-claude: oklch(0.55 0.14 35);
   --a-codex: oklch(0.55 0.13 265);
   --a-antigravity: oklch(0.55 0.13 200);
+  --a-shell: oklch(0.5 0.13 150);
 
   /* shadcn token bridge (light) */
   --background: #f8f8f5;
