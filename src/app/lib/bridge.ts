@@ -83,6 +83,8 @@ async function httpInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
       return jget("/session-activity") as Promise<T>;
     case "claude_usage":
       return jget("/claude-usage") as Promise<T>;
+    case "claude_sessions":
+      return jget("/claude-sessions") as Promise<T>;
     case "list_sessions":
       return jget("/sessions") as Promise<T>;
     case "create_session":
@@ -91,6 +93,7 @@ async function httpInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
         cli: args.cli,
         mode: args.mode,
         alias: args.alias,
+        resume: args.resume,
       }) as Promise<T>;
     case "kill_session":
       return jsend("DELETE", `/sessions/${encodeURIComponent(String(args.name))}`) as Promise<T>;

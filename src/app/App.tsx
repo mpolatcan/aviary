@@ -17,6 +17,7 @@ import { activeWorkspace, initLifecycle, useStore } from "./lib/store";
 import { ContainerInspector } from "./screens/ContainerInspector";
 import { Dashboard } from "./screens/Dashboard";
 import { EmptyHero } from "./screens/EmptyState";
+import { Resume } from "./screens/Resume";
 import { SessionDetail } from "./screens/SessionDetail";
 import { Settings } from "./screens/Settings";
 import { Usage } from "./screens/Usage";
@@ -26,13 +27,6 @@ import { Usage } from "./screens/Usage";
 // connectors). Rendered as honest, navigable PlannedScreen stubs that name
 // what's missing — never fabricated numbers. See BACKEND_PLAN.md.
 const PLANNED = {
-  resume: {
-    title: "Resume",
-    blurb:
-      "Reopen a past session — its transcript, working tree and the agent it ran — and pick up where you left off.",
-    needs:
-      "Needs persistent session history: tmux sessions are ephemeral and are discarded when closed, so there is nothing to resume from yet.",
-  },
   integrations: {
     title: "Integrations",
     blurb:
@@ -93,6 +87,8 @@ export function App() {
         <Dashboard />
       ) : view === "usage" ? (
         <Usage />
+      ) : view === "resume" ? (
+        <Resume />
       ) : (
         <PlannedScreen {...PLANNED[view]} />
       )}

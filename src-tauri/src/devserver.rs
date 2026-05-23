@@ -147,6 +147,7 @@ pub async fn serve() {
         .route("/container-git-diff-all", get(container_git_diff_all))
         .route("/container-top", get(container_top))
         .route("/claude-usage", get(claude_usage))
+        .route("/claude-sessions", get(claude_sessions))
         .route("/container-git-log", get(container_git_log))
         .route("/session-activity", get(session_activity))
         .route("/sessions", get(list_sessions).post(create_session))
@@ -272,6 +273,10 @@ async fn claude_usage(State(st): State<AppState>) -> Result<impl IntoResponse, A
     st.docker.claude_usage().await.map(Json).map_err(err)
 }
 
+async fn claude_sessions(State(st): State<AppState>) -> Result<impl IntoResponse, ApiError> {
+    st.docker.claude_sessions().await.map(Json).map_err(err)
+}
+
 #[derive(Deserialize)]
 struct LogQuery {
     limit: Option<u32>,
@@ -302,6 +307,7 @@ struct CreateBody {
     cli: String,
     mode: Option<String>,
     alias: Option<String>,
+    resume: Option<String>,
 }
 
 async fn create_session(
@@ -316,7 +322,7 @@ async fn create_session(
         .unwrap_or_default();
     let alias = body.alias.unwrap_or_default();
     st.docker
-        .create_tmux_session(&body.name, cli, mode, &alias)
+        .create_tmux_session(&body.name, cli, mode, &alias, body.resume.as_deref())
         .await
         .map_err(err)?;
     // Mirror lib.rs: record agent identity for the activity snapshot.

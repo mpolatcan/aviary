@@ -236,6 +236,25 @@ pub struct ClaudeUsage {
     pub unpriced_tokens: u64,
 }
 
+/// One past Claude Code conversation, reconstructed from its on-disk transcript
+/// so it can be reopened with `claude --resume <id>`. Every field is FACTUAL:
+/// `title` is the transcript's own `ai-title` (or, lacking one, its first user
+/// prompt); `branch` is the recorded `gitBranch` (detached `HEAD` → `None`);
+/// `turns` counts distinct user messages; timestamps are the transcript's. No
+/// field is fabricated — a missing one is `None`/empty, never guessed.
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaudeSession {
+    pub id: String,
+    pub title: String,
+    pub branch: Option<String>,
+    pub started: String,
+    pub last_active: String,
+    pub turns: u32,
+    pub model: Option<String>,
+    pub version: Option<String>,
+}
+
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum Cli {
@@ -469,6 +488,7 @@ impl DockerClient {
         cli: Cli,
         mode: LaunchMode,
         alias: &str,
+        resume: Option<&str>,
     ) -> Result<(), DockerError> {
         // `-e IS_SANDBOX=1` marks the pane env as a recognized sandbox so Claude's
         // YOLO mode (--dangerously-skip-permissions) runs as root inside the
@@ -493,6 +513,15 @@ impl DockerClient {
             "IS_SANDBOX=1",
         ];
         cmd.extend(cli.launch_argv(mode));
+        // Resume reopens a specific past conversation by its transcript id
+        // (`claude --resume <id>`). Only Claude persists resumable transcripts and
+        // the Resume screen only offers Claude sessions, so this rides on Claude's
+        // argv; `--resume` after the mode flags resolves the recorded session. The
+        // id comes from the transcript filename (a UUID), never user free-text.
+        if let (Cli::Claude, Some(id)) = (cli, resume) {
+            cmd.push("--resume");
+            cmd.push(id);
+        }
         self.exec_capture(cmd).await?;
         Ok(())
     }
@@ -1019,6 +1048,25 @@ impl DockerClient {
             .await?;
         Ok(parse_claude_usage(&raw))
     }
+
+    /// List past Claude Code conversations from their on-disk transcripts (same
+    /// source as [`claude_usage`]) so they can be reopened with `--resume`. Each
+    /// distinct `sessionId` becomes one [`ClaudeSession`]; see [`parse_claude_sessions`]
+    /// for how title/branch/turns are derived. Errors only when the container is
+    /// down; a missing `projects` dir yields an empty list, not an error.
+    pub async fn claude_sessions(&self) -> Result<Vec<ClaudeSession>, DockerError> {
+        if !self.is_running().await? {
+            return Err(DockerError::ContainerDown(self.container.clone()));
+        }
+        let raw = self
+            .exec_capture(vec![
+                "sh",
+                "-c",
+                "find /config/claude/projects -type f -name '*.jsonl' -exec cat {} + 2>/dev/null || true",
+            ])
+            .await?;
+        Ok(parse_claude_sessions(&raw))
+    }
 }
 
 /// Normalize and confine a browser path to `/workspace`. Empty → the workspace
@@ -1267,6 +1315,198 @@ fn parse_claude_usage(raw: &str) -> ClaudeUsage {
     }
 }
 
+/// Cap on past sessions returned to the Resume screen.
+const SESSIONS_CAP: usize = 200;
+
+/// Per-session accumulator folded by [`parse_claude_sessions`], one per
+/// `sessionId`, then flattened into a [`ClaudeSession`].
+#[derive(Default)]
+struct SessionAcc {
+    ai_title: Option<String>,
+    first_prompt: Option<String>,
+    branch: Option<String>,
+    version: Option<String>,
+    model: Option<String>,
+    started: Option<String>,
+    last_active: Option<String>,
+    /// Distinct user-message uuids — a resumed transcript replays earlier user
+    /// turns, so we dedupe by uuid to keep `turns` factual.
+    turn_uuids: std::collections::HashSet<String>,
+}
+
+/// Claude Code injects its own wrapper text into the user role for slash
+/// commands, hooks and caveats (e.g. `<local-command-caveat>…`). These are not
+/// the human's prompt, so they make poor titles — we skip them when picking the
+/// first-prompt fallback and use the first genuinely-typed prompt instead.
+fn is_synthetic_prompt(text: &str) -> bool {
+    const WRAPPERS: [&str; 6] = [
+        "<local-command-",
+        "<command-name>",
+        "<command-message>",
+        "<command-args>",
+        "<bash-input>",
+        "<user-prompt-submit-hook>",
+    ];
+    WRAPPERS.iter().any(|w| text.starts_with(w))
+}
+
+/// Extract a human-readable prompt from a Claude `message.content`, which is
+/// either a string (simple prompt) or an array of typed blocks (text /
+/// tool_result / …). Returns the first real text, trimmed; `None` if there is no
+/// textual content (e.g. a pure tool result) or it is only Claude's own
+/// command/hook wrapper boilerplate — so a title is never invented or boilerplate.
+fn content_text(content: &serde_json::Value) -> Option<String> {
+    let pick = |t: &str| {
+        let t = t.trim();
+        (!t.is_empty() && !is_synthetic_prompt(t)).then(|| t.to_string())
+    };
+    if let Some(s) = content.as_str() {
+        return pick(s);
+    }
+    if let Some(arr) = content.as_array() {
+        for block in arr {
+            if let Some(t) = block.get("text").and_then(|t| t.as_str()) {
+                if let Some(text) = pick(t) {
+                    return Some(text);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Fold concatenated Claude Code transcripts (JSONL) into one [`ClaudeSession`]
+/// per distinct `sessionId`, newest activity first. `title` prefers the
+/// transcript's `ai-title`, falling back to its first user prompt, then a
+/// placeholder. `branch` is the recorded `gitBranch` with detached `HEAD`
+/// dropped to `None`. `turns` counts distinct user messages (deduped by uuid so
+/// replayed history in a resumed transcript doesn't inflate it). Unparseable
+/// lines are skipped, so garbled input under-reports rather than failing.
+fn parse_claude_sessions(raw: &str) -> Vec<ClaudeSession> {
+    use std::collections::HashMap;
+
+    let mut acc: HashMap<String, SessionAcc> = HashMap::new();
+
+    for line in raw.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        let Some(sid) = v.get("sessionId").and_then(|s| s.as_str()) else {
+            continue;
+        };
+        let ty = v.get("type").and_then(|t| t.as_str()).unwrap_or("");
+        let entry = acc.entry(sid.to_string()).or_default();
+
+        // ai-title lines carry no timestamp; capture the title and move on.
+        if ty == "ai-title" {
+            if let Some(t) = v.get("aiTitle").and_then(|t| t.as_str()) {
+                let t = t.trim();
+                if !t.is_empty() {
+                    entry.ai_title = Some(t.to_string());
+                }
+            }
+            continue;
+        }
+
+        // Track the conversation's active window from any timestamped line.
+        if let Some(ts) = v.get("timestamp").and_then(|t| t.as_str()) {
+            if entry.started.as_deref().is_none_or(|s| ts < s) {
+                entry.started = Some(ts.to_string());
+            }
+            if entry.last_active.as_deref().is_none_or(|s| ts > s) {
+                entry.last_active = Some(ts.to_string());
+            }
+        }
+
+        // gitBranch / version ride on user lines; keep the last seen non-empty
+        // (both are effectively constant within a session, so order is moot).
+        // Detached HEAD is not a real branch name → leave as None.
+        if let Some(b) = v.get("gitBranch").and_then(|b| b.as_str()) {
+            if !b.is_empty() && b != "HEAD" {
+                entry.branch = Some(b.to_string());
+            }
+        }
+        if let Some(ver) = v.get("version").and_then(|s| s.as_str()) {
+            if !ver.is_empty() {
+                entry.version = Some(ver.to_string());
+            }
+        }
+
+        match ty {
+            "user" => {
+                if let Some(uuid) = v.get("uuid").and_then(|u| u.as_str()) {
+                    entry.turn_uuids.insert(uuid.to_string());
+                }
+                if entry.first_prompt.is_none() {
+                    if let Some(text) = v
+                        .get("message")
+                        .and_then(|m| m.get("content"))
+                        .and_then(content_text)
+                    {
+                        entry.first_prompt = Some(text);
+                    }
+                }
+            },
+            "assistant" => {
+                if let Some(m) = v
+                    .get("message")
+                    .and_then(|m| m.get("model"))
+                    .and_then(|m| m.as_str())
+                {
+                    entry.model = Some(m.to_string());
+                }
+            },
+            _ => {},
+        }
+    }
+
+    let mut sessions: Vec<ClaudeSession> = acc
+        .into_iter()
+        .map(|(id, a)| {
+            // Title: real ai-title, else first user prompt (one line, clipped),
+            // else an honest placeholder — never invented.
+            let title = a
+                .ai_title
+                .or_else(|| a.first_prompt.map(|p| clip_title(&p)))
+                .unwrap_or_else(|| "Untitled session".to_string());
+            let last_active = a.last_active.clone().unwrap_or_default();
+            ClaudeSession {
+                id,
+                title,
+                branch: a.branch,
+                started: a.started.unwrap_or_default(),
+                last_active,
+                turns: a.turn_uuids.len() as u32,
+                model: a.model,
+                version: a.version,
+            }
+        })
+        .collect();
+
+    // Most recently active first; the UI shows a ranked, capped list.
+    sessions.sort_by(|a, b| b.last_active.cmp(&a.last_active));
+    sessions.truncate(SESSIONS_CAP);
+    sessions
+}
+
+/// Collapse a user prompt to a single-line title: first line, whitespace
+/// normalized, clipped to a sane length so a long paste can't dominate the list.
+fn clip_title(prompt: &str) -> String {
+    let one_line = prompt.split('\n').next().unwrap_or(prompt);
+    let normalized = one_line.split_whitespace().collect::<Vec<_>>().join(" ");
+    const MAX: usize = 80;
+    if normalized.chars().count() > MAX {
+        let head: String = normalized.chars().take(MAX).collect();
+        format!("{head}…")
+    } else {
+        normalized
+    }
+}
+
 /// Parse the US-delimited `git log` output (one commit per line,
 /// `hash\x1fauthor\x1frelative\x1fsubject`). Lines without all four fields —
 /// notably a `fatal:` error on a non-repo, or the empty output of a commit-less
@@ -1467,8 +1707,8 @@ pub struct AttachHandles {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_version_like, parse_claude_usage, parse_find, parse_git_log, parse_git_status,
-        parse_top, workspace_path,
+        clip_title, is_synthetic_prompt, is_version_like, parse_claude_sessions,
+        parse_claude_usage, parse_find, parse_git_log, parse_git_status, parse_top, workspace_path,
     };
 
     #[test]
@@ -1709,5 +1949,84 @@ mod tests {
         assert!(u.by_day.is_empty());
         // Rate table is always surfaced for UI transparency.
         assert_eq!(u.rates.len(), 3);
+    }
+
+    #[test]
+    fn claude_sessions_groups_by_id_newest_first_with_real_metadata() {
+        // s-old: a titled session on a branch with two distinct user turns.
+        let old = [
+            r#"{"type":"user","sessionId":"s-old","uuid":"u1","timestamp":"2026-05-20T10:00:00.000Z","gitBranch":"feat/login","version":"2.1.145","message":{"role":"user","content":"first prompt"}}"#,
+            r#"{"type":"assistant","sessionId":"s-old","timestamp":"2026-05-20T10:00:05.000Z","message":{"model":"claude-opus-4-7"}}"#,
+            r#"{"type":"user","sessionId":"s-old","uuid":"u2","timestamp":"2026-05-20T10:01:00.000Z","gitBranch":"feat/login","message":{"role":"user","content":"second prompt"}}"#,
+            r#"{"type":"ai-title","sessionId":"s-old","aiTitle":"Wire up login"}"#,
+        ]
+        .join("\n");
+        // s-new: more recent, detached HEAD (→ no branch), title falls back to
+        // the first user prompt, and one user turn is replayed (same uuid).
+        let new = [
+            r#"{"type":"user","sessionId":"s-new","uuid":"v1","timestamp":"2026-05-22T09:00:00.000Z","gitBranch":"HEAD","message":{"role":"user","content":"  Fix the flaky test  "}}"#,
+            r#"{"type":"user","sessionId":"s-new","uuid":"v1","timestamp":"2026-05-22T09:00:00.000Z","gitBranch":"HEAD","message":{"role":"user","content":"Fix the flaky test"}}"#,
+        ]
+        .join("\n");
+        let raw = format!("{old}\n{new}\n");
+        let sessions = parse_claude_sessions(&raw);
+
+        assert_eq!(sessions.len(), 2);
+        // Newest activity first.
+        assert_eq!(sessions[0].id, "s-new");
+        assert_eq!(sessions[1].id, "s-old");
+
+        // s-new: no ai-title → first prompt (trimmed) is the title; replayed
+        // turn deduped by uuid → 1; detached HEAD → no branch; no assistant line
+        // → no model.
+        assert_eq!(sessions[0].title, "Fix the flaky test");
+        assert_eq!(sessions[0].turns, 1);
+        assert_eq!(sessions[0].branch, None);
+        assert_eq!(sessions[0].model, None);
+
+        // s-old: real ai-title wins over the prompt; two distinct turns; branch
+        // and model recorded; window spans first→last timestamp.
+        assert_eq!(sessions[1].title, "Wire up login");
+        assert_eq!(sessions[1].turns, 2);
+        assert_eq!(sessions[1].branch.as_deref(), Some("feat/login"));
+        assert_eq!(sessions[1].model.as_deref(), Some("claude-opus-4-7"));
+        assert_eq!(sessions[1].version.as_deref(), Some("2.1.145"));
+        assert_eq!(sessions[1].started, "2026-05-20T10:00:00.000Z");
+        assert_eq!(sessions[1].last_active, "2026-05-20T10:01:00.000Z");
+    }
+
+    #[test]
+    fn claude_sessions_empty_input_is_empty_list_not_error() {
+        assert!(parse_claude_sessions("").is_empty());
+    }
+
+    #[test]
+    fn claude_sessions_skips_command_wrapper_for_title() {
+        assert!(is_synthetic_prompt("<local-command-caveat>Caveat: …"));
+        assert!(is_synthetic_prompt("<command-name>/clear"));
+        assert!(!is_synthetic_prompt("fix the parser bug"));
+        // First user line is Claude's own caveat wrapper; the title should fall
+        // through to the next genuinely-typed prompt, not the boilerplate.
+        let raw = [
+            r#"{"type":"user","sessionId":"s","uuid":"a","timestamp":"2026-05-22T09:00:00.000Z","message":{"role":"user","content":"<local-command-caveat>Caveat: messages below were generated…"}}"#,
+            r#"{"type":"user","sessionId":"s","uuid":"b","timestamp":"2026-05-22T09:00:01.000Z","message":{"role":"user","content":"refactor the auth middleware"}}"#,
+        ]
+        .join("\n");
+        let sessions = parse_claude_sessions(&raw);
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].title, "refactor the auth middleware");
+        assert_eq!(sessions[0].turns, 2);
+    }
+
+    #[test]
+    fn clip_title_collapses_and_clips() {
+        // Multi-line + extra whitespace → single normalized line.
+        assert_eq!(clip_title("  hello\nworld  "), "hello");
+        assert_eq!(clip_title("a   b\t c"), "a b c");
+        // Over the cap gets an ellipsis.
+        let long = "x".repeat(200);
+        let clipped = clip_title(&long);
+        assert!(clipped.ends_with('…'));
+        assert_eq!(clipped.chars().count(), 81); // 80 + ellipsis
     }
 }

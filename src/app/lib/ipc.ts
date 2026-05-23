@@ -213,6 +213,21 @@ export interface ClaudeUsage {
   unpricedTokens: number;
 }
 
+// One past Claude conversation reconstructed from its on-disk transcript, for the
+// Resume screen. All factual: title is the transcript's own ai-title (or first
+// user prompt); branch is the recorded gitBranch (null when detached); turns is
+// the distinct user-message count; timestamps are RFC3339 strings.
+export interface ClaudeSession {
+  id: string;
+  title: string;
+  branch: string | null;
+  started: string;
+  lastActive: string;
+  turns: number;
+  model: string | null;
+  version: string | null;
+}
+
 export const ipc = {
   containerStatus: () => invoke<ContainerStatus>("container_status"),
   dockerInfo: () => invoke<DockerInfo>("docker_info"),
@@ -249,9 +264,14 @@ export const ipc = {
   // Token analytics from Claude Code session transcripts (Usage view): real
   // token/turn/session counts + an estimated cost.
   claudeUsage: () => invoke<ClaudeUsage>("claude_usage"),
+  // Past Claude conversations from on-disk transcripts (Resume view), newest
+  // first; each can be reopened via createSession's `resume` arg.
+  claudeSessions: () => invoke<ClaudeSession[]>("claude_sessions"),
   listSessions: () => invoke<SessionInfo[]>("list_sessions"),
-  createSession: (name: string, cli: Cli, mode: Mode, alias: string) =>
-    invoke<void>("create_session", { name, cli, mode, alias }),
+  // `resume` (a Claude transcript id) relaunches that conversation with
+  // `claude --resume <id>` instead of starting fresh.
+  createSession: (name: string, cli: Cli, mode: Mode, alias: string, resume?: string) =>
+    invoke<void>("create_session", { name, cli, mode, alias, resume }),
   killSession: (name: string) => invoke<void>("kill_session", { name }),
   renameSession: (name: string, alias: string) => invoke<void>("rename_session", { name, alias }),
   attachSession: (name: string, cols: number, rows: number) =>

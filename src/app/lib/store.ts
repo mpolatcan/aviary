@@ -71,7 +71,7 @@ interface CodeHubState {
   openDetail: (name: string) => void;
   closeDetail: () => void;
   setSessionActivity: (list: SessionActivity[]) => void;
-  newPlate: (cli: Cli, mode: Mode) => Promise<void>;
+  newPlate: (cli: Cli, mode: Mode, resume?: string) => Promise<void>;
   splitSession: (target: string, dir: SplitDir, cli: Cli, mode: Mode) => Promise<void>;
   closeSession: (name: string) => Promise<void>;
   closeWorkspace: (id: string) => Promise<void>;
@@ -153,10 +153,10 @@ export const useStore = create<CodeHubState>((set, get) => {
       set({ sessionActivity: next });
     },
 
-    newPlate: async (cli, mode) => {
+    newPlate: async (cli, mode, resume) => {
       if (!isRunning()) return;
       const name = uniqueName(cli);
-      await ipc.createSession(name, cli, mode, aliasFor(cli, get().sessionCounter));
+      await ipc.createSession(name, cli, mode, aliasFor(cli, get().sessionCounter), resume);
       await registry.spawnPane(name);
 
       const plate = get().plateCounter + 1;

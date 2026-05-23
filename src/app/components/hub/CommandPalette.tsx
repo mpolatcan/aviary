@@ -24,6 +24,7 @@ const VIEWS: { id: HubView; label: string; icon: keyof typeof Ico }[] = [
   { id: "hub", label: "Hub", icon: "hub" },
   { id: "dashboard", label: "Dashboard", icon: "grid" },
   { id: "usage", label: "Usage", icon: "cpu" },
+  { id: "resume", label: "Resume", icon: "expand" },
   { id: "containers", label: "Containers", icon: "container" },
   { id: "settings", label: "Settings", icon: "settings" },
 ];
