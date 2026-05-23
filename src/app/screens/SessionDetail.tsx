@@ -5,9 +5,11 @@
  *
  * Honesty note: CodeHub runs every session on ONE shared runtime, so git and
  * container reads are workspace/runtime-wide, not per-session — the inspector is
- * labelled accordingly. Per-turn telemetry (tokens / cost / turns) is not
- * captured by any backend yet (see BACKEND_PLAN.md), so it is omitted here
- * rather than fabricated.
+ * labelled accordingly. The header metric strip (ctx / turn / tokens / edits) IS
+ * per-session and REAL for Claude — read from this session's transcript via the
+ * shared useSessionUsage hook (same source as the pane header). It is omitted for
+ * non-Claude CLIs / before the first response, and cost stays off (it's an
+ * estimate, surfaced only on the Usage screen with its disclosure).
  */
 import { useEffect, useState } from "react";
 import { PaneMount } from "../components/PaneMount";
@@ -16,6 +18,7 @@ import { AgentGlyph } from "../components/primitives/AgentGlyph";
 import { IconBtn } from "../components/primitives/IconBtn";
 import { StatusDot } from "../components/primitives/StatusDot";
 import { Ico } from "../components/primitives/icons";
+import { fmtTokens, useSessionUsage } from "../hooks/useSessionUsage";
 import { MODE_BY_ID, SPEC_BY_CLI } from "../lib/catalog";
 import { ipc } from "../lib/ipc";
 import { useStore } from "../lib/store";
@@ -25,10 +28,19 @@ type Tab = "diff" | "logs";
 export function SessionDetail({ session }: { session: string }) {
   const meta = useStore((s) => s.sessionMeta[session]);
   const agentVersions = useStore((s) => s.agentVersions);
+  const activity = useStore((s) => s.sessionActivity[session]);
   const running = useStore((s) => s.status?.state === "running");
   const closeDetail = useStore((s) => s.closeDetail);
   const closeSession = useStore((s) => s.closeSession);
   const [tab, setTab] = useState<Tab>("diff");
+
+  // Real per-session token tally from this Claude conversation's transcript —
+  // same hook + claudeId derivation as the pane header (prefer the backend
+  // activity entry, reload-stable; fall back to in-memory store meta). Called
+  // above the `!meta` guard so the hook count stays constant as a session is
+  // torn down from this view (close drops meta before the tree drops the leaf).
+  const claudeId = activity?.claudeId ?? (meta?.cli === "claude" ? meta.claudeId : undefined);
+  const usage = useSessionUsage(claudeId);
 
   // Branch is workspace-wide (single runtime). Fetch once when running; it
   // changes rarely and is only a header label, so no polling.
@@ -111,6 +123,24 @@ export function SessionDetail({ session }: { session: string }) {
           {version && ` · ${version}`}
         </span>
         {badge && <span className={`mode-badge badge-${meta.mode}`}>{badge}</span>}
+
+        {/* per-session metric strip — REAL for Claude (transcript via the shared
+            useSessionUsage hook); rendered only when there's usable data. ctx is
+            the live context footprint (last-turn read), shown as a bare count: no
+            window max is recorded and it varies by model, so no fabricated ratio.
+            cost is omitted — an estimate, surfaced only on Usage. */}
+        {usage && (
+          <span
+            className="mono tnum"
+            style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 11 }}
+          >
+            <span className="vr" style={{ height: 16 }} />
+            <Metric label="ctx" value={fmtTokens(usage.contextUsed)} />
+            <Metric label="turn" value={String(usage.turns)} />
+            <Metric label="tokens" value={fmtTokens(usage.tokensIn + usage.tokensOut)} />
+            <Metric label="edits" value={String(usage.edits)} />
+          </span>
+        )}
 
         <span style={{ flex: 1 }} />
 
@@ -198,6 +228,18 @@ export function SessionDetail({ session }: { session: string }) {
         </div>
       </div>
     </main>
+  );
+}
+
+// One header metric: muted label + emphasized value, sitting inline in the
+// session-detail header strip. Mirrors the pane header's MetricStat spirit but
+// laid out horizontally to fit the single-row header.
+function Metric({ label, value }: { label: string; value: string }) {
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+      <span style={{ color: "var(--fg-3)" }}>{label}</span>
+      <span style={{ color: "var(--fg-0)", fontWeight: 500 }}>{value}</span>
+    </span>
   );
 }
 
