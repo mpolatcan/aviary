@@ -39,8 +39,16 @@ export function EmptyHero({ onNew }: EmptyStateProps) {
   const keyStatus = useStore((s) => s.keyStatus);
   const agentVersions = useStore((s) => s.agentVersions);
   const status = useStore((s) => s.status);
+  const startRuntime = useStore((s) => s.startRuntime);
 
   const daemonUp = dockerInfo?.reachable ?? status?.state === "running";
+  // The runtime auto-starts at launch, but if it's stopped/missing afterwards
+  // (manual `docker stop`, a stop from the Containers screen) offer to bring it
+  // back in-app. "starting" disables the button while it spins up. The daemon
+  // itself being down is a separate, host-level fix (start Docker Desktop).
+  const state = status?.state;
+  const canStart = daemonUp && (state === "stopped" || state === "missing");
+  const starting = state === "starting";
 
   return (
     <main
@@ -132,6 +140,35 @@ export function EmptyHero({ onNew }: EmptyStateProps) {
               split panes.
             </p>
           </div>
+
+          {(canStart || starting) && (
+            <div
+              className="ch-card"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 14,
+                padding: "12px 16px",
+                marginBottom: 20,
+                borderColor: "color-mix(in oklab, var(--wait) 35%, var(--bd))",
+                background: "color-mix(in oklab, var(--wait) 5%, var(--bg-2))",
+              }}
+            >
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 13, fontWeight: 500, color: "var(--fg-0)" }}>
+                  {starting ? "Runtime is starting…" : "Runtime is stopped"}
+                </div>
+                <div style={{ fontSize: 11.5, color: "var(--fg-2)" }}>
+                  {starting
+                    ? "Agents become available once it's running."
+                    : "Start the shared container to launch agents."}
+                </div>
+              </div>
+              <Button size="sm" disabled={starting} onClick={() => void startRuntime()}>
+                {starting ? "Starting…" : "Start runtime"}
+              </Button>
+            </div>
+          )}
 
           <div
             style={{

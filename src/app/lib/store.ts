@@ -72,6 +72,11 @@ interface CodeHubState {
 
   setStatus: (s: ContainerStatus) => void;
   setError: (msg: string) => void;
+  // Runtime lifecycle controls (Containers screen + empty-state). start is safe;
+  // stopRuntime/restartRuntime kill every running session — callers confirm first.
+  startRuntime: () => Promise<void>;
+  stopRuntime: () => Promise<void>;
+  restartRuntime: () => Promise<void>;
   setView: (v: HubView) => void;
   openDetail: (name: string) => void;
   closeDetail: () => void;
@@ -161,6 +166,32 @@ export const useStore = create<CodeHubState>((set, get) => {
     },
 
     setError: (msg) => set({ error: msg }),
+
+    // Each backend control returns the post-action status (and emits
+    // codehub://lifecycle); we setStatus from the return for an immediate update,
+    // idempotent with the lifecycle event. stop/restart tear down the runtime, so
+    // session panes get their exit event and the bootstrap re-runs on next start.
+    startRuntime: async () => {
+      try {
+        get().setStatus(await ipc.containerStart());
+      } catch (e) {
+        set({ error: `start runtime failed: ${e}` });
+      }
+    },
+    stopRuntime: async () => {
+      try {
+        get().setStatus(await ipc.containerStop());
+      } catch (e) {
+        set({ error: `stop runtime failed: ${e}` });
+      }
+    },
+    restartRuntime: async () => {
+      try {
+        get().setStatus(await ipc.containerRestart());
+      } catch (e) {
+        set({ error: `restart runtime failed: ${e}` });
+      }
+    },
 
     // Switching to a top-level view leaves any open session-detail view.
     setView: (view) => set({ view, detailSession: null }),

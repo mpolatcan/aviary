@@ -350,6 +350,12 @@ export interface AgentConfig {
 
 export const ipc = {
   containerStatus: () => invoke<ContainerStatus>("container_status"),
+  // Runtime lifecycle controls. Each returns the post-action ContainerStatus and
+  // also emits codehub://lifecycle, so the store updates either way. start is
+  // safe; stop/restart kill every running session (the UI confirms first).
+  containerStart: () => invoke<ContainerStatus>("container_start"),
+  containerStop: () => invoke<ContainerStatus>("container_stop"),
+  containerRestart: () => invoke<ContainerStatus>("container_restart"),
   dockerInfo: () => invoke<DockerInfo>("docker_info"),
   // Build + host platform identity for Settings → About.
   appInfo: () => invoke<AppInfo>("app_info"),

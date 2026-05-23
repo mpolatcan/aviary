@@ -135,6 +135,9 @@ pub async fn serve() {
 
     let app = Router::new()
         .route("/status", get(status))
+        .route("/container-start", post(container_start))
+        .route("/container-stop", post(container_stop))
+        .route("/container-restart", post(container_restart))
         .route("/docker-info", get(docker_info))
         .route("/app-info", get(app_info))
         .route("/config", get(get_config).put(set_config))
@@ -175,6 +178,35 @@ pub async fn serve() {
 
 async fn status(State(st): State<AppState>) -> impl IntoResponse {
     Json(st.lifecycle.status().await)
+}
+
+// Broadcast the post-action status as a codehub://lifecycle frame (same shape
+// the Tauri build emits) so every connected WS subscriber updates, then return
+// it for the immediate caller. Mirrors lib.rs's container_start/stop/restart.
+fn broadcast_lifecycle(st: &AppState, status: &crate::lifecycle::ContainerStatus) {
+    let frame = json!({ "event": "codehub://lifecycle", "payload": status });
+    let _ = st.tx.send(frame.to_string());
+}
+
+async fn container_start(State(st): State<AppState>) -> Result<impl IntoResponse, ApiError> {
+    st.lifecycle.start().await.map_err(err)?;
+    let status = st.lifecycle.status().await;
+    broadcast_lifecycle(&st, &status);
+    Ok(Json(status))
+}
+
+async fn container_stop(State(st): State<AppState>) -> Result<impl IntoResponse, ApiError> {
+    st.lifecycle.stop().await.map_err(err)?;
+    let status = st.lifecycle.status().await;
+    broadcast_lifecycle(&st, &status);
+    Ok(Json(status))
+}
+
+async fn container_restart(State(st): State<AppState>) -> Result<impl IntoResponse, ApiError> {
+    st.lifecycle.restart().await.map_err(err)?;
+    let status = st.lifecycle.status().await;
+    broadcast_lifecycle(&st, &status);
+    Ok(Json(status))
 }
 
 async fn docker_info(State(st): State<AppState>) -> impl IntoResponse {

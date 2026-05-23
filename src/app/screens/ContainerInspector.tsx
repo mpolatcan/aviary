@@ -30,6 +30,7 @@ import {
   ipc,
 } from "@/app/lib/ipc";
 import { useStore } from "@/app/lib/store";
+import { Button } from "@/app/ui/button";
 import { useEffect, useRef, useState } from "react";
 
 // container_status state → the shared StatusDot/Badge vocabulary.
@@ -51,6 +52,9 @@ export function ContainerInspector() {
   const workspaces = useStore((s) => s.workspaces);
   const focusSession = useStore((s) => s.focusSession);
   const setView = useStore((s) => s.setView);
+  const startRuntime = useStore((s) => s.startRuntime);
+  const stopRuntime = useStore((s) => s.stopRuntime);
+  const restartRuntime = useStore((s) => s.restartRuntime);
 
   const name = status?.name ?? "codehub-runtime";
   const state = status?.state ?? "missing";
@@ -335,6 +339,13 @@ export function ContainerInspector() {
                 {health?.oomKilled && <span style={{ color: "var(--err)" }}> · OOM-killed</span>}
               </div>
             </div>
+            <RuntimeControls
+              state={state}
+              sessionCount={Object.keys(sessionMeta).length}
+              onStart={() => void startRuntime()}
+              onStop={() => void stopRuntime()}
+              onRestart={() => void restartRuntime()}
+            />
           </div>
 
           {/* metrics row — live container_stats (em-dash until the first poll
@@ -910,4 +921,62 @@ function CredRow({
       <StatusDot status={present ? "live" : "off"} />
     </div>
   );
+}
+
+// Runtime lifecycle controls in the inspector hero. Start when the container is
+// down; Restart/Stop when it's up. Stop/Restart kill every attached tmux session
+// (the bollard execs die with the container), so both gate behind a confirm that
+// names how many live sessions go with it. `starting` shows a disabled spinner
+// label; `unreachable` (daemon down) offers nothing actionable.
+function RuntimeControls({
+  state,
+  sessionCount,
+  onStart,
+  onStop,
+  onRestart,
+}: {
+  state: ContainerState;
+  sessionCount: number;
+  onStart: () => void;
+  onStop: () => void;
+  onRestart: () => void;
+}) {
+  const sessionsClause =
+    sessionCount > 0
+      ? ` This kills ${sessionCount} attached session${sessionCount === 1 ? "" : "s"}.`
+      : "";
+  const confirmStop = () => {
+    if (window.confirm(`Stop the runtime?${sessionsClause}`)) onStop();
+  };
+  const confirmRestart = () => {
+    if (window.confirm(`Restart the runtime?${sessionsClause}`)) onRestart();
+  };
+
+  if (state === "starting") {
+    return (
+      <Button size="sm" variant="outline" disabled>
+        Starting…
+      </Button>
+    );
+  }
+  if (state === "stopped" || state === "missing") {
+    return (
+      <Button size="sm" onClick={onStart}>
+        {state === "missing" ? "Create & start" : "Start"}
+      </Button>
+    );
+  }
+  if (state === "running") {
+    return (
+      <div style={{ display: "flex", gap: 8 }}>
+        <Button size="sm" variant="outline" onClick={confirmRestart}>
+          Restart
+        </Button>
+        <Button size="sm" variant="destructive" onClick={confirmStop}>
+          Stop
+        </Button>
+      </div>
+    );
+  }
+  return null;
 }
