@@ -6,6 +6,10 @@ pub mod config;
 #[cfg(feature = "devserver")]
 pub mod devserver;
 pub mod docker;
+// Native macOS Dynamic Island companion. On other platforms the companion stays
+// a WebviewWindow (see open_companion below).
+#[cfg(target_os = "macos")]
+pub mod island;
 pub mod lifecycle;
 pub mod pty;
 
@@ -457,14 +461,26 @@ async fn session_activity(
     Ok(state.registry.activity().snapshot())
 }
 
-/// Label of the always-on-top companion window.
+/// Label of the always-on-top companion window (non-macOS webview companion).
+#[cfg(not(target_os = "macos"))]
 const COMPANION_LABEL: &str = "companion";
 
-/// Open (or re-focus) the floating, always-on-top companion — a small frameless
-/// window that mirrors the live working/idle state of every running agent so it
-/// stays visible over other apps. The window content is a real route
-/// (`index.html#/companion`) that polls `session_activity`; everything it shows
-/// is the honest activity signal — no fabricated turn/token/approval state.
+/// Open (or re-focus) the companion — a floating overlay that mirrors the live
+/// working/idle state of every running agent so it stays visible over other
+/// apps. Everything it shows is the honest activity signal — no fabricated
+/// turn/token/approval state.
+///
+/// On macOS this is the native Dynamic Island ([`island`]); elsewhere it is a
+/// small frameless `WebviewWindow` loading the real `index.html#/companion`
+/// route.
+#[cfg(target_os = "macos")]
+#[tauri::command]
+async fn open_companion(app: tauri::AppHandle) -> Result<(), String> {
+    island::show(&app);
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
 #[tauri::command]
 async fn open_companion(app: tauri::AppHandle) -> Result<(), String> {
     // Already open → just bring it forward.
@@ -500,7 +516,15 @@ async fn open_companion(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// Close the companion window if it is open. No-op when it is not.
+/// Close/hide the companion. No-op when it is not open.
+#[cfg(target_os = "macos")]
+#[tauri::command]
+async fn close_companion(app: tauri::AppHandle) -> Result<(), String> {
+    island::hide(&app);
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
 #[tauri::command]
 async fn close_companion(app: tauri::AppHandle) -> Result<(), String> {
     if let Some(win) = app.get_webview_window(COMPANION_LABEL) {
@@ -509,8 +533,15 @@ async fn close_companion(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// Whether the companion window is currently open — lets the trigger render as a
+/// Whether the companion is currently on screen — lets the trigger render as a
 /// toggle.
+#[cfg(target_os = "macos")]
+#[tauri::command]
+async fn companion_open(_app: tauri::AppHandle) -> Result<bool, String> {
+    Ok(island::is_visible())
+}
+
+#[cfg(not(target_os = "macos"))]
 #[tauri::command]
 async fn companion_open(app: tauri::AppHandle) -> Result<bool, String> {
     Ok(app.get_webview_window(COMPANION_LABEL).is_some())
@@ -603,12 +634,42 @@ pub fn run() {
             // UI preferences — separate file from the container config mount.
             let config = Arc::new(ConfigStore::load(app_data.join("settings.json")));
 
+            #[cfg(target_os = "macos")]
+            let island_registry = registry.clone();
+
             app.manage(AppState {
                 lifecycle: lifecycle.clone(),
                 docker,
                 registry,
                 config,
             });
+
+            // macOS: feed the native Dynamic Island the live activity snapshot
+            // while it is on screen. Honest signal only (working vs idle), polled
+            // off the same source the companion webview uses on other platforms.
+            #[cfg(target_os = "macos")]
+            {
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    let mut tick = tokio::time::interval(std::time::Duration::from_millis(1000));
+                    loop {
+                        tick.tick().await;
+                        if !island::is_visible() {
+                            continue;
+                        }
+                        let items = island_registry
+                            .activity()
+                            .snapshot()
+                            .into_iter()
+                            .map(|a| island::IslandItem {
+                                label: a.alias.unwrap_or(a.session),
+                                working: matches!(a.state, activity::ActivityState::Working),
+                            })
+                            .collect();
+                        island::update(&handle, items);
+                    }
+                });
+            }
 
             // Kick off runtime provisioning in background; frontend listens for status events.
             let handle = app.handle().clone();

@@ -43,3 +43,14 @@ default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
 # Compiles the standalone HTTP/WS bridge bin for browser-based UI testing.
 devserver = ["dep:axum"]
+
+# Native macOS Dynamic Island companion (src/island.rs). objc2 is already in the
+# tree transitively via Tauri; these pin matching versions for direct AppKit use
+# so cargo unifies to a single copy of each crate.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = "0.3"
+objc2-foundation = "0.3"
+# CALayer feature enables the layer setters (corner radius / masking) used to
+# round the island; the crate itself is already pulled in transitively.
+objc2-quartz-core = { version = "0.3", features = ["CALayer"] }
