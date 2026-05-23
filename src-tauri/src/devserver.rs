@@ -149,6 +149,7 @@ pub async fn serve() {
         .route("/claude-usage", get(claude_usage))
         .route("/claude-sessions", get(claude_sessions))
         .route("/claude-session-usage", get(claude_session_usage))
+        .route("/claude-integrations", get(claude_integrations))
         .route("/container-git-log", get(container_git_log))
         .route("/session-activity", get(session_activity))
         .route("/sessions", get(list_sessions).post(create_session))
@@ -276,6 +277,10 @@ async fn claude_usage(State(st): State<AppState>) -> Result<impl IntoResponse, A
 
 async fn claude_sessions(State(st): State<AppState>) -> Result<impl IntoResponse, ApiError> {
     st.docker.claude_sessions().await.map(Json).map_err(err)
+}
+
+async fn claude_integrations(State(st): State<AppState>) -> Result<impl IntoResponse, ApiError> {
+    st.docker.claude_integrations().await.map(Json).map_err(err)
 }
 
 #[derive(Deserialize)]

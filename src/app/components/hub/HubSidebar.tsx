@@ -140,8 +140,8 @@ export function HubSidebar() {
         </div>
       </div>
 
-      {/* Planned screens — navigable honest stubs (their real data needs backend
-          CodeHub doesn't capture yet; see PlannedScreen / BACKEND_PLAN.md). */}
+      {/* More — secondary views. Integrations reads the runtime's Claude config
+          (signed-in account + MCP servers); all factual, no fabricated data. */}
       <div style={{ padding: "2px 10px 4px" }}>
         <div className="lbl" style={{ padding: "0 4px 6px" }}>
           More
@@ -152,9 +152,6 @@ export function HubSidebar() {
         >
           {Ico.diff}
           <span style={{ flex: 1 }}>Integrations</span>
-          <span className="mono" style={{ fontSize: 9.5, color: "var(--fg-3)" }}>
-            soon
-          </span>
         </div>
       </div>
 

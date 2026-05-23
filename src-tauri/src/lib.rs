@@ -10,9 +10,9 @@ pub mod pty;
 
 use activity::SessionActivity;
 use docker::{
-    AgentVersion, ClaudeSession, ClaudeUsage, Cli, CommitInfo, ContainerStats, DockerClient,
-    FileEntry, GitStatus, ImageInfo, LaunchMode, MountInfo, ProcessInfo, RuntimeHealth,
-    SessionUsage,
+    AgentVersion, ClaudeIntegrations, ClaudeSession, ClaudeUsage, Cli, CommitInfo, ContainerStats,
+    DockerClient, FileEntry, GitStatus, ImageInfo, LaunchMode, MountInfo, ProcessInfo,
+    RuntimeHealth, SessionUsage,
 };
 use lifecycle::{AppInfo, ContainerStatus, DockerInfo, KeyStatus, Lifecycle};
 use pty::{PaneEmitter, PtyRegistry, SessionInfo};
@@ -260,6 +260,20 @@ async fn claude_session_usage(
     state
         .docker
         .claude_session_usage(&id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// What the runtime's Claude is connected to (Integrations screen): the signed-in
+/// account + configured MCP servers, from on-disk config. Identity only, no
+/// credential. Errs only when the container is down.
+#[tauri::command]
+async fn claude_integrations(
+    state: tauri::State<'_, AppState>,
+) -> Result<ClaudeIntegrations, String> {
+    state
+        .docker
+        .claude_integrations()
         .await
         .map_err(|e| e.to_string())
 }
@@ -603,6 +617,7 @@ pub fn run() {
             claude_usage,
             claude_sessions,
             claude_session_usage,
+            claude_integrations,
             container_git_log,
             list_sessions,
             create_session,

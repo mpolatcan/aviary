@@ -85,6 +85,8 @@ async function httpInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
       return jget("/claude-usage") as Promise<T>;
     case "claude_sessions":
       return jget("/claude-sessions") as Promise<T>;
+    case "claude_integrations":
+      return jget("/claude-integrations") as Promise<T>;
     case "claude_session_usage":
       return jget(`/claude-session-usage?id=${encodeURIComponent(String(args.id))}`) as Promise<T>;
     case "list_sessions":

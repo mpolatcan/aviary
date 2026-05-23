@@ -250,6 +250,39 @@ export interface SessionUsage {
   contextUsed: number;
 }
 
+// The Claude account the runtime is signed into (Integrations view), read from
+// `oauthAccount` in ~/.claude.json. Identity only — every field is the user's
+// own account metadata already on disk; no token/secret/billing is included.
+// Each field may be null (renders as em-dash).
+export interface ClaudeAccount {
+  email: string | null;
+  name: string | null;
+  // Subscription tier, prettified from organizationType (e.g. "Max").
+  plan: string | null;
+  org: string | null;
+  role: string | null;
+}
+
+// One configured MCP server (Integrations view). Identity only: name, transport
+// and a non-secret target (stdio launch command or http/sse URL). Secret-bearing
+// fields (env, headers) are never read by the backend, so never appear here.
+export interface McpServer {
+  name: string;
+  // Where it's configured: "user", "project", or "shared".
+  scope: string;
+  // "stdio" | "http" | "sse" | "unknown".
+  transport: string;
+  target: string | null;
+}
+
+// What the runtime's Claude is connected to: signed-in account + configured MCP
+// servers. All factual from on-disk config. Empty mcpServers (the common case)
+// is the honest truth — the UI shows a "none configured" state, not a fake.
+export interface ClaudeIntegrations {
+  account: ClaudeAccount | null;
+  mcpServers: McpServer[];
+}
+
 export const ipc = {
   containerStatus: () => invoke<ContainerStatus>("container_status"),
   dockerInfo: () => invoke<DockerInfo>("docker_info"),
@@ -292,6 +325,9 @@ export const ipc = {
   // Live token tally for one Claude session (the `--session-id`/resumed id it
   // was launched with); null when no usable data yet. Backs the pane header.
   claudeSessionUsage: (id: string) => invoke<SessionUsage | null>("claude_session_usage", { id }),
+  // What the runtime's Claude is connected to (Integrations view): signed-in
+  // account + configured MCP servers, read from on-disk config. Identity only.
+  claudeIntegrations: () => invoke<ClaudeIntegrations>("claude_integrations"),
   listSessions: () => invoke<SessionInfo[]>("list_sessions"),
   // `resume` (a Claude transcript id) relaunches that conversation with
   // `claude --resume <id>`. `sessionId` pins a fresh Claude session to a known

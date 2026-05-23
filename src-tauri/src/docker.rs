@@ -279,6 +279,52 @@ pub struct SessionUsage {
     pub context_used: u64,
 }
 
+/// The Claude account the runtime is signed into, read from `oauthAccount` in
+/// `~/.claude.json`. Identity only — every field is the user's own account
+/// metadata that already lives on disk; NO token, secret, or billing detail is
+/// surfaced. Each field is `Option` so a missing one renders as em-dash.
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaudeAccount {
+    pub email: Option<String>,
+    pub name: Option<String>,
+    /// Subscription tier, prettified from `organizationType` (e.g.
+    /// `claude_max` → "Max"); the raw value when unrecognized.
+    pub plan: Option<String>,
+    pub org: Option<String>,
+    pub role: Option<String>,
+}
+
+/// One MCP server configured for the runtime's Claude, read from the
+/// `mcpServers` maps in `~/.claude.json` (user + per-project scope) and the
+/// workspace `.mcp.json` (shared). Identity only: `name`, `transport`, and a
+/// non-secret `target` (the launch command for stdio, the URL for http/sse).
+/// Secret-bearing fields (`env`, `headers`) are deliberately NEVER read or
+/// surfaced — only what a server *is*, never its credentials.
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct McpServer {
+    pub name: String,
+    /// Where it's configured: "user", "project", or "shared".
+    pub scope: String,
+    /// "stdio" | "http" | "sse" | "unknown".
+    pub transport: String,
+    /// stdio launch command, or the http/sse URL. `None` when neither is set.
+    /// Never includes args containing secrets — just the bare command/URL.
+    pub target: Option<String>,
+}
+
+/// What the runtime's Claude is actually connected to: the signed-in account +
+/// configured MCP servers. All FACTUAL, read from on-disk config; nothing is
+/// fabricated and no credential is surfaced. Empty `mcp_servers` (the common
+/// case) is reported honestly as "none configured" by the UI.
+#[derive(Debug, Serialize, Clone, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaudeIntegrations {
+    pub account: Option<ClaudeAccount>,
+    pub mcp_servers: Vec<McpServer>,
+}
+
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum Cli {
@@ -1136,6 +1182,127 @@ impl DockerClient {
             context_used: latest_context_used(&raw),
         }))
     }
+
+    /// What the runtime's Claude is connected to (Integrations view): the
+    /// signed-in account + configured MCP servers, read from `~/.claude.json`
+    /// and the workspace `.mcp.json`. Both files are `cat`'d as plain argv (no
+    /// shell, fixed paths); a missing `.mcp.json` just yields a non-JSON read
+    /// that the parser ignores. Identity only — no credential is surfaced.
+    pub async fn claude_integrations(&self) -> Result<ClaudeIntegrations, DockerError> {
+        if !self.is_running().await? {
+            return Err(DockerError::ContainerDown(self.container.clone()));
+        }
+        let cfg = self
+            .exec_capture(vec!["cat", "/config/claude/.claude.json"])
+            .await
+            .unwrap_or_default();
+        let mcp = self
+            .exec_capture(vec!["cat", "/workspace/.mcp.json"])
+            .await
+            .unwrap_or_default();
+        Ok(parse_claude_integrations(&cfg, &mcp))
+    }
+}
+
+/// Prettify Claude's `organizationType` into a plan label: `claude_max` → "Max",
+/// `claude_pro` → "Pro", etc. Falls back to the raw value (so an unrecognized
+/// tier is shown as-is, never dropped or guessed).
+fn pretty_plan(org_type: &str) -> String {
+    match org_type {
+        "claude_max" => "Max".to_string(),
+        "claude_pro" => "Pro".to_string(),
+        "claude_team" => "Team".to_string(),
+        "claude_enterprise" => "Enterprise".to_string(),
+        "claude_free" => "Free".to_string(),
+        other => other.to_string(),
+    }
+}
+
+/// Map one MCP server JSON definition to a non-secret [`McpServer`]. Reads only
+/// `type`/`command`/`url`; `env` and `headers` (which carry tokens) are never
+/// touched. Transport is the explicit `type` when present, else inferred from
+/// whether a `command` (stdio) or `url` (http) is set.
+fn mcp_server_from(name: &str, scope: &str, def: &serde_json::Value) -> McpServer {
+    let command = def.get("command").and_then(|c| c.as_str());
+    let url = def.get("url").and_then(|u| u.as_str());
+    let transport = def
+        .get("type")
+        .and_then(|t| t.as_str())
+        .map(str::to_string)
+        .unwrap_or_else(|| {
+            if command.is_some() {
+                "stdio".to_string()
+            } else if url.is_some() {
+                "http".to_string()
+            } else {
+                "unknown".to_string()
+            }
+        });
+    McpServer {
+        name: name.to_string(),
+        scope: scope.to_string(),
+        transport,
+        target: command.or(url).map(str::to_string),
+    }
+}
+
+/// Collect the `mcpServers` object at `val[key...]` into [`McpServer`]s tagged
+/// with `scope`. A missing or non-object node yields nothing.
+fn collect_mcp(servers: Option<&serde_json::Value>, scope: &str, out: &mut Vec<McpServer>) {
+    if let Some(map) = servers.and_then(|s| s.as_object()) {
+        for (name, def) in map {
+            out.push(mcp_server_from(name, scope, def));
+        }
+    }
+}
+
+/// Parse `~/.claude.json` (`cfg`) + the workspace `.mcp.json` (`mcp`) into a
+/// [`ClaudeIntegrations`]. The account comes from `oauthAccount` (identity
+/// fields only); MCP servers are merged from user scope (`cfg.mcpServers`),
+/// project scope (`cfg.projects["/workspace"].mcpServers`), and shared scope
+/// (`mcp.mcpServers`), sorted by scope then name. Non-JSON / missing input
+/// yields an empty result rather than failing.
+fn parse_claude_integrations(cfg: &str, mcp: &str) -> ClaudeIntegrations {
+    let cfg: serde_json::Value = serde_json::from_str(cfg).unwrap_or_default();
+
+    let account = cfg.get("oauthAccount").and_then(|oa| {
+        let s = |k: &str| oa.get(k).and_then(|v| v.as_str()).map(str::to_string);
+        let acct = ClaudeAccount {
+            email: s("emailAddress"),
+            name: s("displayName"),
+            plan: oa
+                .get("organizationType")
+                .and_then(|v| v.as_str())
+                .map(pretty_plan),
+            org: s("organizationName"),
+            role: s("organizationRole"),
+        };
+        // Drop an all-empty account (oauthAccount present but unrecognized).
+        let empty = acct.email.is_none()
+            && acct.name.is_none()
+            && acct.plan.is_none()
+            && acct.org.is_none()
+            && acct.role.is_none();
+        (!empty).then_some(acct)
+    });
+
+    let mut mcp_servers = Vec::new();
+    collect_mcp(cfg.get("mcpServers"), "user", &mut mcp_servers);
+    collect_mcp(
+        cfg.get("projects")
+            .and_then(|p| p.get("/workspace"))
+            .and_then(|w| w.get("mcpServers")),
+        "project",
+        &mut mcp_servers,
+    );
+    let mcp: serde_json::Value = serde_json::from_str(mcp).unwrap_or_default();
+    collect_mcp(mcp.get("mcpServers"), "shared", &mut mcp_servers);
+    mcp_servers.sort_by(|a, b| a.scope.cmp(&b.scope).then(a.name.cmp(&b.name)));
+
+    ClaudeIntegrations {
+        account,
+        mcp_servers,
+    }
 }
 
 /// Whether `id` is a plausible Claude session id (a UUID, but we accept any
@@ -1877,8 +2044,8 @@ pub struct AttachHandles {
 mod tests {
     use super::{
         clip_title, count_session_edits, is_session_id, is_synthetic_prompt, is_version_like,
-        latest_context_used, parse_claude_sessions, parse_claude_usage, parse_find, parse_git_log,
-        parse_git_status, parse_top, workspace_path,
+        latest_context_used, parse_claude_integrations, parse_claude_sessions, parse_claude_usage,
+        parse_find, parse_git_log, parse_git_status, parse_top, workspace_path,
     };
 
     #[test]
@@ -2219,6 +2386,65 @@ mod tests {
             latest_context_used(r#"{"type":"user","message":{"content":"hi"}}"#),
             0
         );
+    }
+
+    #[test]
+    fn parse_claude_integrations_reads_account_and_mcp_redacting_secrets() {
+        let cfg = r#"{
+            "oauthAccount": {
+                "emailAddress": "dev@example.com",
+                "displayName": "Dev User",
+                "organizationType": "claude_max",
+                "organizationName": "Acme",
+                "organizationRole": "admin"
+            },
+            "mcpServers": {
+                "github": {"type":"http","url":"https://mcp.example.com","headers":{"Authorization":"Bearer SECRET"}}
+            },
+            "projects": {
+                "/workspace": {
+                    "mcpServers": {
+                        "local-fs": {"command":"npx","args":["-y","fs-server"],"env":{"TOKEN":"SECRET"}}
+                    }
+                }
+            }
+        }"#;
+        let mcp = r#"{"mcpServers":{"shared-db":{"type":"sse","url":"https://sse.example.com"}}}"#;
+        let i = parse_claude_integrations(cfg, mcp);
+
+        let acct = i.account.clone().expect("account present");
+        assert_eq!(acct.email.as_deref(), Some("dev@example.com"));
+        assert_eq!(acct.name.as_deref(), Some("Dev User"));
+        assert_eq!(acct.plan.as_deref(), Some("Max")); // claude_max prettified
+        assert_eq!(acct.org.as_deref(), Some("Acme"));
+        assert_eq!(acct.role.as_deref(), Some("admin"));
+
+        // Three servers, sorted by scope (project < shared < user) then name.
+        assert_eq!(i.mcp_servers.len(), 3);
+        assert_eq!(i.mcp_servers[0].name, "local-fs");
+        assert_eq!(i.mcp_servers[0].scope, "project");
+        assert_eq!(i.mcp_servers[0].transport, "stdio"); // inferred from command
+        assert_eq!(i.mcp_servers[0].target.as_deref(), Some("npx"));
+        assert_eq!(i.mcp_servers[1].name, "shared-db");
+        assert_eq!(i.mcp_servers[1].scope, "shared");
+        assert_eq!(i.mcp_servers[1].transport, "sse");
+        assert_eq!(i.mcp_servers[2].name, "github");
+        assert_eq!(i.mcp_servers[2].scope, "user");
+        assert_eq!(i.mcp_servers[2].transport, "http");
+
+        // No secret value ever appears in the serialized output.
+        let json = serde_json::to_string(&i).unwrap();
+        assert!(!json.contains("SECRET"));
+        assert!(!json.contains("Authorization"));
+        assert!(!json.contains("TOKEN"));
+
+        // Empty / non-JSON input → empty result, no panic, no account.
+        let empty = parse_claude_integrations("", "");
+        assert!(empty.account.is_none());
+        assert!(empty.mcp_servers.is_empty());
+        let garbage = parse_claude_integrations("cat: no such file", "{not json");
+        assert!(garbage.account.is_none());
+        assert!(garbage.mcp_servers.is_empty());
     }
 
     #[test]

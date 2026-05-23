@@ -6,7 +6,6 @@ import { CommandPalette } from "./components/hub/CommandPalette";
 import { HubSidebar } from "./components/hub/HubSidebar";
 import { HubStatusBar } from "./components/hub/HubStatusBar";
 import { HubTabs } from "./components/hub/HubTabs";
-import { PlannedScreen } from "./components/hub/PlannedScreen";
 import { Shortcuts } from "./components/hub/Shortcuts";
 import { WorkspaceBar } from "./components/hub/WorkspaceBar";
 import { useActivityPoll } from "./hooks/useActivityPoll";
@@ -17,24 +16,11 @@ import { activeWorkspace, initLifecycle, useStore } from "./lib/store";
 import { ContainerInspector } from "./screens/ContainerInspector";
 import { Dashboard } from "./screens/Dashboard";
 import { EmptyHero } from "./screens/EmptyState";
+import { Integrations } from "./screens/Integrations";
 import { Resume } from "./screens/Resume";
 import { SessionDetail } from "./screens/SessionDetail";
 import { Settings } from "./screens/Settings";
 import { Usage } from "./screens/Usage";
-
-// Designed screens whose real data needs backend CodeHub doesn't capture yet
-// (per-turn token/cost capture, persistent session history, integration
-// connectors). Rendered as honest, navigable PlannedScreen stubs that name
-// what's missing — never fabricated numbers. See BACKEND_PLAN.md.
-const PLANNED = {
-  integrations: {
-    title: "Integrations",
-    blurb:
-      "Connect CodeHub to GitHub, issue trackers and chat so sessions can open PRs, pull tickets and post updates.",
-    needs:
-      "Needs integration connectors + credential storage: none of these third-party connections are implemented yet.",
-  },
-} as const;
 
 // App shell. The left sidebar is always present; the main region swaps on the
 // sidebar's view nav (P4). "hub" is the live terminal grid + activity rail; the
@@ -90,7 +76,7 @@ export function App() {
       ) : view === "resume" ? (
         <Resume />
       ) : (
-        <PlannedScreen {...PLANNED[view]} />
+        <Integrations />
       )}
 
       {/* Floating overlays, above every view (⌘K / ⌘/). Portalled, so placement

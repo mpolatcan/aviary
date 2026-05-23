@@ -27,9 +27,8 @@ import {
 } from "./tree";
 
 // Top-level view, switched from the sidebar nav. "hub" is the terminal grid;
-// the rest are full-pane screens. hub/dashboard/containers/settings/usage/resume
-// are live real-data screens; only integrations is still an honest stub whose
-// real data needs backend CodeHub doesn't capture yet (see PlannedScreen).
+// the rest are full-pane screens. All are live real-data screens — Integrations
+// reads the runtime's Claude config (signed-in account + configured MCP servers).
 export type HubView =
   | "hub"
   | "dashboard"
