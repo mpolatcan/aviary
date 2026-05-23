@@ -7,12 +7,18 @@
  * actually reports — sessions, container_stats, container_git_status,
  * container_git_log — and omits the cost/usage/attention surfaces until there's
  * a real feed for them (BACKEND_PLAN.md). Nothing here is invented.
+ *
+ * The "Claude tokens" metric is the one usage figure with a real feed: the
+ * all-time input+output total summed from Claude's on-disk transcripts (the
+ * same claude_usage read that backs the Usage screen, deduped). It's a token
+ * COUNT only — cost stays an estimate confined to the Usage screen.
  */
 import { AgentGlyph } from "@/app/components/primitives/AgentGlyph";
 import { IconBtn } from "@/app/components/primitives/IconBtn";
 import { Ico } from "@/app/components/primitives/icons";
 import { MODE_BY_ID, SPEC_BY_CLI } from "@/app/lib/catalog";
 import {
+  type ClaudeUsage,
   type CommitInfo,
   type ContainerStats,
   type GitStatus,
@@ -45,6 +51,9 @@ export function Dashboard() {
   // Live tmux sessions (~5s) — joined by name to sessionMeta for the real
   // per-session uptime (`session_created`). null while down / pre-read.
   const [tmux, setTmux] = useState<SessionInfo[] | null>(null);
+  // All-time Claude token analytics (~15s — transcripts grow slowly). The token
+  // total is factual; cost is omitted here (estimate lives on the Usage screen).
+  const [usage, setUsage] = useState<ClaudeUsage | null>(null);
 
   useEffect(() => {
     if (!running) {
@@ -52,6 +61,7 @@ export function Dashboard() {
       setGit(null);
       setCommits(null);
       setTmux(null);
+      setUsage(null);
       return;
     }
     let alive = true;
@@ -68,12 +78,14 @@ export function Dashboard() {
     const h2 = poll(() => ipc.containerGitStatus(), setGit, 5000);
     const h3 = poll(() => ipc.containerGitLog(12), setCommits, 10000);
     const h4 = poll(() => ipc.listSessions(), setTmux, 5000);
+    const h5 = poll(() => ipc.claudeUsage(), setUsage, 15000);
     return () => {
       alive = false;
       clearInterval(h1);
       clearInterval(h2);
       clearInterval(h3);
       clearInterval(h4);
+      clearInterval(h5);
     };
   }, [running]);
 
@@ -115,11 +127,12 @@ export function Dashboard() {
       </div>
 
       <div className="scroll" style={{ flex: 1, overflow: "auto", padding: 24 }}>
-        {/* metric row — all real (sessions count + live container_stats + git) */}
+        {/* metric row — all real (sessions count + live container_stats + git +
+            all-time Claude token total). */}
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "repeat(4, 1fr)",
+            gridTemplateColumns: "repeat(5, 1fr)",
             gap: 12,
             marginBottom: 18,
           }}
@@ -140,6 +153,11 @@ export function Dashboard() {
             label="Workspace changes"
             value={git?.isRepo ? String(git.total) : git === null ? null : "—"}
             sub={git?.isRepo && git.branch ? git.branch : undefined}
+          />
+          <Metric
+            label="Claude tokens"
+            value={usage ? fmtNum(usage.totals.input + usage.totals.output) : null}
+            sub={usage ? "all-time · in+out" : undefined}
           />
         </div>
 
@@ -258,6 +276,21 @@ function fmtAge(epochSec: number): string {
   if (s < 3600) return `${Math.floor(s / 60)}m`;
   if (s < 86400) return `${Math.floor(s / 3600)}h`;
   return `${Math.floor(s / 86400)}d`;
+}
+
+// Compact token count: 1_234_567 → "1.2M", 12_300 → "12.3K", 540 → "540".
+// Mirrors the Usage screen formatter (small, kept local like fmtBytes).
+function fmtNum(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)}M`;
+  if (n >= 1_000) {
+    const decimals = n >= 10_000 ? 0 : 1;
+    // Rounding can push a high-900Ks value to "1000K"; promote it to M instead.
+    if (Number((n / 1_000).toFixed(decimals)) >= 1_000) {
+      return `${(n / 1_000_000).toFixed(1)}M`;
+    }
+    return `${(n / 1_000).toFixed(decimals)}K`;
+  }
+  return String(n);
 }
 
 // Human-readable bytes (binary units), matching the Containers view formatter.
