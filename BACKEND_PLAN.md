@@ -303,6 +303,37 @@ per tab) need the Tier-3 multi-container work and are deferred.
   — same per-turn-capture blocker below. Because every session shares ONE runtime,
   git + logs are workspace/runtime-wide, not per-session, and the inspector is
   labelled accordingly. Verified end-to-end against the live runtime (dark+light).
+- **Companion / live-activities (P5).** ~~Floating always-on-top per-agent
+  avatars + dynamic-island~~ **DONE (always-on-top monitor) / rich-state blocked.**
+  An always-on-top companion window is built: `open_companion`/`close_companion`/
+  `companion_open` create a frameless, `always_on_top`, skip-taskbar `WebviewWindow`
+  (label `companion`, top-right pinned) that loads the real `index.html#/companion`
+  route. Its content (`Companion.tsx`) polls `session_activity` and renders each
+  running agent as an avatar puck (agent-colored ring, lit while working) + alias +
+  honest working/idle + quiet-duration; clicking a row calls
+  `focus_session_from_companion`, which raises the main window and emits
+  `codehub://focus-session` (the main app focuses that session in the Hub). To make
+  the companion self-sufficient — it runs in its own webview and cannot read the
+  main store — `session_activity` was enriched with the agent identity (`cli` +
+  `alias`), registered on `create_session` (both hosts) and falling back to the
+  tmux session name when a pre-existing entry has no label. Triggered from the
+  sidebar Views nav + a command-palette "Open companion window" action.
+  - **Honest scope.** The design's per-agent draggable/cloneable avatars, the
+    dynamic-island compact metaphor, and all turn/token/approve/done badges are
+    **omitted** (not faked): the rich states need per-turn capture (below) and the
+    multi-window drag/character system is polish (P6). The shipped companion shows
+    only the real working/idle signal.
+  - **Verification gap (explicit).** A second always-on-top OS window cannot be
+    exercised in the dev-web bridge or Playwright (single page, no native window
+    manager, no `always_on_top`). What IS verified: the companion **content route**
+    renders end-to-end against the live runtime in dark + light with real activity
+    (enriched aliases, session-name fallback, a genuinely-working codex session,
+    idle durations). The native window creation / always-on-top / top-right pin /
+    drag region / cross-window `codehub://focus-session` jump are compile-checked
+    (`cargo clippy -D warnings`) + capability-wired (`companion` added to
+    `capabilities/default.json` windows) but need a `tauri dev` / built-app smoke
+    test to confirm OS behavior. The bridge degrades the window commands to honest
+    no-ops in the browser (`companion_open` → false).
 - **Per-turn capture (the big unlock).** ~~A subsystem that tails each agent
   pane's output…~~ **Foundation DONE (activity signal) / token-cost still
   deferred.** The robust, CLI-agnostic layer is built: the pty output pump tees

@@ -4,7 +4,7 @@ import { Logo } from "../../components/primitives/Logo";
 import { StatusDot } from "../../components/primitives/StatusDot";
 import { Ico } from "../../components/primitives/icons";
 import { MODE_BY_ID, SPEC_BY_CLI } from "../../lib/catalog";
-import type { Cli, Mode } from "../../lib/ipc";
+import { type Cli, type Mode, ipc } from "../../lib/ipc";
 import { useLauncher } from "../../lib/launcher";
 import { useStore } from "../../lib/store";
 import { leavesList } from "../../lib/tree";
@@ -114,6 +114,15 @@ export function HubSidebar() {
         >
           {Ico.settings}
           <span style={{ flex: 1 }}>Settings</span>
+        </div>
+        {/* Opens the always-on-top companion in its own window (P5) — a floating
+            live monitor of every running agent. Not a view, so no active state. */}
+        <div className="side-item" onClick={() => void ipc.openCompanion()}>
+          {Ico.bell}
+          <span style={{ flex: 1 }}>Companion</span>
+          <span className="mono" style={{ fontSize: 9.5, color: "var(--fg-3)" }}>
+            window
+          </span>
         </div>
       </div>
 

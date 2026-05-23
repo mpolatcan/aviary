@@ -33,6 +33,12 @@ export interface SessionActivity {
   state: ActivityState;
   idleMs: number;
   bytes: number;
+  // Agent identity registered at session creation (cli binary + display alias).
+  // Null when output created the entry before a label was registered — the
+  // always-on-top companion (its own webview, no access to the main store) reads
+  // these to render the glyph + name; UI falls back when absent.
+  cli: string | null;
+  alias: string | null;
 }
 
 // Tier-1 reads (BACKEND_PLAN.md). docker_info backs the empty-state daemon pill;
@@ -199,6 +205,14 @@ export const ipc = {
   ptyResize: (paneId: string, cols: number, rows: number) =>
     invoke<void>("pty_resize", { paneId, cols, rows }),
   detachSession: (paneId: string) => invoke<void>("detach_session", { paneId }),
+  // Always-on-top companion window (P5). open/close/query the floating monitor;
+  // focusSessionFromCompanion raises the main window + emits codehub://focus-session.
+  // No-ops over the dev bridge — a second OS window only exists under Tauri.
+  openCompanion: () => invoke<void>("open_companion"),
+  closeCompanion: () => invoke<void>("close_companion"),
+  companionOpen: () => invoke<boolean>("companion_open"),
+  focusSessionFromCompanion: (name: string) =>
+    invoke<void>("focus_session_from_companion", { name }),
 } as const;
 
 export function onLifecycle(cb: (s: ContainerStatus) => void): Promise<UnlistenFn> {

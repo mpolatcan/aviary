@@ -309,15 +309,15 @@ async fn create_session(
         .as_deref()
         .map(LaunchMode::parse)
         .unwrap_or_default();
+    let alias = body.alias.unwrap_or_default();
     st.docker
-        .create_tmux_session(
-            &body.name,
-            cli,
-            mode,
-            body.alias.as_deref().unwrap_or_default(),
-        )
+        .create_tmux_session(&body.name, cli, mode, &alias)
         .await
         .map_err(err)?;
+    // Mirror lib.rs: record agent identity for the activity snapshot.
+    st.registry
+        .activity()
+        .register(&body.name, cli.binary(), &alias);
     Ok(StatusCode::NO_CONTENT)
 }
 

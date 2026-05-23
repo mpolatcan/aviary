@@ -1,5 +1,5 @@
 import { CLIS, SPEC_BY_CLI } from "../../lib/catalog";
-import type { Cli } from "../../lib/ipc";
+import { type Cli, ipc } from "../../lib/ipc";
 import { useOverlay } from "../../lib/overlay";
 import { type HubView, useStore } from "../../lib/store";
 import {
@@ -79,6 +79,22 @@ export function CommandPalette() {
               )}
             </CommandItem>
           ))}
+        </CommandGroup>
+
+        <CommandGroup heading="Window">
+          <CommandItem
+            value="open companion floating window monitor"
+            onSelect={() => {
+              setPalette(false);
+              void ipc.openCompanion();
+            }}
+          >
+            <span style={{ display: "inline-flex", color: "var(--fg-2)" }}>{Ico.bell}</span>
+            <span style={{ flex: 1 }}>Open companion window</span>
+            <span className="mono" style={{ fontSize: 10.5, color: "var(--fg-3)" }}>
+              always on top
+            </span>
+          </CommandItem>
         </CommandGroup>
 
         {sessions.length > 0 && (

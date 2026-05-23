@@ -261,11 +261,19 @@ async fn create_session(
 ) -> Result<(), String> {
     let cli = Cli::parse(&cli).map_err(|e| e.to_string())?;
     let mode = mode.as_deref().map(LaunchMode::parse).unwrap_or_default();
+    let alias = alias.unwrap_or_default();
     state
         .docker
-        .create_tmux_session(&name, cli, mode, alias.as_deref().unwrap_or_default())
+        .create_tmux_session(&name, cli, mode, &alias)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    // Record the agent identity so the activity snapshot (and the companion
+    // window built on it) can show who each session is, not just its tmux name.
+    state
+        .registry
+        .activity()
+        .register(&name, cli.binary(), &alias);
+    Ok(())
 }
 
 #[tauri::command]
@@ -355,6 +363,79 @@ async fn session_activity(
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<SessionActivity>, String> {
     Ok(state.registry.activity().snapshot())
+}
+
+/// Label of the always-on-top companion window.
+const COMPANION_LABEL: &str = "companion";
+
+/// Open (or re-focus) the floating, always-on-top companion — a small frameless
+/// window that mirrors the live working/idle state of every running agent so it
+/// stays visible over other apps. The window content is a real route
+/// (`index.html#/companion`) that polls `session_activity`; everything it shows
+/// is the honest activity signal — no fabricated turn/token/approval state.
+#[tauri::command]
+async fn open_companion(app: tauri::AppHandle) -> Result<(), String> {
+    // Already open → just bring it forward.
+    if let Some(win) = app.get_webview_window(COMPANION_LABEL) {
+        let _ = win.show();
+        let _ = win.set_focus();
+        return Ok(());
+    }
+    let win = tauri::WebviewWindowBuilder::new(
+        &app,
+        COMPANION_LABEL,
+        tauri::WebviewUrl::App("index.html#/companion".into()),
+    )
+    .title("CodeHub Companion")
+    .inner_size(248.0, 360.0)
+    .min_inner_size(200.0, 160.0)
+    .decorations(false)
+    .always_on_top(true)
+    .resizable(true)
+    .skip_taskbar(true)
+    .build()
+    .map_err(|e| e.to_string())?;
+    // Best-effort: pin to the top-right of the primary monitor, leaving a small
+    // inset. Positioning failure is non-fatal — the window still opens.
+    if let Ok(Some(monitor)) = win.primary_monitor() {
+        let size = monitor.size();
+        let scale = monitor.scale_factor();
+        let inset = (24.0 * scale) as i32;
+        let win_w = (248.0 * scale) as i32;
+        let x = (size.width as i32 - win_w - inset).max(0);
+        let _ = win.set_position(tauri::PhysicalPosition::new(x, inset));
+    }
+    Ok(())
+}
+
+/// Close the companion window if it is open. No-op when it is not.
+#[tauri::command]
+async fn close_companion(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(win) = app.get_webview_window(COMPANION_LABEL) {
+        win.close().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Whether the companion window is currently open — lets the trigger render as a
+/// toggle.
+#[tauri::command]
+async fn companion_open(app: tauri::AppHandle) -> Result<bool, String> {
+    Ok(app.get_webview_window(COMPANION_LABEL).is_some())
+}
+
+/// Jump from the companion to a session in the main window: raise + focus the
+/// main window, then emit `codehub://focus-session` so the app focuses that
+/// session and leaves any open detail view. Missing main window is a no-op.
+#[tauri::command]
+async fn focus_session_from_companion(name: String, app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(main) = app.get_webview_window("main") {
+        let _ = main.unminimize();
+        let _ = main.show();
+        let _ = main.set_focus();
+        let _ = main.emit("codehub://focus-session", name);
+    }
+    Ok(())
 }
 
 /// Bundle identifier used by the app before the Aviary→CodeHub rebrand. The OS
@@ -481,6 +562,10 @@ pub fn run() {
             pty_resize,
             detach_session,
             session_activity,
+            open_companion,
+            close_companion,
+            companion_open,
+            focus_session_from_companion,
         ])
         .run(tauri::generate_context!())
         .expect("error while running codehub");

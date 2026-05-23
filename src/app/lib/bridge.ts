@@ -111,6 +111,16 @@ async function httpInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
       }) as Promise<T>;
     case "detach_session":
       return jsend("DELETE", `/panes/${id}`) as Promise<T>;
+    // The companion is a second always-on-top OS window — it only exists under
+    // Tauri. Over the browser dev bridge these degrade to honest no-ops (open =
+    // nothing to open, companion_open = false) so the trigger + companion route
+    // still render for inspection without a window manager.
+    case "open_companion":
+    case "close_companion":
+    case "focus_session_from_companion":
+      return undefined as T;
+    case "companion_open":
+      return false as T;
     default:
       throw new Error(`bridge: unmapped command ${cmd}`);
   }

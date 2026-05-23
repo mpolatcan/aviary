@@ -37,8 +37,13 @@ pub enum ActivityState {
 }
 
 /// One session's activity, as the frontend sees it. `idleMs` is how long since
-/// the last output byte (0 while actively producing); `bytes` is the total
-/// output observed for the session since attach (a cheap, real throughput hint).
+/// the last output byte (0 while actively producing, or before any output);
+/// `bytes` is the total output observed for the session since attach (a cheap,
+/// real throughput hint). `cli` / `alias` are the agent identity registered at
+/// session creation — they let a satellite view (the always-on-top companion,
+/// which runs in its own webview and cannot read the main store) render the
+/// agent glyph + name without re-deriving them. Both are `Option` so an entry
+/// created by output before any label is registered still serializes honestly.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionActivity {
@@ -46,11 +51,18 @@ pub struct SessionActivity {
     pub state: ActivityState,
     pub idle_ms: u64,
     pub bytes: u64,
+    pub cli: Option<String>,
+    pub alias: Option<String>,
 }
 
+#[derive(Default)]
 struct Entry {
-    last_output: Instant,
+    /// `None` until the first output byte — a session can be registered (created)
+    /// before it has produced anything, and that pre-output window reads as idle.
+    last_output: Option<Instant>,
     bytes: u64,
+    cli: Option<String>,
+    alias: Option<String>,
 }
 
 /// Shared, in-memory per-session activity. Fed from the pty output pump (via
@@ -72,13 +84,20 @@ impl ActivityTracker {
     /// plain counters — a panic mid-update can't leave it logically corrupt).
     pub fn mark(&self, session: &str, len: usize) {
         let mut map = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        let now = Instant::now();
-        let entry = map.entry(session.to_string()).or_insert(Entry {
-            last_output: now,
-            bytes: 0,
-        });
-        entry.last_output = now;
+        let entry = map.entry(session.to_string()).or_default();
+        entry.last_output = Some(Instant::now());
         entry.bytes = entry.bytes.saturating_add(len as u64);
+    }
+
+    /// Attach the agent identity (cli + display alias) to a session. Called when
+    /// the session is created so the activity snapshot can carry who each session
+    /// is, not just its tmux name. Pre-creates an idle entry if output hasn't
+    /// started yet, so a freshly-spawned agent shows up immediately.
+    pub fn register(&self, session: &str, cli: &str, alias: &str) {
+        let mut map = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let entry = map.entry(session.to_string()).or_default();
+        entry.cli = Some(cli.to_string());
+        entry.alias = Some(alias.to_string());
     }
 
     /// Forget a session (its tmux session was killed / pane detached). Keeps the
@@ -98,8 +117,12 @@ impl ActivityTracker {
             .unwrap_or_else(|e| e.into_inner())
             .iter()
             .map(|(session, e)| {
-                let idle_ms = now.duration_since(e.last_output).as_millis() as u64;
-                let state = if idle_ms < WORKING_GRACE_MS {
+                // No output yet → idle, idle_ms 0 (unknown rather than fabricated).
+                let idle_ms = e
+                    .last_output
+                    .map(|t| now.duration_since(t).as_millis() as u64)
+                    .unwrap_or(0);
+                let state = if e.last_output.is_some() && idle_ms < WORKING_GRACE_MS {
                     ActivityState::Working
                 } else {
                     ActivityState::Idle
@@ -109,6 +132,8 @@ impl ActivityTracker {
                     state,
                     idle_ms,
                     bytes: e.bytes,
+                    cli: e.cli.clone(),
+                    alias: e.alias.clone(),
                 }
             })
             .collect()
@@ -156,5 +181,30 @@ mod tests {
         t.mark("s1", 1);
         t.remove("s1");
         assert!(t.snapshot().is_empty());
+    }
+
+    #[test]
+    fn register_attaches_identity_and_survives_output() {
+        let t = ActivityTracker::new();
+        t.register("s1", "claude", "Owl 1");
+        t.mark("s1", 7);
+        let snap = t.snapshot();
+        assert_eq!(snap.len(), 1);
+        assert_eq!(snap[0].cli.as_deref(), Some("claude"));
+        assert_eq!(snap[0].alias.as_deref(), Some("Owl 1"));
+        assert_eq!(snap[0].bytes, 7);
+        assert_eq!(snap[0].state, ActivityState::Working);
+    }
+
+    #[test]
+    fn registered_but_silent_session_is_idle() {
+        let t = ActivityTracker::new();
+        t.register("s1", "codex", "Fox 1");
+        let snap = t.snapshot();
+        assert_eq!(snap.len(), 1);
+        assert_eq!(snap[0].state, ActivityState::Idle);
+        assert_eq!(snap[0].idle_ms, 0);
+        assert_eq!(snap[0].bytes, 0);
+        assert_eq!(snap[0].alias.as_deref(), Some("Fox 1"));
     }
 }
