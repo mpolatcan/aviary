@@ -2,6 +2,7 @@ import { useState } from "react";
 import { AgentGlyph } from "../components/primitives/AgentGlyph";
 import { IconBtn } from "../components/primitives/IconBtn";
 import { MetricStat } from "../components/primitives/MetricStat";
+import { StatusBadge } from "../components/primitives/StatusBadge";
 import { StatusDot } from "../components/primitives/StatusDot";
 import { Ico } from "../components/primitives/icons";
 import { fmtTokens, useSessionUsage } from "../hooks/useSessionUsage";
@@ -20,6 +21,10 @@ export function PaneHead({ session }: { session: string }) {
   const meta = useStore((s) => s.sessionMeta[session]);
   const agentVersions = useStore((s) => s.agentVersions);
   const activity = useStore((s) => s.sessionActivity[session]);
+  // Awaiting-input signal for this pane (← pending_prompts / live agent-event,
+  // §7). Real for Claude/Codex; empty for Antigravity + until the BE track
+  // lands. A pending prompt overrides the working/idle dot with "wait".
+  const awaiting = useStore((s) => s.pendingPrompts.some((p) => p.session === session));
   const closeSession = useStore((s) => s.closeSession);
   const renameSession = useStore((s) => s.renameSession);
   const openDetail = useStore((s) => s.openDetail);
@@ -50,7 +55,8 @@ export function PaneHead({ session }: { session: string }) {
   // (focus is shown by the pane border). Quiet conflates idle/waiting/done; we
   // don't fabricate which. Absent reading (pre-first-poll) → idle.
   const working = activity?.state === "working";
-  const status = working ? "live" : "idle";
+  // Awaiting input wins over working/idle — it's a hard "this pane needs you".
+  const status = awaiting ? "wait" : working ? "live" : "idle";
 
   // Open the shared spawn modal with this pane as the split target; SpawnModal
   // reads the dir/session from the launch context and calls splitSession.
@@ -124,6 +130,8 @@ export function PaneHead({ session }: { session: string }) {
         {badge && <span className={`mode-badge badge-${meta.mode}`}>{badge}</span>}
 
         <span style={{ flex: 1 }} />
+
+        {awaiting && <StatusBadge status="wait">Awaiting</StatusBadge>}
 
         <IconBtn
           title="Open session detail"
@@ -204,13 +212,20 @@ export function PaneHead({ session }: { session: string }) {
             alignItems: "center",
             gap: 5,
             fontSize: 10.5,
-            color: working ? "var(--live)" : "var(--fg-3)",
+            color: awaiting ? "var(--wait)" : working ? "var(--live)" : "var(--fg-3)",
           }}
         >
-          {working && (
-            <span style={{ width: 4, height: 4, borderRadius: "50%", background: "var(--live)" }} />
+          {(working || awaiting) && (
+            <span
+              style={{
+                width: 4,
+                height: 4,
+                borderRadius: "50%",
+                background: awaiting ? "var(--wait)" : "var(--live)",
+              }}
+            />
           )}
-          {working ? "working" : "idle"}
+          {awaiting ? "awaiting" : working ? "working" : "idle"}
         </span>
       </div>
     </div>

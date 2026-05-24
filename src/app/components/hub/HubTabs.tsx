@@ -3,9 +3,9 @@ import { AgentGlyph } from "../../components/primitives/AgentGlyph";
 import { IconBtn } from "../../components/primitives/IconBtn";
 import { StatusDot } from "../../components/primitives/StatusDot";
 import { Ico } from "../../components/primitives/icons";
-import { useLauncher } from "../../lib/launcher";
+import { splitKey, useLauncher } from "../../lib/launcher";
 import { useOverlay } from "../../lib/overlay";
-import { useStore } from "../../lib/store";
+import { activeWorkspace, useStore } from "../../lib/store";
 import { leavesList } from "../../lib/tree";
 
 // Workspace tab strip, ported from design/screens/main-hub-a.jsx. Each tab is a
@@ -32,6 +32,18 @@ export function HubTabs() {
   // Hub layout toggle (tabs ↔ compare grid), persisted via the config store.
   const layout = useStore((s) => s.config?.hubLayout ?? "tabs");
   const updateConfig = useStore((s) => s.updateConfig);
+  // Focused pane of the active workspace — the split buttons target it (same as
+  // ⌘\ / the PaneHead split controls).
+  const focused = useStore((s) => activeWorkspace(s)?.focused ?? null);
+  // Awaiting-input signal for the bell dot: any session with a pending prompt
+  // (← pending_prompts / live agent-event, §7). Real for Claude/Codex; empty
+  // (no dot) for Antigravity and until the BE track lands.
+  const pendingCount = useStore((s) => s.pendingPrompts.length);
+
+  const armSplit = (dir: "row" | "col") => {
+    if (!focused) return;
+    openLaunch(splitKey(focused), { dir, session: focused });
+  };
 
   const stripRef = useRef<HTMLDivElement>(null);
   const prevCount = useRef(workspaces.length);
@@ -183,6 +195,22 @@ export function HubTabs() {
           {Ico.grid}
         </IconBtn>
         <span className="vr" style={{ height: 16, margin: "0 4px" }} />
+        {/* split the focused pane — column (below) / row (right), like ⌘\ */}
+        <IconBtn
+          title={focused ? "Split focused pane below" : "Split (no focused pane)"}
+          disabled={!focused}
+          onClick={() => armSplit("col")}
+        >
+          {Ico.splitH}
+        </IconBtn>
+        <IconBtn
+          title={focused ? "Split focused pane right (⌘\\)" : "Split (no focused pane)"}
+          disabled={!focused}
+          onClick={() => armSplit("row")}
+        >
+          {Ico.splitV}
+        </IconBtn>
+        <span className="vr" style={{ height: 16, margin: "0 4px" }} />
         <IconBtn
           title={running ? "Browse /workspace files" : "Files (runtime not running)"}
           disabled={!running}
@@ -208,7 +236,31 @@ export function HubTabs() {
         >
           {Ico.diff}
         </IconBtn>
-        <IconBtn title="Notifications (coming soon)">{Ico.bell}</IconBtn>
+        <IconBtn
+          title={
+            pendingCount > 0
+              ? `${pendingCount} session${pendingCount === 1 ? "" : "s"} awaiting input`
+              : "No sessions awaiting input"
+          }
+          active={pendingCount > 0}
+        >
+          <span style={{ position: "relative", display: "inline-flex" }}>
+            {Ico.bell}
+            {pendingCount > 0 && (
+              <span
+                style={{
+                  position: "absolute",
+                  top: -1,
+                  right: -1,
+                  width: 6,
+                  height: 6,
+                  borderRadius: "50%",
+                  background: "var(--wait)",
+                }}
+              />
+            )}
+          </span>
+        </IconBtn>
       </div>
     </div>
   );

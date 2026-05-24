@@ -1,10 +1,18 @@
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { AgentGlyph } from "../../components/primitives/AgentGlyph";
+import { StatusBadge } from "../../components/primitives/StatusBadge";
 import { StatusDot } from "../../components/primitives/StatusDot";
 import { Ico } from "../../components/primitives/icons";
 import { fmtTokens, useSessionUsage } from "../../hooks/useSessionUsage";
-import { type Cli, type GitStatus, type SessionActivity, ipc } from "../../lib/ipc";
+import {
+  type ActivityEvent,
+  type Cli,
+  type GitStatus,
+  type PendingPrompt,
+  type SessionActivity,
+  ipc,
+} from "../../lib/ipc";
 import { useOverlay } from "../../lib/overlay";
 import { useStore } from "../../lib/store";
 import { DiffViewer } from "./DiffViewer";
@@ -65,6 +73,11 @@ export function ActivityRail() {
         color: "var(--fg-1)",
       }}
     >
+      {/* Awaiting-input toast — real, from pending_prompts (← agent-native hooks,
+          §7). One card per session needing approval; A/D keys answer the first.
+          Honest-empty (nothing rendered) until the BE track lands the data. */}
+      <PromptToasts />
+
       {/* Changes — real /workspace git status */}
       <div
         style={{
@@ -124,7 +137,10 @@ export function ActivityRail() {
       </div>
       <Changes git={git} running={running} onOpen={setDiffPath} />
 
-      {/* Activity — real live per-session working/idle from session_activity */}
+      {/* Activity — turn-by-turn history feed (← session_activity_history, real
+          for Claude/Codex via the hook stream; honest-empty until BE lands), with
+          the live per-session working/idle list below it (always real, from
+          session_activity output flow). */}
       <div
         style={{
           padding: "12px 14px",
@@ -136,7 +152,12 @@ export function ActivityRail() {
         }}
       >
         <span className="lbl">Activity</span>
+        <span style={{ flex: 1 }} />
+        <span className="mono" style={{ fontSize: 10.5, color: "var(--fg-2)" }}>
+          live
+        </span>
       </div>
+      <Feed />
       <Activity running={running} />
 
       <DiffViewer path={diffPath} onClose={() => setDiffPath(null)} />
@@ -373,6 +394,296 @@ function Changes({
       )}
     </div>
   );
+}
+
+// Awaiting-input toasts — one card per pending prompt (← pending_prompts, real
+// for Claude/Codex). Approve/Deny each write the accept/deny keystroke to that
+// pane via respond_prompt. The A/D keyboard shortcuts answer the FIRST pending
+// prompt (the one shown at top), but only when no terminal/input is focused so
+// they never steal a keystroke meant for the agent. Renders nothing when there
+// are no pending prompts (honest-empty — the common case until BE lands).
+function PromptToasts() {
+  const prompts = useStore((s) => s.pendingPrompts);
+  const sessionMeta = useStore((s) => s.sessionMeta);
+  const focusSession = useStore((s) => s.focusSession);
+
+  const respond = (session: string, allow: boolean) => {
+    void ipc.respondPrompt(session, allow).catch((e) => {
+      console.warn(`respond_prompt(${session}, ${allow}) failed:`, e);
+    });
+  };
+
+  // A/D answer the first pending prompt, guarded against typing contexts (the
+  // xterm helper is a textarea, so a blanket check covers it). Keyed off the
+  // first session id only — `respond` calls the module-level `ipc` so it's stable.
+  const firstSession = prompts[0]?.session;
+  useEffect(() => {
+    if (!firstSession) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const t = e.target as HTMLElement | null;
+      const tag = t?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || t?.isContentEditable) return;
+      const k = e.key.toLowerCase();
+      if (k === "a" || k === "d") {
+        e.preventDefault();
+        void ipc.respondPrompt(firstSession, k === "a").catch((err) => {
+          console.warn(`respond_prompt(${firstSession}) failed:`, err);
+        });
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [firstSession]);
+
+  if (prompts.length === 0) return null;
+
+  return (
+    <div
+      style={{ borderBottom: "1px solid var(--bd-soft)", display: "flex", flexDirection: "column" }}
+    >
+      {prompts.map((p, i) => (
+        <PromptToast
+          key={p.session}
+          prompt={p}
+          alias={sessionMeta[p.session]?.alias ?? p.session}
+          cli={sessionMeta[p.session]?.cli}
+          hotkeys={i === 0}
+          onJump={() => focusSession(p.session)}
+          onRespond={(allow) => respond(p.session, allow)}
+        />
+      ))}
+    </div>
+  );
+}
+
+function PromptToast({
+  prompt,
+  alias,
+  cli,
+  hotkeys,
+  onJump,
+  onRespond,
+}: {
+  prompt: PendingPrompt;
+  alias: string;
+  cli: Cli | undefined;
+  hotkeys: boolean;
+  onJump: () => void;
+  onRespond: (allow: boolean) => void;
+}) {
+  return (
+    <div style={{ padding: 12 }}>
+      <div
+        style={{
+          border: "1px solid color-mix(in oklab, var(--wait) 35%, transparent)",
+          background: "color-mix(in oklab, var(--wait) 10%, var(--bg-2))",
+          borderRadius: 8,
+          padding: 12,
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+          <StatusBadge status="wait">Needs input</StatusBadge>
+          <span
+            className="mono"
+            style={{ fontSize: 10.5, color: "var(--fg-2)", marginLeft: "auto" }}
+          >
+            {fmtAgo(prompt.since)}
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={onJump}
+          title="Jump to this session"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            marginBottom: 4,
+            border: "none",
+            background: "transparent",
+            padding: 0,
+            cursor: "pointer",
+          }}
+        >
+          {cli && <AgentGlyph agent={cli} size={12} color={`var(--a-${cli})`} />}
+          <span style={{ fontSize: 12, fontWeight: 500, color: "var(--fg-0)" }}>{alias}</span>
+        </button>
+        <p style={{ fontSize: 11.5, color: "var(--fg-1)", margin: "4px 0 12px", lineHeight: 1.5 }}>
+          {prompt.message ?? "This agent is waiting for your approval."}
+        </p>
+        <div style={{ display: "flex", gap: 6 }}>
+          <button
+            type="button"
+            onClick={() => onRespond(true)}
+            style={{
+              flex: 1,
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 6,
+              padding: "6px 10px",
+              borderRadius: 6,
+              border: "1px solid color-mix(in oklab, var(--live) 45%, transparent)",
+              background: "color-mix(in oklab, var(--live) 18%, transparent)",
+              color: "var(--live)",
+              fontSize: 12,
+              cursor: "pointer",
+            }}
+          >
+            Approve
+            {hotkeys && <span className="kbd">A</span>}
+          </button>
+          <button
+            type="button"
+            onClick={() => onRespond(false)}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 6,
+              padding: "6px 10px",
+              borderRadius: 6,
+              border: "1px solid var(--bd)",
+              background: "transparent",
+              color: "var(--fg-1)",
+              fontSize: 12,
+              cursor: "pointer",
+            }}
+          >
+            Deny
+            {hotkeys && <span className="kbd">D</span>}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Turn-by-turn history feed (← session_activity_history). Each row is a real
+// normalized hook event for a Claude/Codex session, newest first. The feed is
+// honest-empty until the BE track lands (the stub returns []), in which case
+// nothing is rendered and the live per-session Activity list below carries the
+// rail. Bounded height so it shares the rail with the live list.
+function Feed() {
+  const history = useStore((s) => s.activityHistory);
+  const sessionMeta = useStore((s) => s.sessionMeta);
+  const focusSession = useStore((s) => s.focusSession);
+  if (history.length === 0) return null;
+
+  // Newest first; cap to keep the rail responsive.
+  const rows = [...history].sort((a, b) => b.at - a.at).slice(0, 40);
+  return (
+    <div
+      className="scroll"
+      style={{
+        maxHeight: 220,
+        overflow: "auto",
+        padding: 10,
+        display: "flex",
+        flexDirection: "column",
+        gap: 1,
+        borderBottom: "1px solid var(--bd-soft)",
+      }}
+    >
+      {rows.map((ev) => (
+        <FeedRow
+          key={`${ev.session}-${ev.at}-${ev.kind}`}
+          ev={ev}
+          alias={sessionMeta[ev.session]?.alias ?? ev.session}
+          cli={sessionMeta[ev.session]?.cli}
+          onJump={() => focusSession(ev.session)}
+        />
+      ))}
+    </div>
+  );
+}
+
+function FeedRow({
+  ev,
+  alias,
+  cli,
+  onJump,
+}: {
+  ev: ActivityEvent;
+  alias: string;
+  cli: Cli | undefined;
+  onJump: () => void;
+}) {
+  const { text, dot } = describe(ev);
+  return (
+    <button
+      type="button"
+      onClick={onJump}
+      className="rail-file"
+      title={`${alias} — jump to session`}
+      style={{
+        display: "flex",
+        gap: 8,
+        padding: "7px 6px",
+        borderRadius: 6,
+        border: "none",
+        background: "transparent",
+        cursor: "pointer",
+        textAlign: "left",
+        width: "100%",
+      }}
+    >
+      <span style={{ paddingTop: 3 }}>
+        {cli ? <AgentGlyph agent={cli} size={11} color={`var(--a-${cli})`} /> : null}
+      </span>
+      <span style={{ flex: 1, minWidth: 0 }}>
+        <span style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 1 }}>
+          <span className="mono" style={{ fontSize: 11, color: "var(--fg-1)" }}>
+            {alias}
+          </span>
+          {dot && <StatusDot status={dot} />}
+          <span style={{ flex: 1 }} />
+          <span className="mono" style={{ fontSize: 10.5, color: "var(--fg-3)" }}>
+            {fmtAgo(ev.at)}
+          </span>
+        </span>
+        <span style={{ display: "block", fontSize: 11.5, color: "var(--fg-1)", lineHeight: 1.4 }}>
+          {ev.message ?? text}
+        </span>
+      </span>
+    </button>
+  );
+}
+
+// A normalized event → a human one-liner + an optional status dot. Falls back to
+// the event's own message when present (set in FeedRow).
+function describe(ev: ActivityEvent): { text: string; dot?: "done" | "err" } {
+  switch (ev.kind) {
+    case "session_start":
+      return { text: "Session started" };
+    case "prompt_submit":
+      return { text: "Started a turn" };
+    case "pre_tool":
+      return { text: "Running a tool" };
+    case "post_tool":
+      return { text: "Tool finished" };
+    case "notification":
+      return { text: "Notification" };
+    case "stop":
+      return { text: "Turn finished", dot: "done" };
+    case "stop_failure":
+      return { text: "Turn failed", dot: "err" };
+    case "session_end":
+      return { text: "Session ended" };
+    default:
+      return { text: ev.kind };
+  }
+}
+
+// Compact "just now" / "2m" / "1h" / "3d" from an epoch-ms timestamp.
+function fmtAgo(atMs: number): string {
+  const s = Math.max(0, Math.floor((Date.now() - atMs) / 1000));
+  if (s < 5) return "just now";
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h`;
+  return `${Math.floor(s / 86400)}d`;
 }
 
 function Note({ children }: { children: ReactNode }) {

@@ -12,6 +12,7 @@ import { HubTabs } from "./components/hub/HubTabs";
 import { Shortcuts } from "./components/hub/Shortcuts";
 import { WorkspaceBar } from "./components/hub/WorkspaceBar";
 import { useActivityPoll } from "./hooks/useActivityPoll";
+import { useAgentEvents } from "./hooks/useAgentEvents";
 import { useKeyboard } from "./hooks/useKeyboard";
 import { listen } from "./lib/bridge";
 import { useLauncher } from "./lib/launcher";
@@ -105,6 +106,10 @@ function HubView() {
   const grid = useStore((s) => s.config?.hubLayout === "grid");
   // Real working/idle signal for PaneHead + the rail's Activity section.
   useActivityPoll();
+  // Live awaiting-input + turn-history stream (← agent-native hooks, §7): keeps
+  // pending_prompts (bell dot / toast) + session_activity_history (feed) fresh.
+  // Honest-empty until the BE track lands.
+  useAgentEvents();
 
   return (
     <>
@@ -137,7 +142,7 @@ function HubView() {
             <EmptyHero onNew={() => openLaunch("newtab")} />
           </div>
         )}
-        <HubStatusBar />
+        <HubStatusBar variant={grid ? "grid" : "tabs"} />
       </main>
 
       <ActivityRail />
