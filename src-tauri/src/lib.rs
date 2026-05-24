@@ -6,12 +6,16 @@ pub mod config;
 #[cfg(feature = "devserver")]
 pub mod devserver;
 pub mod docker;
+/// Agent-event hooks subsystem (§7, COMPLETION_PLAN.md).
+pub mod events;
 // Native macOS Dynamic Island companion. On other platforms the companion stays
 // a WebviewWindow (see open_companion below).
 #[cfg(target_os = "macos")]
 pub mod island;
 pub mod lifecycle;
 pub mod pty;
+/// Shared IPC response types (Phase-0 completion contract).
+pub mod types;
 
 use activity::SessionActivity;
 use config::{AccountProfile, ConfigStore, Settings};
@@ -20,12 +24,19 @@ use docker::{
     ContainerStats, DockerClient, FileEntry, GitStatus, ImageInfo, LaunchMode, MountInfo,
     ProcessInfo, RuntimeHealth, SessionUsage,
 };
+use events::EventsTracker;
 use lifecycle::{AppInfo, ContainerStatus, DockerInfo, KeyStatus, Lifecycle, WorkspaceInfo};
 use pty::{PaneEmitter, PtyRegistry, SessionInfo};
+// Re-export Phase-0 contract types so devserver.rs can import them from `crate::`.
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
+pub use types::{
+    ActivityEvent, AgentEvent, CodexDayUsage, CodexModelRate, CodexModelUsage, CodexRateLimits,
+    CodexSession, CodexSessionUsage, CodexTokenTotals, CodexUsage, GithubRepo, GithubStatus,
+    PendingPrompt, UpdateStatus,
+};
 
 /// Bridges a pane's output to the Tauri webview as `pty://data|exit/<id>`
 /// events — the production [`PaneEmitter`].
@@ -45,10 +56,12 @@ pub struct AppState {
     pub docker: Arc<DockerClient>,
     pub registry: Arc<PtyRegistry>,
     pub config: Arc<ConfigStore>,
+    /// Agent-event hook state: pending prompts + activity ring buffer.
+    pub events: Arc<EventsTracker>,
 }
 
 const DEFAULT_CONTAINER: &str = "codehub-runtime";
-const DEFAULT_IMAGE: &str = "ghcr.io/mpolatcan/codehub-runtime:0.1.2";
+const DEFAULT_IMAGE: &str = "ghcr.io/mpolatcan/codehub-runtime:0.1.3";
 
 #[tauri::command]
 async fn container_status(state: tauri::State<'_, AppState>) -> Result<ContainerStatus, String> {
@@ -226,156 +239,13 @@ pub fn profile_statuses(profiles: Vec<AccountProfile>) -> Vec<AccountProfileStat
 }
 
 // ── Phase-0 completion contract (COMPLETION_PLAN.md) ────────────────────────
-// Serde response structs for the new IPC surface. Shapes mirror the frozen TS
-// interfaces in src/app/lib/ipc.ts field-for-field (camelCase via serde rename).
-// These are shared with devserver.rs (it imports them) so the REST + Tauri
-// surfaces serialize identically. The command fns below are STUBS — the BE track
-// fills the bodies; until then they return honest-empty defaults.
+// The response structs live in `types.rs` and are re-exported from `crate::` above
+// so devserver.rs can continue to import them from `crate::`. The commands below
+// now have real implementations (the BE track fills them per COMPLETION_PLAN.md).
 
-/// A session currently awaiting user input (← agent-native hooks, §7).
-#[derive(Debug, Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct PendingPrompt {
-    pub session: String,
-    pub message: Option<String>,
-    /// Unix epoch ms the prompt was raised.
-    pub since: i64,
-}
-
-/// One entry in a session's activity/turn history ring buffer.
-#[derive(Debug, Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct ActivityEvent {
-    pub session: String,
-    /// Normalized event kind (matches AgentEventKind in ipc.ts).
-    pub kind: String,
-    /// Unix epoch ms the event was observed.
-    pub at: i64,
-    pub message: Option<String>,
-}
-
-/// Live agent-native hook event (Claude `hooks` / Codex `notify`), normalized.
-/// No backend emitter yet — defined so the `codehub://agent-event` payload type
-/// exists when the BE track wires the stream.
-#[allow(dead_code)] // emitted by the BE track; no producer yet.
-#[derive(Debug, Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct AgentEvent {
-    pub session: String,
-    pub kind: String,
-    pub at: i64,
-    pub message: Option<String>,
-    pub notification_type: Option<String>,
-    pub tool_name: Option<String>,
-}
-
-/// Codex token split (cached-input + reasoning-output reported separately).
-#[derive(Debug, Serialize, Clone, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct CodexTokenTotals {
-    pub input: u64,
-    pub cached_input: u64,
-    pub output: u64,
-    pub reasoning_output: u64,
-}
-
-#[derive(Debug, Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct CodexModelUsage {
-    pub model: String,
-    pub totals: CodexTokenTotals,
-    pub turns: u64,
-    pub est_cost_usd: f64,
-    pub priced: bool,
-}
-
-/// Aggregate Codex token analytics — mirrors the claude* usage surface.
-#[derive(Debug, Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct CodexUsage {
-    pub sessions: u64,
-    pub turns: u64,
-    pub totals: CodexTokenTotals,
-    pub est_cost_usd: f64,
-    pub by_model: Vec<CodexModelUsage>,
-    pub by_day: Vec<serde_json::Value>,
-    pub rates: Vec<serde_json::Value>,
-    pub rates_as_of: String,
-    pub unpriced_tokens: u64,
-}
-
-/// One past Codex conversation from its rollout file (Resume view).
-#[derive(Debug, Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct CodexSession {
-    pub id: String,
-    pub title: String,
-    pub branch: Option<String>,
-    pub started: String,
-    pub last_active: String,
-    pub turns: u64,
-    pub model: Option<String>,
-    pub version: Option<String>,
-}
-
-/// Live per-session Codex tally from its rollout file.
-#[derive(Debug, Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct CodexSessionUsage {
-    pub turns: u64,
-    pub tokens_in: u64,
-    pub tokens_out: u64,
-    pub edits: u64,
-    pub context_used: u64,
-}
-
-/// Codex rate-limit / plan meters (the on-disk quota source). Every field
-/// nullable → em-dash when absent.
-#[derive(Debug, Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct CodexRateLimits {
-    pub primary_used_pct: Option<f64>,
-    pub primary_window_minutes: Option<u64>,
-    pub primary_resets_at: Option<String>,
-    pub secondary_used_pct: Option<f64>,
-    pub secondary_window_minutes: Option<u64>,
-    pub secondary_resets_at: Option<String>,
-    pub plan_type: Option<String>,
-}
-
-/// GitHub connection (Integrations). Presence-only auth — the token value is
-/// NEVER read or returned.
-#[derive(Debug, Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct GithubStatus {
-    pub connected: bool,
-    pub var_name: String,
-    pub login: Option<String>,
-    pub scopes: Vec<String>,
-    pub token_expiry: Option<String>,
-}
-
-/// One repo visible to the connected GitHub account.
-#[derive(Debug, Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct GithubRepo {
-    pub name_with_owner: String,
-    pub default_branch: Option<String>,
-    pub open_prs: Option<u64>,
-    pub private: bool,
-}
-
-/// App update check (Settings → About). `available` null when up to date.
-#[derive(Debug, Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct UpdateStatus {
-    pub current: String,
-    pub available: Option<String>,
-    pub notes: Option<String>,
-}
-
-// Fixed placeholder for stub `ratesAsOf` until the BE track wires a real rate
-// table — an honest "no rates loaded" marker rather than a fabricated date.
+// Sentinel kept only for devserver.rs backward-compat during the transition;
+// will be removed once devserver stubs are updated to real state access.
+#[allow(dead_code)]
 pub(crate) const STUB_RATES_AS_OF: &str = "unloaded";
 
 /// All stored account profiles + live presence of each one's host env var.
@@ -698,6 +568,9 @@ async fn kill_session(name: String, state: tauri::State<'_, AppState>) -> Result
     // Drop local pane bookkeeping first so resize / write attempts mid-kill
     // cannot resurrect a half-dead pane.
     state.registry.detach_by_session(&name).await;
+    // Purge event state so stale pending entries don't outlive the session and
+    // the HashMap key is eventually reclaimed.
+    state.events.remove_session(&name);
     state
         .docker
         .kill_tmux_session(&name)
@@ -887,88 +760,149 @@ async fn focus_session_from_companion(name: String, app: tauri::AppHandle) -> Re
 // fills the bodies. NOT panics, NOT Err.
 
 /// Sessions awaiting user input right now (← agent-native hooks, §7).
+/// Reads the in-memory [`EventsTracker`] — never fabricated, honest-empty when
+/// no hooks have fired yet.
 #[tauri::command]
-async fn pending_prompts() -> Result<Vec<PendingPrompt>, String> {
-    // STUB (Phase-0 contract, COMPLETION_PLAN.md): BE track fills this.
-    Ok(Vec::new())
+async fn pending_prompts(state: tauri::State<'_, AppState>) -> Result<Vec<PendingPrompt>, String> {
+    Ok(state.events.pending_prompts())
 }
 
 /// Answer a pending prompt by writing the accept/deny keystroke to that pane.
+/// Writes via the same `pty_write` transport as broadcast. Clears the pending
+/// state optimistically so the UI responds before the next hook line arrives.
+/// Provisional keystrokes per §7.6 (unverified — confirmed on first authed run).
 #[tauri::command]
-async fn respond_prompt(_session: String, _allow: bool) -> Result<(), String> {
-    // STUB (Phase-0 contract, COMPLETION_PLAN.md): BE track fills this.
+async fn respond_prompt(
+    session: String,
+    allow: bool,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    // Determine the CLI for this session from the activity snapshot.
+    let cli_opt = state
+        .registry
+        .activity()
+        .snapshot()
+        .into_iter()
+        .find(|a| a.session == session)
+        .and_then(|a| a.cli);
+
+    // If we can't identify the CLI, we don't know which keystroke to send —
+    // sending a wrong key to an unknown prompt is worse than doing nothing.
+    let Some(cli) = cli_opt else {
+        tracing::warn!("respond_prompt: no activity record for session {session}, skipping");
+        return Ok(());
+    };
+
+    let keystroke = if allow {
+        events::accept_keystroke(&cli)
+    } else {
+        events::deny_keystroke(&cli)
+    };
+
+    if let Some(key) = keystroke {
+        // Look up the actual pane_id (UUID) for this session — the registry
+        // keys panes by UUID, not session name.
+        if let Some(pane_id) = state.registry.pane_for_session(&session).await {
+            // Attempt the write; swallow if the pane raced to detach.
+            let _ = state.registry.write(&pane_id, key.as_bytes()).await;
+        } else {
+            tracing::debug!("respond_prompt: no pane attached for session {session}");
+        }
+    }
+
+    // Optimistically clear so the UI reflects the response without waiting for
+    // the next hook line.
+    state.events.clear_pending(&session);
     Ok(())
 }
 
 /// Activity/turn history ring buffer (all sessions when `session` omitted).
+/// Returns events from the in-memory ring buffer fed by the hook tail task.
 #[tauri::command]
-async fn session_activity_history(_session: Option<String>) -> Result<Vec<ActivityEvent>, String> {
-    // STUB (Phase-0 contract, COMPLETION_PLAN.md): BE track fills this.
-    Ok(Vec::new())
+async fn session_activity_history(
+    session: Option<String>,
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<ActivityEvent>, String> {
+    Ok(state.events.activity_history(session.as_deref()))
 }
 
-/// Codex usage analytics from rollout files — mirrors the claude* surface.
+/// Codex usage analytics from rollout files — mirrors the claude* usage surface.
+/// Token + turn + session counts are factual from the on-disk rollout files;
+/// cost is an estimate from a published rate table. Errs only when the container
+/// is down.
 #[tauri::command]
-async fn codex_usage() -> Result<CodexUsage, String> {
-    // STUB (Phase-0 contract, COMPLETION_PLAN.md): BE track fills this.
-    Ok(CodexUsage {
-        sessions: 0,
-        turns: 0,
-        totals: CodexTokenTotals::default(),
-        est_cost_usd: 0.0,
-        by_model: Vec::new(),
-        by_day: Vec::new(),
-        rates: Vec::new(),
-        rates_as_of: STUB_RATES_AS_OF.to_string(),
-        unpriced_tokens: 0,
-    })
+async fn codex_usage(state: tauri::State<'_, AppState>) -> Result<CodexUsage, String> {
+    state.docker.codex_usage().await.map_err(|e| e.to_string())
 }
 
-/// Past Codex conversations from rollout files (Resume view).
+/// Past Codex conversations from rollout files (Resume view), newest first.
+/// Errs only when the container is down.
 #[tauri::command]
-async fn codex_sessions() -> Result<Vec<CodexSession>, String> {
-    // STUB (Phase-0 contract, COMPLETION_PLAN.md): BE track fills this.
-    Ok(Vec::new())
+async fn codex_sessions(state: tauri::State<'_, AppState>) -> Result<Vec<CodexSession>, String> {
+    state
+        .docker
+        .codex_sessions()
+        .await
+        .map_err(|e| e.to_string())
 }
 
-/// Live per-session Codex tally; `None` when there is no usable data yet.
+/// Live per-session Codex tally from its rollout file; `None` when there is no
+/// usable data yet. `id` is the session directory path segment under
+/// `/root/.codex/sessions/` (e.g. "2026/05/24"). Errs only when the container
+/// is down.
 #[tauri::command]
-async fn codex_session_usage(_id: String) -> Result<Option<CodexSessionUsage>, String> {
-    // STUB (Phase-0 contract, COMPLETION_PLAN.md): BE track fills this.
-    Ok(None)
+async fn codex_session_usage(
+    id: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<Option<CodexSessionUsage>, String> {
+    state
+        .docker
+        .codex_session_usage(&id)
+        .await
+        .map_err(|e| e.to_string())
 }
 
-/// Codex rate-limit / plan meters; `None` when no data is on disk.
+/// Codex rate-limit / plan meters from the most recent rollout file; `None`
+/// when no data is on disk. The only on-disk quota source — no billing API.
+/// Errs only when the container is down.
 #[tauri::command]
-async fn codex_rate_limits() -> Result<Option<CodexRateLimits>, String> {
-    // STUB (Phase-0 contract, COMPLETION_PLAN.md): BE track fills this.
-    Ok(None)
+async fn codex_rate_limits(
+    state: tauri::State<'_, AppState>,
+) -> Result<Option<CodexRateLimits>, String> {
+    state
+        .docker
+        .codex_rate_limits()
+        .await
+        .map_err(|e| e.to_string())
 }
 
-/// GitHub connection status (Integrations). Presence-only; value never read.
+/// GitHub connection status (Integrations). Reads GITHUB_TOKEN presence on the
+/// host — presence-only, the value is NEVER returned. When present, calls the
+/// GitHub API via the already-forwarded token in the container for identity.
 #[tauri::command]
-async fn github_status() -> Result<GithubStatus, String> {
-    // STUB (Phase-0 contract, COMPLETION_PLAN.md): BE track fills this.
-    Ok(GithubStatus {
-        connected: false,
-        var_name: "GITHUB_TOKEN".to_string(),
-        login: None,
-        scopes: Vec::new(),
-        token_expiry: None,
-    })
+async fn github_status(state: tauri::State<'_, AppState>) -> Result<GithubStatus, String> {
+    state
+        .docker
+        .github_status()
+        .await
+        .map_err(|e| e.to_string())
 }
 
-/// Repos visible to the connected GitHub account.
+/// Repos visible to the connected GitHub account (up to 30, sorted by push
+/// date). Empty when the token is absent or the container is down.
 #[tauri::command]
-async fn github_repos() -> Result<Vec<GithubRepo>, String> {
-    // STUB (Phase-0 contract, COMPLETION_PLAN.md): BE track fills this.
-    Ok(Vec::new())
+async fn github_repos(state: tauri::State<'_, AppState>) -> Result<Vec<GithubRepo>, String> {
+    state.docker.github_repos().await.map_err(|e| e.to_string())
 }
 
-/// App update check (Settings → About). `available` null when up to date.
+/// App update check (Settings → About). Honest-thin: returns the current
+/// version with `available: null`. A real updater plugin (tauri-plugin-updater)
+/// is deferred to a future PR — wiring it now would add a new Tauri plugin
+/// dependency and a GitHub release feed that doesn't exist yet.
 #[tauri::command]
 async fn check_update() -> Result<UpdateStatus, String> {
-    // STUB (Phase-0 contract, COMPLETION_PLAN.md): BE track fills this.
+    // Honest: no update feed configured yet. Returns current version so the
+    // About screen always has a real version string to display.
     Ok(UpdateStatus {
         current: env!("CARGO_PKG_VERSION").to_string(),
         available: None,
@@ -1053,15 +987,17 @@ pub fn run() {
             )?);
             let docker = Arc::new(lifecycle.docker_client());
             let registry = Arc::new(PtyRegistry::new());
+            let events = Arc::new(EventsTracker::new());
 
             #[cfg(target_os = "macos")]
             let island_registry = registry.clone();
 
             app.manage(AppState {
                 lifecycle: lifecycle.clone(),
-                docker,
+                docker: docker.clone(),
                 registry,
                 config,
+                events: events.clone(),
             });
 
             // macOS: feed the native Dynamic Island the live activity snapshot
@@ -1104,6 +1040,10 @@ pub fn run() {
                     },
                 }
             });
+
+            // Start the agent-event hook tail (§7). Streams the events dir inside
+            // the container and feeds the EventsTracker. Retries on disconnect.
+            events::start_event_tailer(docker, events, app.handle().clone());
 
             Ok(())
         })

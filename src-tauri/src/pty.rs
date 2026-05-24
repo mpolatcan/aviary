@@ -187,6 +187,18 @@ impl PtyRegistry {
         }
     }
 
+    /// Return the pane_id for the first pane attached to `session`, or `None`.
+    /// Used by `respond_prompt` to route keystrokes by session name rather than
+    /// the internal UUID pane_id (callers only know the tmux session name).
+    pub async fn pane_for_session(&self, session: &str) -> Option<String> {
+        self.panes
+            .lock()
+            .await
+            .iter()
+            .find(|(_, p)| p.session == session)
+            .map(|(id, _)| id.clone())
+    }
+
     /// Drop every pane attached to `session`. Used when a tmux session is killed
     /// to guarantee bookkeeping cannot outlive the upstream session.
     pub async fn detach_by_session(&self, session: &str) {

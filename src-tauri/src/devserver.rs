@@ -14,14 +14,10 @@
 
 use crate::config::{ConfigStore, Settings};
 use crate::docker::{Cli, DockerClient, LaunchMode};
+use crate::events::EventsTracker;
 use crate::lifecycle::Lifecycle;
 use crate::pty::{PaneEmitter, PtyRegistry};
-// Phase-0 completion contract: reuse the lib.rs response structs so the REST
-// surface serializes identically to the Tauri commands (no duplicate defs).
-use crate::{
-    ActivityEvent, CodexRateLimits, CodexSession, CodexSessionUsage, CodexTokenTotals, CodexUsage,
-    GithubRepo, GithubStatus, PendingPrompt, UpdateStatus,
-};
+use crate::types::UpdateStatus;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
@@ -36,7 +32,7 @@ use std::sync::Arc;
 use tokio::sync::broadcast;
 
 const DEFAULT_CONTAINER: &str = "codehub-runtime";
-const DEFAULT_IMAGE: &str = "ghcr.io/mpolatcan/codehub-runtime:0.1.2";
+const DEFAULT_IMAGE: &str = "ghcr.io/mpolatcan/codehub-runtime:0.1.3";
 const ADDR: &str = "127.0.0.1:4555";
 
 #[derive(Clone)]
@@ -45,6 +41,7 @@ struct AppState {
     docker: Arc<DockerClient>,
     registry: Arc<PtyRegistry>,
     config: Arc<ConfigStore>,
+    events: Arc<EventsTracker>,
     // Pre-serialized `{event, payload}` frames fanned out to every WS client.
     tx: broadcast::Sender<String>,
 }
@@ -116,6 +113,7 @@ pub async fn serve() {
     );
     let docker = Arc::new(lifecycle.docker_client());
     let registry = Arc::new(PtyRegistry::new());
+    let events = Arc::new(EventsTracker::new());
     let (tx, _) = broadcast::channel::<String>(1024);
 
     // Provision the runtime in the background, mirroring lib.rs setup; the
@@ -134,11 +132,105 @@ pub async fn serve() {
         });
     }
 
+    // Start the event tailer for the dev bridge (mirrors lib.rs setup).
+    // The WsEmitter handles pty output; the events tailer handles hook events.
+    {
+        let docker_for_tail = docker.clone();
+        let events_for_tail = events.clone();
+        let tx_for_events = tx.clone();
+        // Wrap tx in a lightweight handle that emits agent-event WS frames.
+        tokio::spawn(async move {
+            use bollard::exec::{CreateExecOptions, StartExecOptions, StartExecResults};
+            use futures_util::StreamExt;
+            loop {
+                let _ = docker_for_tail
+                    .exec_capture_pub(vec![
+                        "sh",
+                        "-c",
+                        "mkdir -p /tmp/codehub/events && touch /tmp/codehub/events/.keep",
+                    ])
+                    .await;
+                let res = docker_for_tail
+                    .docker
+                    .create_exec::<String>(
+                        &docker_for_tail.container,
+                        CreateExecOptions {
+                            attach_stdout: Some(true),
+                            attach_stderr: Some(false),
+                            cmd: Some(vec![
+                                "sh".into(),
+                                "-c".into(),
+                                "tail -F /tmp/codehub/events/.keep /tmp/codehub/events/*.jsonl 2>/dev/null".into(),
+                            ]),
+                            env: Some(vec!["TMUX_TMPDIR=/tmp/codehub".into()]),
+                            ..Default::default()
+                        },
+                    )
+                    .await;
+                let exec = match res {
+                    Ok(e) => e,
+                    Err(e) => {
+                        tracing::debug!("devserver event tailer create_exec: {e}");
+                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                        continue;
+                    },
+                };
+                let started = match docker_for_tail
+                    .docker
+                    .start_exec(
+                        &exec.id,
+                        Some(StartExecOptions {
+                            detach: false,
+                            ..Default::default()
+                        }),
+                    )
+                    .await
+                {
+                    Ok(s) => s,
+                    Err(e) => {
+                        tracing::debug!("devserver event tailer start_exec: {e}");
+                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                        continue;
+                    },
+                };
+                if let StartExecResults::Attached { mut output, .. } = started {
+                    let mut buf = String::new();
+                    while let Some(chunk) = output.next().await {
+                        if let Ok(
+                            bollard::container::LogOutput::StdOut { message }
+                            | bollard::container::LogOutput::Console { message },
+                        ) = chunk
+                        {
+                            buf.push_str(&String::from_utf8_lossy(&message));
+                            while let Some(nl) = buf.find('\n') {
+                                let line = buf[..nl].trim().to_string();
+                                let _ = buf.drain(..=nl);
+                                if line.is_empty() || line.starts_with("==>") {
+                                    continue;
+                                }
+                                if let Some(event) = events_for_tail.ingest(&line) {
+                                    if let Ok(frame) = serde_json::to_string(&serde_json::json!({
+                                        "event": "codehub://agent-event",
+                                        "payload": event
+                                    })) {
+                                        let _ = tx_for_events.send(frame);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            }
+        });
+    }
+
     let state = AppState {
         lifecycle,
         docker,
         registry,
         config,
+        events,
         tx,
     };
 
@@ -197,7 +289,7 @@ pub async fn serve() {
         .route("/panes/:id/write", post(write))
         .route("/panes/:id/resize", post(resize))
         .route("/panes/:id", delete(detach))
-        .route("/events", get(events))
+        .route("/events", get(ws_events))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(ADDR).await.expect("bind");
@@ -535,6 +627,7 @@ async fn kill_session(
 ) -> Result<StatusCode, ApiError> {
     // Same ordering as lib.rs: drop pane bookkeeping before killing tmux.
     st.registry.detach_by_session(&name).await;
+    st.events.remove_session(&name);
     st.docker.kill_tmux_session(&name).await.map_err(err)?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -615,95 +708,100 @@ async fn detach(State(st): State<AppState>, Path(id): Path<String>) -> StatusCod
     StatusCode::NO_CONTENT
 }
 
-// ── Phase-0 completion contract: stub handlers ──────────────────────────────
-// Honest-empty defaults matching lib.rs so `make dev-web` browser mode degrades
-// gracefully. The BE track fills both surfaces together.
+// ── Phase-0 completion contract: real handlers (BE track) ───────────────────
+// These now call the same docker/events state as the Tauri commands.
 
-async fn pending_prompts() -> impl IntoResponse {
-    // STUB (Phase-0 contract, COMPLETION_PLAN.md): BE track fills this.
-    Json(Vec::<PendingPrompt>::new())
+async fn pending_prompts(State(st): State<AppState>) -> impl IntoResponse {
+    Json(st.events.pending_prompts())
 }
 
 #[derive(Deserialize)]
 struct RespondPromptBody {
-    // Parsed to validate the request shape; the stub handler ignores them until
-    // the BE track wires the pty keystroke.
-    #[allow(dead_code)]
     session: String,
-    #[allow(dead_code)]
     allow: bool,
 }
 
-async fn respond_prompt(Json(_body): Json<RespondPromptBody>) -> StatusCode {
-    // STUB (Phase-0 contract, COMPLETION_PLAN.md): BE track fills this.
+async fn respond_prompt(
+    State(st): State<AppState>,
+    Json(body): Json<RespondPromptBody>,
+) -> StatusCode {
+    let cli_opt = st
+        .registry
+        .activity()
+        .snapshot()
+        .into_iter()
+        .find(|a| a.session == body.session)
+        .and_then(|a| a.cli);
+    let Some(cli) = cli_opt else {
+        tracing::warn!(
+            "respond_prompt: no activity record for session {}",
+            body.session
+        );
+        return StatusCode::NO_CONTENT;
+    };
+    let keystroke = if body.allow {
+        crate::events::accept_keystroke(&cli)
+    } else {
+        crate::events::deny_keystroke(&cli)
+    };
+    if let Some(key) = keystroke {
+        if let Some(pane_id) = st.registry.pane_for_session(&body.session).await {
+            let _ = st.registry.write(&pane_id, key.as_bytes()).await;
+        }
+    }
+    st.events.clear_pending(&body.session);
     StatusCode::NO_CONTENT
 }
 
 #[derive(Deserialize)]
 struct ActivityHistoryQuery {
-    #[allow(dead_code)]
     session: Option<String>,
 }
 
-async fn session_activity_history(Query(_q): Query<ActivityHistoryQuery>) -> impl IntoResponse {
-    // STUB (Phase-0 contract, COMPLETION_PLAN.md): BE track fills this.
-    Json(Vec::<ActivityEvent>::new())
+async fn session_activity_history(
+    State(st): State<AppState>,
+    Query(q): Query<ActivityHistoryQuery>,
+) -> impl IntoResponse {
+    Json(st.events.activity_history(q.session.as_deref()))
 }
 
-async fn codex_usage() -> impl IntoResponse {
-    // STUB (Phase-0 contract, COMPLETION_PLAN.md): BE track fills this.
-    Json(CodexUsage {
-        sessions: 0,
-        turns: 0,
-        totals: CodexTokenTotals::default(),
-        est_cost_usd: 0.0,
-        by_model: Vec::new(),
-        by_day: Vec::new(),
-        rates: Vec::new(),
-        rates_as_of: crate::STUB_RATES_AS_OF.to_string(),
-        unpriced_tokens: 0,
-    })
+async fn codex_usage(State(st): State<AppState>) -> Result<impl IntoResponse, ApiError> {
+    st.docker.codex_usage().await.map(Json).map_err(err)
 }
 
-async fn codex_sessions() -> impl IntoResponse {
-    // STUB (Phase-0 contract, COMPLETION_PLAN.md): BE track fills this.
-    Json(Vec::<CodexSession>::new())
+async fn codex_sessions(State(st): State<AppState>) -> Result<impl IntoResponse, ApiError> {
+    st.docker.codex_sessions().await.map(Json).map_err(err)
 }
 
 #[derive(Deserialize)]
 struct CodexSessionUsageQuery {
-    #[allow(dead_code)]
     id: String,
 }
 
-async fn codex_session_usage(Query(_q): Query<CodexSessionUsageQuery>) -> impl IntoResponse {
-    // STUB (Phase-0 contract, COMPLETION_PLAN.md): BE track fills this.
-    Json(None::<CodexSessionUsage>)
+async fn codex_session_usage(
+    State(st): State<AppState>,
+    Query(q): Query<CodexSessionUsageQuery>,
+) -> Result<impl IntoResponse, ApiError> {
+    st.docker
+        .codex_session_usage(&q.id)
+        .await
+        .map(Json)
+        .map_err(err)
 }
 
-async fn codex_rate_limits() -> impl IntoResponse {
-    // STUB (Phase-0 contract, COMPLETION_PLAN.md): BE track fills this.
-    Json(None::<CodexRateLimits>)
+async fn codex_rate_limits(State(st): State<AppState>) -> Result<impl IntoResponse, ApiError> {
+    st.docker.codex_rate_limits().await.map(Json).map_err(err)
 }
 
-async fn github_status() -> impl IntoResponse {
-    // STUB (Phase-0 contract, COMPLETION_PLAN.md): BE track fills this.
-    Json(GithubStatus {
-        connected: false,
-        var_name: "GITHUB_TOKEN".to_string(),
-        login: None,
-        scopes: Vec::new(),
-        token_expiry: None,
-    })
+async fn github_status(State(st): State<AppState>) -> Result<impl IntoResponse, ApiError> {
+    st.docker.github_status().await.map(Json).map_err(err)
 }
 
-async fn github_repos() -> impl IntoResponse {
-    // STUB (Phase-0 contract, COMPLETION_PLAN.md): BE track fills this.
-    Json(Vec::<GithubRepo>::new())
+async fn github_repos(State(st): State<AppState>) -> Result<impl IntoResponse, ApiError> {
+    st.docker.github_repos().await.map(Json).map_err(err)
 }
 
 async fn check_update() -> impl IntoResponse {
-    // STUB (Phase-0 contract, COMPLETION_PLAN.md): BE track fills this.
     Json(UpdateStatus {
         current: env!("CARGO_PKG_VERSION").to_string(),
         available: None,
@@ -711,7 +809,7 @@ async fn check_update() -> impl IntoResponse {
     })
 }
 
-async fn events(ws: WebSocketUpgrade, State(st): State<AppState>) -> impl IntoResponse {
+async fn ws_events(ws: WebSocketUpgrade, State(st): State<AppState>) -> impl IntoResponse {
     ws.on_upgrade(move |socket| client(socket, st.tx.subscribe()))
 }
 

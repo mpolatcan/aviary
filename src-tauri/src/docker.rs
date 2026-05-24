@@ -551,6 +551,12 @@ impl DockerClient {
         Ok(!containers.is_empty())
     }
 
+    /// Public alias used by `events.rs` for the event-dir setup exec. Merges
+    /// stdout + stderr identically to the private version.
+    pub async fn exec_capture_pub(&self, cmd: Vec<&str>) -> Result<String, DockerError> {
+        self.exec_capture(cmd).await
+    }
+
     async fn exec_capture(&self, cmd: Vec<&str>) -> Result<String, DockerError> {
         let exec = self
             .docker
@@ -683,6 +689,11 @@ impl DockerClient {
         cmd.push(window.to_string());
         cmd.push("-e".into());
         cmd.push("IS_SANDBOX=1".into());
+        // CODEHUB_SESSION is the session name (tmux key) exported per-pane so
+        // the codehub-hook append script can route events to the right JSONL
+        // file (§7.6). Verified to reach the hook process in the Phase-0 spike.
+        cmd.push("-e".into());
+        cmd.push(format!("CODEHUB_SESSION={name}"));
 
         // Build the CLI argv (binary + mode flags + resume/session-id) as owned
         // strings so it can either run directly or be wrapped in a remap shell.
@@ -1388,6 +1399,177 @@ impl DockerClient {
             &skills_raw,
             &marketplaces,
         ))
+    }
+
+    // ── Codex usage reader ───────────────────────────────────────────────────
+
+    /// Aggregate token analytics read from Codex's on-disk rollout files
+    /// (`/root/.codex/sessions/**/rollout-*.jsonl`). Mirrors the Claude usage
+    /// surface but uses Codex's per-turn `token_count` event payload. Errors only
+    /// when the container is down; a missing sessions dir yields an all-zero report.
+    pub async fn codex_usage(&self) -> Result<crate::types::CodexUsage, DockerError> {
+        if !self.is_running().await? {
+            return Err(DockerError::ContainerDown(self.container.clone()));
+        }
+        let raw = self
+            .exec_capture(vec![
+                "sh",
+                "-c",
+                "find /root/.codex/sessions -type f -name 'rollout-*.jsonl' -exec cat {} + 2>/dev/null || true",
+            ])
+            .await?;
+        Ok(parse_codex_usage(&raw))
+    }
+
+    // ── GitHub connector ────────────────────────────────────────────────────
+
+    /// GitHub connection status. Checks for GITHUB_TOKEN presence on the host
+    /// (presence-only — the value is NEVER read or returned). When present,
+    /// calls the GitHub API via `curl` inside the container (where the token is
+    /// already forwarded) to fetch the authenticated user identity + scopes.
+    pub async fn github_status(&self) -> Result<crate::types::GithubStatus, DockerError> {
+        const VAR: &str = "GITHUB_TOKEN";
+        let connected = std::env::var(VAR).is_ok();
+        if !connected {
+            return Ok(crate::types::GithubStatus {
+                connected: false,
+                var_name: VAR.to_string(),
+                login: None,
+                scopes: Vec::new(),
+                token_expiry: None,
+            });
+        }
+
+        // Token is forwarded into the container at create-time via lifecycle::auth_env_with.
+        // We run the API call inside the container using the already-forwarded token.
+        // The token is referenced by NAME inside the container shell — it never
+        // appears in the Rust argv or in a log. Response body only → no value returned.
+        if !self.is_running().await? {
+            // Container down but token present — report connected:true, no details.
+            return Ok(crate::types::GithubStatus {
+                connected: true,
+                var_name: VAR.to_string(),
+                login: None,
+                scopes: Vec::new(),
+                token_expiry: None,
+            });
+        }
+
+        // Use sh -c so the var expansion happens in-container (value never in argv here).
+        let out = self
+            .exec_capture(vec![
+                "sh",
+                "-c",
+                "curl -s -f -H \"Authorization: token ${GITHUB_TOKEN}\" -H \"Accept: application/vnd.github+json\" -H \"X-GitHub-Api-Version: 2022-11-28\" https://api.github.com/user 2>/dev/null || true",
+            ])
+            .await
+            .unwrap_or_default();
+
+        // Parse login from the JSON response. If the call failed, stay connected:true
+        // with no details (honest — token exists but call failed).
+        let (login, token_expiry) = if let Ok(v) = serde_json::from_str::<serde_json::Value>(&out) {
+            let login = v.get("login").and_then(|l| l.as_str()).map(String::from);
+            // GitHub doesn't surface token expiry in /user; left as None (factual absence).
+            (login, None)
+        } else {
+            (None, None)
+        };
+
+        // Scopes: GitHub returns them in the X-GitHub-OAuth-Scopes header, not the body.
+        // Fetching headers adds complexity; leave as empty (honest — we don't have them).
+        Ok(crate::types::GithubStatus {
+            connected: true,
+            var_name: VAR.to_string(),
+            login,
+            scopes: Vec::new(),
+            token_expiry,
+        })
+    }
+
+    /// Repos visible to the connected GitHub account. Returns empty when the
+    /// token is absent or the container is down. Requests up to 30 repos
+    /// (GitHub's default page size) — enough for the Integrations card.
+    pub async fn github_repos(&self) -> Result<Vec<crate::types::GithubRepo>, DockerError> {
+        const VAR: &str = "GITHUB_TOKEN";
+        if std::env::var(VAR).is_err() {
+            return Ok(Vec::new());
+        }
+        if !self.is_running().await? {
+            return Ok(Vec::new());
+        }
+
+        let out = self
+            .exec_capture(vec![
+                "sh",
+                "-c",
+                "curl -s -f -H \"Authorization: token ${GITHUB_TOKEN}\" -H \"Accept: application/vnd.github+json\" -H \"X-GitHub-Api-Version: 2022-11-28\" \"https://api.github.com/user/repos?per_page=30&sort=pushed\" 2>/dev/null || true",
+            ])
+            .await
+            .unwrap_or_default();
+
+        Ok(parse_github_repos(&out))
+    }
+
+    /// Past Codex conversations from rollout files (Resume view), newest first.
+    pub async fn codex_sessions(&self) -> Result<Vec<crate::types::CodexSession>, DockerError> {
+        if !self.is_running().await? {
+            return Err(DockerError::ContainerDown(self.container.clone()));
+        }
+        let raw = self
+            .exec_capture(vec![
+                "sh",
+                "-c",
+                "find /root/.codex/sessions -type f -name 'rollout-*.jsonl' -exec cat {} + 2>/dev/null || true",
+            ])
+            .await?;
+        Ok(parse_codex_sessions(&raw))
+    }
+
+    /// Live per-session Codex tally from the session's own rollout file.
+    /// `id` is the session dir identifier (a date-prefixed path segment or uuid).
+    /// `None` when there is no usable data yet.
+    pub async fn codex_session_usage(
+        &self,
+        session_dir: &str,
+    ) -> Result<Option<crate::types::CodexSessionUsage>, DockerError> {
+        // Guard against path traversal: allow only alphanumeric, dash, underscore,
+        // and forward-slash (for the date path prefix like "2026/05/24").
+        if session_dir.is_empty()
+            || session_dir.len() > 128
+            || !session_dir
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '/')
+            || session_dir.contains("..")
+        {
+            return Ok(None);
+        }
+        if !self.is_running().await? {
+            return Err(DockerError::ContainerDown(self.container.clone()));
+        }
+        let pattern = format!(
+            "find /root/.codex/sessions/{session_dir} -type f -name 'rollout-*.jsonl' -exec cat {{}} + 2>/dev/null || true"
+        );
+        let raw = self.exec_capture(vec!["sh", "-c", &pattern]).await?;
+        Ok(codex_session_usage_from_raw(&raw))
+    }
+
+    /// Codex rate-limit / plan meters from the latest rollout file entry.
+    /// `None` when no data is on disk.
+    pub async fn codex_rate_limits(
+        &self,
+    ) -> Result<Option<crate::types::CodexRateLimits>, DockerError> {
+        if !self.is_running().await? {
+            return Err(DockerError::ContainerDown(self.container.clone()));
+        }
+        // Read only the most recent rollout file (sorted by name, last = newest).
+        let raw = self
+            .exec_capture(vec![
+                "sh",
+                "-c",
+                "f=$(find /root/.codex/sessions -type f -name 'rollout-*.jsonl' 2>/dev/null | sort | tail -1); [ -n \"$f\" ] && cat \"$f\" || true",
+            ])
+            .await?;
+        Ok(extract_codex_rate_limits(&raw))
     }
 }
 
@@ -2237,6 +2419,506 @@ fn clip_title(prompt: &str) -> String {
     }
 }
 
+// ── Codex rollout file parser ────────────────────────────────────────────────
+// Codex writes per-session rollout files to
+// `~/.codex/sessions/YYYY/MM/DD/rollout-<ts>-<uuid>.jsonl`.
+// Each file contains one JSON object per line representing an event.
+//
+// Relevant event types (field `event_msg`):
+// - `token_count`: `payload.info.last_token_usage` (this-turn delta) +
+//   `payload.info.total_token_usage` (session cumulative). Each has:
+//   input / cached_input / output / reasoning_output / total.
+//   Also: `payload.rate_limits { primary/secondary: {used_percent,
+//   window_minutes, resets_at}, plan_type }`.
+// - `task_started` / `task_complete`: `turn_id`, `duration_ms`,
+//   `time_to_first_token_ms`, `model_context_window`.
+// - `turn_context`: per-turn `model` + `effort`.
+//
+// Unknown event types are skipped; malformed lines are skipped (under-count
+// over corruption — honesty contract).
+
+/// Codex model rate table: (family_substring, input_per_mtok, output_per_mtok).
+/// Codex doesn't report cache rates, so we use input/output only.
+const CODEX_RATES: &[(&str, f64, f64)] = &[
+    ("gpt-4o", 2.50, 10.0),
+    ("gpt-4-turbo", 10.0, 30.0),
+    ("gpt-4", 30.0, 60.0),
+    ("o4-mini", 1.10, 4.40),
+    ("o3-mini", 1.10, 4.40),
+    ("o3", 10.0, 40.0),
+    ("o1-mini", 3.0, 12.0),
+    ("o1", 15.0, 60.0),
+    ("gpt-3.5", 0.50, 1.50),
+];
+const CODEX_RATES_AS_OF: &str = "2026-05";
+
+fn codex_model_rate(model: &str) -> Option<(f64, f64)> {
+    CODEX_RATES
+        .iter()
+        .find(|(family, ..)| model.contains(family))
+        .map(|&(_, i, o)| (i, o))
+}
+
+fn codex_estimate_cost(t: &crate::types::CodexTokenTotals, rate: (f64, f64)) -> f64 {
+    let (ri, ro) = rate;
+    (t.input as f64 * ri + t.output as f64 * ro) / 1_000_000.0
+}
+
+/// Per-session accumulator for the Codex fold.
+#[derive(Default)]
+struct CodexSessionAcc {
+    session_id: String,
+    title: Option<String>,
+    branch: Option<String>,
+    model: Option<String>,
+    version: Option<String>,
+    started: Option<String>,
+    last_active: Option<String>,
+    turns: u64,
+    /// Cumulative totals from the LAST `token_count` line's `total_token_usage`.
+    cumulative: crate::types::CodexTokenTotals,
+}
+
+/// Fold concatenated Codex rollout JSONL into a [`CodexUsage`] aggregate.
+/// Each rollout file maps to one session; the session id is the filename UUID.
+/// All token counts are FACTUAL from the on-disk data; cost is an estimate.
+fn parse_codex_usage(raw: &str) -> crate::types::CodexUsage {
+    use std::collections::BTreeMap;
+
+    let mut session_accs: BTreeMap<String, CodexSessionAcc> = BTreeMap::new();
+    let mut by_model: BTreeMap<String, (crate::types::CodexTokenTotals, u64)> = BTreeMap::new();
+    // (CodexTokenTotals, est_cost_usd) accumulated per UTC day.
+    let mut by_day: BTreeMap<String, (crate::types::CodexTokenTotals, f64)> = BTreeMap::new();
+
+    for line in raw.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+
+        // Session id comes from `session_id` or `sessionId` field.
+        let sid = v
+            .get("session_id")
+            .or_else(|| v.get("sessionId"))
+            .and_then(|s| s.as_str())
+            .unwrap_or("")
+            .to_string();
+        if sid.is_empty() {
+            continue;
+        }
+
+        let acc = session_accs
+            .entry(sid.clone())
+            .or_insert_with(|| CodexSessionAcc {
+                session_id: sid.clone(),
+                ..Default::default()
+            });
+
+        // Track timestamp window for started/last_active.
+        if let Some(ts) = v.get("timestamp").and_then(|t| t.as_str()) {
+            if acc.started.as_deref().is_none_or(|s| ts < s) {
+                acc.started = Some(ts.to_string());
+            }
+            if acc.last_active.as_deref().is_none_or(|s| ts > s) {
+                acc.last_active = Some(ts.to_string());
+            }
+        }
+
+        // Capture model from turn_context.
+        if let Some(model) = v
+            .get("turn_context")
+            .and_then(|tc| tc.get("model"))
+            .and_then(|m| m.as_str())
+        {
+            if !model.is_empty() {
+                acc.model = Some(model.to_string());
+            }
+        }
+
+        let event_msg = match v.get("event_msg").and_then(|e| e.as_str()) {
+            Some(e) => e,
+            None => continue,
+        };
+
+        match event_msg {
+            "token_count" => {
+                let payload = match v.get("payload") {
+                    Some(p) => p,
+                    None => continue,
+                };
+                let info = match payload.get("info") {
+                    Some(i) => i,
+                    None => continue,
+                };
+
+                // Use total_token_usage (cumulative) for the session total.
+                let total_usage = info.get("total_token_usage");
+                let tok = |obj: &serde_json::Value, k: &str| {
+                    obj.get(k).and_then(|n| n.as_u64()).unwrap_or(0)
+                };
+
+                if let Some(total) = total_usage {
+                    acc.cumulative = crate::types::CodexTokenTotals {
+                        input: tok(total, "input"),
+                        cached_input: tok(total, "cached_input"),
+                        output: tok(total, "output"),
+                        reasoning_output: tok(total, "reasoning_output"),
+                    };
+                }
+
+                // Use last_token_usage (this-turn delta) for by-model/by-day.
+                if let Some(last) = info.get("last_token_usage") {
+                    let delta = crate::types::CodexTokenTotals {
+                        input: tok(last, "input"),
+                        cached_input: tok(last, "cached_input"),
+                        output: tok(last, "output"),
+                        reasoning_output: tok(last, "reasoning_output"),
+                    };
+                    let model_key = acc.model.clone().unwrap_or_else(|| "unknown".to_string());
+                    let rate = codex_model_rate(&model_key);
+                    let delta_cost = rate.map(|r| codex_estimate_cost(&delta, r)).unwrap_or(0.0);
+                    let me = by_model.entry(model_key).or_default();
+                    me.0.input += delta.input;
+                    me.0.cached_input += delta.cached_input;
+                    me.0.output += delta.output;
+                    me.0.reasoning_output += delta.reasoning_output;
+                    me.1 += 1;
+
+                    if let Some(date) = v
+                        .get("timestamp")
+                        .and_then(|t| t.as_str())
+                        .filter(|t| t.len() >= 10)
+                        .map(|t| t[..10].to_string())
+                    {
+                        let de = by_day.entry(date).or_default();
+                        de.0.input += delta.input;
+                        de.0.cached_input += delta.cached_input;
+                        de.0.output += delta.output;
+                        de.0.reasoning_output += delta.reasoning_output;
+                        de.1 += delta_cost;
+                    }
+                }
+            },
+            "task_complete" => {
+                acc.turns = acc.turns.saturating_add(1);
+            },
+            "task_started" if acc.title.is_none() => {
+                // Pick up the title from the first task_started (if available).
+                if let Some(t) = v
+                    .get("payload")
+                    .and_then(|p| p.get("task"))
+                    .and_then(|t| t.as_str())
+                    .map(|s| s.trim())
+                    .filter(|s| !s.is_empty())
+                {
+                    acc.title = Some(clip_title(t));
+                }
+            },
+            _ => {},
+        }
+    }
+
+    // Flatten accumulators into output structs.
+    let mut total_sessions = 0u64;
+    let mut total_turns = 0u64;
+    let mut global_totals = crate::types::CodexTokenTotals::default();
+    let mut total_cost = 0.0f64;
+    let mut unpriced_tokens = 0u64;
+
+    for acc in session_accs.values() {
+        total_sessions += 1;
+        total_turns += acc.turns;
+        global_totals.input += acc.cumulative.input;
+        global_totals.cached_input += acc.cumulative.cached_input;
+        global_totals.output += acc.cumulative.output;
+        global_totals.reasoning_output += acc.cumulative.reasoning_output;
+    }
+
+    let by_model: Vec<crate::types::CodexModelUsage> = by_model
+        .into_iter()
+        .map(|(model, (totals, turns))| {
+            let rate = codex_model_rate(&model);
+            let priced = rate.is_some();
+            let est_cost_usd = rate.map(|r| codex_estimate_cost(&totals, r)).unwrap_or(0.0);
+            if !priced {
+                unpriced_tokens += totals.input + totals.output;
+            }
+            total_cost += est_cost_usd;
+            crate::types::CodexModelUsage {
+                model,
+                totals,
+                turns,
+                est_cost_usd,
+                priced,
+            }
+        })
+        .collect();
+
+    // Sort heaviest spenders first.
+    let mut by_model = by_model;
+    by_model.sort_by(|a, b| b.est_cost_usd.total_cmp(&a.est_cost_usd));
+
+    let by_day: Vec<crate::types::CodexDayUsage> = by_day
+        .into_iter()
+        .map(
+            |(date, (totals, est_cost_usd))| crate::types::CodexDayUsage {
+                date,
+                totals,
+                est_cost_usd,
+            },
+        )
+        .collect();
+
+    let rates: Vec<crate::types::CodexModelRate> = CODEX_RATES
+        .iter()
+        .map(|&(family, i, o)| crate::types::CodexModelRate {
+            family: family.to_string(),
+            input_per_mtok: i,
+            output_per_mtok: o,
+        })
+        .collect();
+
+    crate::types::CodexUsage {
+        sessions: total_sessions,
+        turns: total_turns,
+        totals: global_totals,
+        est_cost_usd: total_cost,
+        by_model,
+        by_day,
+        rates,
+        rates_as_of: CODEX_RATES_AS_OF.to_string(),
+        unpriced_tokens,
+    }
+}
+
+/// Fold concatenated Codex rollout JSONL into a list of sessions.
+fn parse_codex_sessions(raw: &str) -> Vec<crate::types::CodexSession> {
+    use std::collections::HashMap;
+
+    let mut accs: HashMap<String, CodexSessionAcc> = HashMap::new();
+
+    for line in raw.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+
+        let sid = v
+            .get("session_id")
+            .or_else(|| v.get("sessionId"))
+            .and_then(|s| s.as_str())
+            .unwrap_or("")
+            .to_string();
+        if sid.is_empty() {
+            continue;
+        }
+
+        let acc = accs.entry(sid.clone()).or_insert_with(|| CodexSessionAcc {
+            session_id: sid.clone(),
+            ..Default::default()
+        });
+
+        if let Some(ts) = v.get("timestamp").and_then(|t| t.as_str()) {
+            if acc.started.as_deref().is_none_or(|s| ts < s) {
+                acc.started = Some(ts.to_string());
+            }
+            if acc.last_active.as_deref().is_none_or(|s| ts > s) {
+                acc.last_active = Some(ts.to_string());
+            }
+        }
+
+        if let Some(model) = v
+            .get("turn_context")
+            .and_then(|tc| tc.get("model"))
+            .and_then(|m| m.as_str())
+        {
+            if !model.is_empty() {
+                acc.model = Some(model.to_string());
+            }
+        }
+
+        if let Some(e) = v.get("event_msg").and_then(|e| e.as_str()) {
+            match e {
+                "task_complete" => acc.turns += 1,
+                "task_started" if acc.title.is_none() => {
+                    if let Some(t) = v
+                        .get("payload")
+                        .and_then(|p| p.get("task"))
+                        .and_then(|t| t.as_str())
+                        .map(|s| s.trim())
+                        .filter(|s| !s.is_empty())
+                    {
+                        acc.title = Some(clip_title(t));
+                    }
+                },
+                _ => {},
+            }
+        }
+    }
+
+    let mut sessions: Vec<crate::types::CodexSession> = accs
+        .into_values()
+        .map(|a| crate::types::CodexSession {
+            id: a.session_id,
+            title: a.title.unwrap_or_else(|| "Untitled session".to_string()),
+            branch: a.branch,
+            started: a.started.unwrap_or_default(),
+            last_active: a.last_active.clone().unwrap_or_default(),
+            turns: a.turns,
+            model: a.model,
+            version: a.version,
+        })
+        .collect();
+
+    sessions.sort_by(|a, b| b.last_active.cmp(&a.last_active));
+    const CODEX_SESSIONS_CAP: usize = 200;
+    sessions.truncate(CODEX_SESSIONS_CAP);
+    sessions
+}
+
+/// Derive per-session Codex tally from a single rollout file.
+fn codex_session_usage_from_raw(raw: &str) -> Option<crate::types::CodexSessionUsage> {
+    let mut turns = 0u64;
+    let mut tokens_in = 0u64;
+    let mut tokens_out = 0u64;
+    let mut context_used = 0u64;
+
+    for line in raw.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        let event = match v.get("event_msg").and_then(|e| e.as_str()) {
+            Some(e) => e,
+            None => continue,
+        };
+        match event {
+            "task_complete" => turns += 1,
+            "token_count" => {
+                if let Some(last) = v
+                    .get("payload")
+                    .and_then(|p| p.get("info"))
+                    .and_then(|i| i.get("last_token_usage"))
+                {
+                    let tok = |k: &str| last.get(k).and_then(|n| n.as_u64()).unwrap_or(0);
+                    tokens_in += tok("input");
+                    tokens_out += tok("output");
+                }
+                // Overwrite each turn — ends at the last (current) one.
+                if let Some(total) = v
+                    .get("payload")
+                    .and_then(|p| p.get("info"))
+                    .and_then(|i| i.get("total_token_usage"))
+                {
+                    let tok = |k: &str| total.get(k).and_then(|n| n.as_u64()).unwrap_or(0);
+                    context_used = tok("input") + tok("cached_input");
+                }
+            },
+            _ => {},
+        }
+    }
+
+    if turns == 0 {
+        return None;
+    }
+    Some(crate::types::CodexSessionUsage {
+        turns,
+        tokens_in,
+        tokens_out,
+        // Codex doesn't log file-edit counts in rollout files; report 0 (factual
+        // absence rather than fabrication).
+        edits: 0,
+        context_used,
+    })
+}
+
+/// Extract the most recent `rate_limits` block from a Codex rollout file.
+fn extract_codex_rate_limits(raw: &str) -> Option<crate::types::CodexRateLimits> {
+    let mut last_rl: Option<crate::types::CodexRateLimits> = None;
+
+    for line in raw.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        if v.get("event_msg").and_then(|e| e.as_str()) != Some("token_count") {
+            continue;
+        }
+        let rl = match v.get("payload").and_then(|p| p.get("rate_limits")) {
+            Some(r) => r,
+            None => continue,
+        };
+
+        let primary = rl.get("primary");
+        let secondary = rl.get("secondary");
+        let plan_type = rl
+            .get("plan_type")
+            .and_then(|p| p.as_str())
+            .map(String::from);
+
+        let f64_field = |obj: Option<&serde_json::Value>, k: &str| obj?.get(k)?.as_f64();
+        let u64_field = |obj: Option<&serde_json::Value>, k: &str| obj?.get(k)?.as_u64();
+        let str_field =
+            |obj: Option<&serde_json::Value>, k: &str| obj?.get(k)?.as_str().map(String::from);
+
+        last_rl = Some(crate::types::CodexRateLimits {
+            primary_used_pct: f64_field(primary, "used_percent"),
+            primary_window_minutes: u64_field(primary, "window_minutes"),
+            primary_resets_at: str_field(primary, "resets_at"),
+            secondary_used_pct: f64_field(secondary, "used_percent"),
+            secondary_window_minutes: u64_field(secondary, "window_minutes"),
+            secondary_resets_at: str_field(secondary, "resets_at"),
+            plan_type,
+        });
+    }
+
+    last_rl
+}
+
+/// Parse the GitHub `/user/repos` JSON response into [`GithubRepo`] entries.
+/// Unknown / malformed responses → empty list (honest).
+fn parse_github_repos(raw: &str) -> Vec<crate::types::GithubRepo> {
+    // SECURITY: this function must never include any token value in its output.
+    // It only reads repo metadata (name, branch, visibility) — no credentials.
+    let Ok(arr) = serde_json::from_str::<serde_json::Value>(raw) else {
+        return Vec::new();
+    };
+    let Some(arr) = arr.as_array() else {
+        return Vec::new();
+    };
+
+    arr.iter()
+        .filter_map(|r| {
+            let full_name = r.get("full_name")?.as_str()?.to_string();
+            let default_branch = r
+                .get("default_branch")
+                .and_then(|b| b.as_str())
+                .map(String::from);
+            let private = r.get("private").and_then(|p| p.as_bool()).unwrap_or(false);
+            Some(crate::types::GithubRepo {
+                name_with_owner: full_name,
+                default_branch,
+                // open_prs requires a separate API call per repo — too expensive
+                // for a repo list; leave as None (factual absence).
+                open_prs: None,
+                private,
+            })
+        })
+        .collect()
+}
+
 /// Parse the US-delimited `git log` output (one commit per line,
 /// `hash\x1fauthor\x1frelative\x1fsubject`). Lines without all four fields —
 /// notably a `fatal:` error on a non-repo, or the empty output of a commit-less
@@ -2963,5 +3645,228 @@ mod tests {
             Some("GOOGLE_API_KEY")
         );
         assert_eq!(Cli::Shell.canonical_auth_var(), None);
+    }
+
+    // ── Codex parser tests ───────────────────────────────────────────────────
+
+    use super::{
+        codex_session_usage_from_raw, extract_codex_rate_limits, parse_codex_sessions,
+        parse_codex_usage, parse_github_repos,
+    };
+
+    fn codex_token_count_line(
+        session_id: &str,
+        model: &str,
+        ts: &str,
+        last_input: u64,
+        last_output: u64,
+        total_input: u64,
+        total_output: u64,
+    ) -> String {
+        serde_json::json!({
+            "session_id": session_id,
+            "timestamp": ts,
+            "event_msg": "token_count",
+            "turn_context": { "model": model, "effort": "medium" },
+            "payload": {
+                "info": {
+                    "last_token_usage": {
+                        "input": last_input,
+                        "cached_input": 0u64,
+                        "output": last_output,
+                        "reasoning_output": 0u64,
+                        "total": last_input + last_output
+                    },
+                    "total_token_usage": {
+                        "input": total_input,
+                        "cached_input": 0u64,
+                        "output": total_output,
+                        "reasoning_output": 0u64,
+                        "total": total_input + total_output
+                    }
+                },
+                "rate_limits": {
+                    "primary": {
+                        "used_percent": 42.5,
+                        "window_minutes": 60u64,
+                        "resets_at": "2026-05-24T10:00:00Z"
+                    },
+                    "plan_type": "pro"
+                }
+            }
+        })
+        .to_string()
+    }
+
+    fn codex_task_complete_line(session_id: &str, ts: &str) -> String {
+        serde_json::json!({
+            "session_id": session_id,
+            "timestamp": ts,
+            "event_msg": "task_complete"
+        })
+        .to_string()
+    }
+
+    fn codex_task_started_line(session_id: &str, ts: &str, task: &str) -> String {
+        serde_json::json!({
+            "session_id": session_id,
+            "timestamp": ts,
+            "event_msg": "task_started",
+            "payload": { "task": task }
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn codex_usage_sums_real_tokens_and_counts_sessions_turns() {
+        let line1 =
+            codex_token_count_line("s1", "gpt-4o", "2026-05-22T12:00:00Z", 100, 200, 100, 200);
+        let line2 = codex_token_count_line("s2", "o4-mini", "2026-05-23T09:00:00Z", 10, 20, 10, 20);
+        let complete1 = codex_task_complete_line("s1", "2026-05-22T12:00:01Z");
+        let complete2 = codex_task_complete_line("s2", "2026-05-23T09:00:01Z");
+        let raw = format!("{line1}\n{complete1}\n{line2}\n{complete2}\n");
+        let u = parse_codex_usage(&raw);
+        assert_eq!(u.sessions, 2);
+        assert_eq!(u.turns, 2);
+        // global totals: cumulative from each session's last token_count
+        assert_eq!(u.totals.input, 110); // 100 + 10
+        assert_eq!(u.totals.output, 220); // 200 + 20
+                                          // cost should be > 0 for priced models
+        assert!(u.est_cost_usd > 0.0);
+        assert_eq!(u.rates_as_of, "2026-05");
+        assert!(!u.rates.is_empty());
+        assert_eq!(u.unpriced_tokens, 0);
+    }
+
+    #[test]
+    fn codex_usage_empty_input_is_all_zero_not_error() {
+        let u = parse_codex_usage("");
+        assert_eq!(u.sessions, 0);
+        assert_eq!(u.turns, 0);
+        assert_eq!(u.totals.input, 0);
+        assert_eq!(u.est_cost_usd, 0.0);
+        assert!(u.by_model.is_empty());
+        assert!(u.by_day.is_empty());
+        // Rate table always surfaced for transparency.
+        assert!(!u.rates.is_empty());
+    }
+
+    #[test]
+    fn codex_usage_flags_unpriced_models_without_fabricating_cost() {
+        let line = serde_json::json!({
+            "session_id": "s1",
+            "timestamp": "2026-05-22T12:00:00Z",
+            "event_msg": "token_count",
+            "turn_context": { "model": "future-model-xyz", "effort": "low" },
+            "payload": {
+                "info": {
+                    "last_token_usage": { "input": 40u64, "cached_input": 0u64, "output": 60u64, "reasoning_output": 0u64, "total": 100u64 },
+                    "total_token_usage": { "input": 40u64, "cached_input": 0u64, "output": 60u64, "reasoning_output": 0u64, "total": 100u64 }
+                }
+            }
+        }).to_string();
+        let u = parse_codex_usage(&line);
+        assert_eq!(u.est_cost_usd, 0.0);
+        assert_eq!(u.unpriced_tokens, 100); // input + output
+        assert!(!u.by_model[0].priced);
+    }
+
+    #[test]
+    fn codex_sessions_groups_by_id_newest_first() {
+        let start1 = codex_task_started_line("s-old", "2026-05-20T10:00:00Z", "Fix the bug");
+        let complete1 = codex_task_complete_line("s-old", "2026-05-20T10:01:00Z");
+        let start2 = codex_task_started_line("s-new", "2026-05-22T09:00:00Z", "Add tests");
+        let complete2 = codex_task_complete_line("s-new", "2026-05-22T09:02:00Z");
+        let raw = format!("{start1}\n{complete1}\n{start2}\n{complete2}\n");
+        let sessions = parse_codex_sessions(&raw);
+        assert_eq!(sessions.len(), 2);
+        // Newest first.
+        assert_eq!(sessions[0].id, "s-new");
+        assert_eq!(sessions[0].title, "Add tests");
+        assert_eq!(sessions[0].turns, 1);
+        assert_eq!(sessions[1].id, "s-old");
+        assert_eq!(sessions[1].title, "Fix the bug");
+        assert_eq!(sessions[1].turns, 1);
+    }
+
+    #[test]
+    fn codex_session_usage_from_raw_returns_none_on_empty() {
+        assert!(codex_session_usage_from_raw("").is_none());
+    }
+
+    #[test]
+    fn codex_session_usage_counts_turns_and_tokens() {
+        let line1 =
+            codex_token_count_line("s1", "gpt-4o", "2026-05-22T12:00:00Z", 100, 200, 100, 200);
+        let complete = codex_task_complete_line("s1", "2026-05-22T12:00:01Z");
+        let raw = format!("{line1}\n{complete}\n");
+        let usage = codex_session_usage_from_raw(&raw).unwrap();
+        assert_eq!(usage.turns, 1);
+        assert_eq!(usage.tokens_in, 100);
+        assert_eq!(usage.tokens_out, 200);
+    }
+
+    #[test]
+    fn extract_codex_rate_limits_reads_primary_fields() {
+        let line = codex_token_count_line("s1", "gpt-4o", "2026-05-22T12:00:00Z", 10, 20, 10, 20);
+        let rl = extract_codex_rate_limits(&line).unwrap();
+        assert!((rl.primary_used_pct.unwrap() - 42.5).abs() < 1e-9);
+        assert_eq!(rl.primary_window_minutes, Some(60));
+        assert_eq!(
+            rl.primary_resets_at.as_deref(),
+            Some("2026-05-24T10:00:00Z")
+        );
+        assert_eq!(rl.plan_type.as_deref(), Some("pro"));
+    }
+
+    #[test]
+    fn extract_codex_rate_limits_returns_none_on_empty() {
+        assert!(extract_codex_rate_limits("").is_none());
+    }
+
+    // ── GitHub parser tests ─────────────────────────────────────────────────
+
+    #[test]
+    fn parse_github_repos_extracts_name_branch_visibility() {
+        let json = r#"[
+            {"full_name":"acme/app","default_branch":"main","private":false},
+            {"full_name":"acme/secret","default_branch":"master","private":true}
+        ]"#;
+        let repos = parse_github_repos(json);
+        assert_eq!(repos.len(), 2);
+        assert_eq!(repos[0].name_with_owner, "acme/app");
+        assert_eq!(repos[0].default_branch.as_deref(), Some("main"));
+        assert!(!repos[0].private);
+        assert_eq!(repos[1].name_with_owner, "acme/secret");
+        assert!(repos[1].private);
+        // open_prs always None (no per-repo API call)
+        assert!(repos[0].open_prs.is_none());
+    }
+
+    #[test]
+    fn parse_github_repos_returns_empty_on_error_response() {
+        // GitHub returns {"message":"Bad credentials"} when token is bad.
+        let json = r#"{"message":"Bad credentials"}"#;
+        let repos = parse_github_repos(json);
+        assert!(repos.is_empty());
+    }
+
+    #[test]
+    fn parse_github_repos_never_includes_token_value() {
+        // Verify the output NEVER includes token-looking strings, even if the
+        // input somehow contained one (defence-in-depth: the parser only reads
+        // repo metadata fields, never arbitrary response keys).
+        let fake_token = "ghp_AAABBBCCCDDDEEEFFFGGGHHHIII";
+        let json = format!(
+            r#"[{{"full_name":"a/b","default_branch":"main","private":false,"token":"{fake_token}"}}]"#
+        );
+        let repos = parse_github_repos(&json);
+        assert_eq!(repos.len(), 1);
+        // Serialize the output and confirm the fake token string is absent.
+        let serialized = serde_json::to_string(&repos).unwrap();
+        assert!(
+            !serialized.contains(fake_token),
+            "token value leaked into output"
+        );
     }
 }
