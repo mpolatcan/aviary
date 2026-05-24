@@ -8,6 +8,9 @@ import "./panes.css";
 
 const PrimitivesGallery = lazy(() => import("./dev/PrimitivesGallery"));
 const DevPreview = lazy(() => import("./dev/DevPreview"));
+// Dev-only loading/error/empty-state gallery (F-OVERLAYS). Reachable at
+// #/__states; the reusable building blocks live in screens/States.tsx.
+const StatesGallery = lazy(() => import("./screens/States"));
 // Content of the always-on-top companion window (P5). NOT dev-gated — the Tauri
 // `open_companion` command loads index.html#/companion as a real second window.
 const Companion = lazy(() => import("./screens/Companion").then((m) => ({ default: m.Companion })));
@@ -22,12 +25,19 @@ const hash = window.location.hash;
 const isCompanion = hash === "#/companion";
 const isPrimitivesGallery = import.meta.env.DEV && hash === "#/__primitives";
 const isScreenPreview = import.meta.env.DEV && hash.startsWith("#/__screens");
+const isStatesGallery = import.meta.env.DEV && hash.startsWith("#/__states");
 
 let view = <App />;
 if (isCompanion) {
   view = (
     <Suspense fallback={null}>
       <Companion />
+    </Suspense>
+  );
+} else if (isStatesGallery) {
+  view = (
+    <Suspense fallback={null}>
+      <StatesGallery />
     </Suspense>
   );
 } else if (isPrimitivesGallery) {

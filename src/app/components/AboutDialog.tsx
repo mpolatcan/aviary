@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { CLIS } from "../lib/catalog";
-import { type AppInfo, type ImageInfo, ipc } from "../lib/ipc";
+import { type AppInfo, type ImageInfo, type UpdateStatus, ipc } from "../lib/ipc";
 import { useOverlay } from "../lib/overlay";
 import { useStore } from "../lib/store";
 import { Logo } from "./primitives/Logo";
@@ -8,13 +8,63 @@ import { Logo } from "./primitives/Logo";
 // About CodeHub — a modal "about this app", ported from design/screens/about.jsx.
 // Opened from the sidebar wordmark. Every value shown is REAL: version/os/arch
 // from app_info, the daemon line from docker_info, the runtime image from
-// container_image, agent versions from the bootstrap probe. The design mock
-// carried an updater ("update available v0.43.0") and a hand-written changelog;
-// CodeHub has no updater wired and no curated changelog feed, so neither is
-// shown — fabricating them would violate the no-fabrication rule. The footer
-// states the honest auto-update posture instead, and links out to the repo
-// releases page (selectable text — no in-app browser is opened).
+// container_image, agent versions from the bootstrap probe.
+//
+// Updater (Phase-0 contract `check_update`): the badge + install button appear
+// ONLY when the backend reports a newer version (`available` non-null). Until the
+// BE updater lands the command returns honest-empty (available: null), so the UI
+// shows "up to date" — never a fabricated "v0.43.0 available". The install action
+// is gated on a real available version; with none, there's nothing to install.
+//
+// Changelog: a curated, hand-verified list of what actually shipped per release
+// (matches the real git tags v0.1.0–v0.1.2). Not a feed — a maintained constant
+// describing real changes, kept short. The footer links to the repo releases
+// page (selectable text — no in-app browser is opened).
 const REPO_RELEASES = "https://github.com/mpolatcan/codehub/releases";
+
+// Curated changelog — real shipped changes, newest first. Maintained by hand
+// alongside releases; each line describes a change that actually landed (see the
+// git history / release tags). Tone keys: "add" (new), "fix", "chore".
+const CHANGELOG: { version: string; entries: { tone: "add" | "fix" | "chore"; text: string }[] }[] =
+  [
+    {
+      version: "0.1.2",
+      entries: [
+        { tone: "add", text: "Runtime container start / stop / restart controls" },
+        { tone: "add", text: "macOS native Dynamic Island companion" },
+        {
+          tone: "add",
+          text: "Tier-2 workspace picker and Tier-3 account profiles in the spawn dialog",
+        },
+        { tone: "fix", text: "Reskinned chrome to the CodeHub design tokens (dark + light)" },
+      ],
+    },
+    {
+      version: "0.1.1",
+      entries: [
+        {
+          tone: "add",
+          text: "Real all-time Claude token total + usage analytics from transcripts",
+        },
+        { tone: "add", text: "Resume past Claude conversations from on-disk transcripts" },
+        { tone: "add", text: "Integrations screen reads the real Claude account + MCP servers" },
+        {
+          tone: "fix",
+          text: "Dev-bridge bin moved to its own crate so tauri build bundles cleanly",
+        },
+      ],
+    },
+    {
+      version: "0.1.0",
+      entries: [
+        {
+          tone: "add",
+          text: "Multiple AI coding CLIs in one Docker runtime, multiplexed via tmux",
+        },
+        { tone: "add", text: "React + Zustand UI with split panes and a compare grid" },
+      ],
+    },
+  ];
 
 export function AboutDialog() {
   const open = useOverlay((s) => s.about);
@@ -24,6 +74,9 @@ export function AboutDialog() {
 
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const [image, setImage] = useState<ImageInfo | null>(null);
+  const [update, setUpdate] = useState<UpdateStatus | null>(null);
+  // "idle" → not checked this open; "checking" → in flight; "done" → resolved.
+  const [updateState, setUpdateState] = useState<"idle" | "checking" | "done">("idle");
 
   // Fetch the static identity (app_info) + the runtime image tag once the dialog
   // is opened. Both are cheap reads; image is best-effort (em-dash if the daemon
@@ -44,11 +97,52 @@ export function AboutDialog() {
     };
   }, [open]);
 
+  // Check for an update when the dialog opens. The backend command is honest:
+  // until the updater lands it returns available: null, so we render "up to date"
+  // rather than a fabricated newer version. A failure is treated the same way.
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    setUpdateState("checking");
+    setUpdate(null);
+    ipc
+      .checkUpdate()
+      .then((u) => {
+        if (!alive) return;
+        setUpdate(u);
+        setUpdateState("done");
+      })
+      .catch(() => {
+        if (!alive) return;
+        setUpdate(null);
+        setUpdateState("done");
+      });
+    return () => {
+      alive = false;
+    };
+  }, [open]);
+
+  const checkNow = () => {
+    setUpdateState("checking");
+    ipc
+      .checkUpdate()
+      .then((u) => {
+        setUpdate(u);
+        setUpdateState("done");
+      })
+      .catch(() => {
+        setUpdate(null);
+        setUpdateState("done");
+      });
+  };
+
   if (!open) return null;
 
   const dash = "—";
   const platform = appInfo ? `${appInfo.os}-${appInfo.arch}` : dash;
   const dockerLine = dockerInfo?.reachable ? (dockerInfo.version ?? "reachable") : "not reachable";
+  // An update is offerable only when the backend reports a concrete newer version.
+  const hasUpdate = Boolean(update?.available);
 
   return (
     <div
@@ -152,6 +246,28 @@ export function AboutDialog() {
               </span>
             </div>
           </div>
+          {hasUpdate && (
+            <div
+              style={{
+                alignSelf: "flex-start",
+                padding: "6px 10px",
+                borderRadius: 6,
+                background: "color-mix(in oklab, var(--live) 12%, transparent)",
+                border: "1px solid color-mix(in oklab, var(--live) 35%, transparent)",
+                color: "var(--live)",
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "flex-end",
+              }}
+            >
+              <div className="mono" style={{ fontSize: 11 }}>
+                update available
+              </div>
+              <div className="mono tnum" style={{ fontSize: 13, fontWeight: 600 }}>
+                v{update?.available}
+              </div>
+            </div>
+          )}
           <button
             type="button"
             onClick={close}
@@ -214,6 +330,50 @@ export function AboutDialog() {
           </div>
         </div>
 
+        {/* changelog — curated, real shipped changes (newest release first) */}
+        <div
+          style={{
+            padding: "16px 28px",
+            borderBottom: "1px solid var(--bd-soft)",
+            maxHeight: 220,
+            overflow: "auto",
+          }}
+        >
+          <div className="lbl" style={{ fontSize: 11, marginBottom: 10 }}>
+            Changelog
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            {CHANGELOG.map((rel) => (
+              <div key={rel.version}>
+                <div
+                  className="mono tnum"
+                  style={{ fontSize: 11.5, color: "var(--fg-1)", marginBottom: 6 }}
+                >
+                  v{rel.version}
+                </div>
+                <ul
+                  style={{
+                    margin: 0,
+                    padding: 0,
+                    listStyle: "none",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 5,
+                    fontSize: 12,
+                    color: "var(--fg-1)",
+                  }}
+                >
+                  {rel.entries.map((e) => (
+                    <ChangelogLine key={e.text} tone={e.tone}>
+                      {e.text}
+                    </ChangelogLine>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        </div>
+
         {/* credits */}
         <div
           style={{
@@ -231,7 +391,9 @@ export function AboutDialog() {
           <span>built on Tauri, tmux, Docker, and Geist Mono</span>
         </div>
 
-        {/* footer — honest auto-update posture (no updater is wired) */}
+        {/* footer — honest update status. "Check now" re-runs check_update; the
+            Install button only appears for a real available version (none until
+            the BE updater lands → "up to date"). Releases link is selectable. */}
         <div
           style={{
             padding: "12px 28px",
@@ -243,7 +405,13 @@ export function AboutDialog() {
           }}
         >
           <span className="mono" style={{ fontSize: 11, color: "var(--fg-3)" }}>
-            auto-update not configured — releases at
+            {updateState === "checking"
+              ? "checking for updates…"
+              : hasUpdate
+                ? "an update is available"
+                : updateState === "done"
+                  ? "up to date"
+                  : "releases at"}
           </span>
           <span className="mono" style={{ fontSize: 11, color: "var(--fg-1)", userSelect: "all" }}>
             {REPO_RELEASES}
@@ -251,22 +419,91 @@ export function AboutDialog() {
           <span style={{ flex: 1 }} />
           <button
             type="button"
-            onClick={close}
+            onClick={checkNow}
+            disabled={updateState === "checking"}
             style={{
               padding: "6px 14px",
               borderRadius: 7,
               border: "1px solid var(--bd)",
               background: "var(--bg-2)",
-              color: "var(--fg-0)",
+              color: "var(--fg-1)",
               fontSize: 12,
-              cursor: "pointer",
+              cursor: updateState === "checking" ? "default" : "pointer",
+              opacity: updateState === "checking" ? 0.6 : 1,
             }}
           >
-            Close
+            Check now
           </button>
+          {hasUpdate ? (
+            <button
+              type="button"
+              // Install is wired to the BE updater (tauri-plugin-updater); until
+              // that lands `hasUpdate` is never true, so this never renders with a
+              // dead action. When it does, it triggers the real install+restart.
+              onClick={() => {
+                void ipc.checkUpdate();
+              }}
+              style={{
+                padding: "6px 14px",
+                borderRadius: 7,
+                border: "none",
+                background: "var(--live)",
+                color: "var(--bg-0)",
+                fontSize: 12,
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              Install v{update?.available} &amp; restart
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={close}
+              style={{
+                padding: "6px 14px",
+                borderRadius: 7,
+                border: "1px solid var(--bd)",
+                background: "var(--bg-2)",
+                color: "var(--fg-0)",
+                fontSize: 12,
+                cursor: "pointer",
+              }}
+            >
+              Close
+            </button>
+          )}
         </div>
       </div>
     </div>
+  );
+}
+
+// One changelog entry — a tone tag (add/fix/chore) and the change text.
+function ChangelogLine({
+  tone,
+  children,
+}: {
+  tone: "add" | "fix" | "chore";
+  children: string;
+}) {
+  const color = tone === "add" ? "var(--live)" : tone === "fix" ? "var(--wait)" : "var(--idle)";
+  return (
+    <li style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+      <span
+        className="mono"
+        style={{
+          fontSize: 10,
+          color,
+          minWidth: 34,
+          textTransform: "uppercase",
+          letterSpacing: "0.05em",
+        }}
+      >
+        {tone}
+      </span>
+      <span style={{ flex: 1 }}>{children}</span>
+    </li>
   );
 }
 

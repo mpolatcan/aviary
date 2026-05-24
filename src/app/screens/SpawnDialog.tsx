@@ -252,6 +252,28 @@ export function SpawnDialog({
               </div>
               <Tag color="var(--live)">~instant</Tag>
             </div>
+
+            {/* Real runtime facts, shown as read-only indicators rather than
+                per-spawn toggles — the runtime config is fixed (single shared
+                container), so a checkbox here would be a lie. Each line reflects
+                how the shared runtime actually behaves. Container SIZING is a
+                Tier-3 deferral; it's marked "Coming soon", not faked. The
+                per-turn cost estimate is omitted entirely (no usage capture). */}
+            <div
+              style={{
+                marginTop: 8,
+                display: "flex",
+                flexWrap: "wrap",
+                gap: "6px 16px",
+                fontSize: 11,
+                color: "var(--fg-2)",
+              }}
+            >
+              <RuntimeFact on>Workspace mounted read-write</RuntimeFact>
+              <RuntimeFact on>API keys forwarded from host environment</RuntimeFact>
+              <RuntimeFact>Network: bridge (host networking off)</RuntimeFact>
+              <RuntimeFact soon>Container sizing</RuntimeFact>
+            </div>
           </FormRow>
 
           <FormRow label="Initial prompt" optional>
@@ -354,6 +376,48 @@ function FormRow({
       </div>
       {children}
     </div>
+  );
+}
+
+// One read-only runtime indicator. `on` = an active runtime behavior (filled
+// dot); `soon` = a deferred capability ("Coming soon" tag); neither = a stated
+// fact (hollow dot). Not interactive — these describe the shared runtime, they
+// don't toggle anything (no per-spawn backend flag exists).
+function RuntimeFact({
+  on,
+  soon,
+  children,
+}: {
+  on?: boolean;
+  soon?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+      <span
+        aria-hidden="true"
+        style={{
+          width: 12,
+          height: 12,
+          flexShrink: 0,
+          borderRadius: 3,
+          border: `1px solid ${on ? "var(--live)" : "var(--bd-strong)"}`,
+          background: on ? "var(--live)" : "transparent",
+          color: "var(--bg-0)",
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        {on && Ico.check}
+      </span>
+      <span style={{ color: soon ? "var(--fg-3)" : "var(--fg-2)" }}>{children}</span>
+      {soon && (
+        <span className="mono" style={{ fontSize: 10, color: "var(--fg-3)" }}>
+          Coming soon
+        </span>
+      )}
+    </span>
   );
 }
 
