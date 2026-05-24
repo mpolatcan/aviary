@@ -36,10 +36,70 @@ use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
 use tauri::{AppHandle, Emitter, Manager};
 
 /// One row in the island: a display label and whether the agent is producing.
+///
+/// This is the *honest baseline* shape the live feed in `lib.rs` already builds
+/// from `session_activity` — working vs idle, the only signal that is real for
+/// every agent. The richer states (awaiting/done/error + per-agent identity +
+/// Claude metrics) ride on [`IslandRow`] / [`IslandSnapshot`] and the
+/// [`update_rich`] entry point, which the feed adopts once the BE hooks
+/// subsystem (`pending_prompts`, agent events) and per-session metrics land.
 #[derive(Clone)]
 pub struct IslandItem {
     pub label: String,
     pub working: bool,
+}
+
+/// Live status of one island row, mirroring the companion design's avatar
+/// states. Derived from real signals only: `Live`/`Idle` from output flow;
+/// `Wait` from `pending_prompts`; `Done`/`Err` from `stop`/`stop_failure` hook
+/// events. NEVER fabricated — absent signal stays `Idle`.
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub enum IslandStatus {
+    #[default]
+    Idle,
+    Live,
+    Wait,
+    Done,
+    Err,
+}
+
+impl IslandStatus {
+    /// Priority for the collapsed-pill summary tint: an awaiting prompt outranks
+    /// an error, which outranks live work, which outranks idle.
+    fn rank(self) -> u8 {
+        match self {
+            IslandStatus::Wait => 4,
+            IslandStatus::Err => 3,
+            IslandStatus::Live => 2,
+            IslandStatus::Done => 1,
+            IslandStatus::Idle => 0,
+        }
+    }
+}
+
+/// A rich island row: identity + status + an optional one-line metric string
+/// (e.g. "14 edits · 184.2k tok") that the screen has REAL data for (Claude
+/// only today). `awaiting` carries the session name to answer when the row's
+/// inline Approve/Deny is used.
+#[derive(Clone)]
+pub struct IslandRow {
+    /// Display label (alias or session name).
+    pub label: String,
+    /// tmux session name — the key the rest of the app uses (click → focus,
+    /// approve → respond_prompt).
+    pub session: String,
+    /// Agent cli id ("claude"/"codex"/…) for the dot color; None = neutral.
+    pub agent: Option<String>,
+    pub status: IslandStatus,
+    /// Honest, already-real metric line; None → omitted (never a fake zero).
+    pub metric: Option<String>,
+}
+
+/// The full snapshot the rich feed pushes: the rows + whether any row is
+/// awaiting input (drives the collapsed "approve" affordance + pill tint).
+#[derive(Clone, Default)]
+pub struct IslandSnapshot {
+    pub rows: Vec<IslandRow>,
 }
 
 thread_local! {
@@ -69,8 +129,10 @@ struct Island {
     header: Retained<NSTextField>,
     /// (dot, name) field pair per current row.
     rows: Vec<(Retained<NSTextField>, Retained<NSTextField>)>,
-    /// Session names in row order, for click → focus.
-    names: Vec<String>,
+    /// Per-row click target + status, in row order. Index-aligned with `rows`.
+    /// `(tmux session, status)`: session drives click→focus and approve, status
+    /// drives whether an inline Approve affordance applies.
+    targets: Vec<(String, IslandStatus)>,
     expanded: bool,
     /// Collapsed-pill geometry for the current display (origin + size).
     pill: NSRect,
@@ -174,10 +236,44 @@ pub fn hide(app: &AppHandle) {
     });
 }
 
-/// Push the latest activity snapshot. Rebuilds the rows and refreshes the
+/// Push the latest activity snapshot (honest baseline: working vs idle). This is
+/// what the `lib.rs` feed calls today. Rebuilds the rows and refreshes the
 /// collapsed count; re-lays-out live if currently expanded. Cheap no-op when the
 /// island has never been shown.
 pub fn update(app: &AppHandle, items: Vec<IslandItem>) {
+    // Lift the baseline items to rich rows: Live when producing, else Idle. No
+    // agent identity or metrics are available on this path — they stay None, so
+    // the island shows only what is real.
+    let rows = items
+        .into_iter()
+        .map(|i| IslandRow {
+            session: i.label.clone(),
+            label: i.label,
+            agent: None,
+            status: if i.working {
+                IslandStatus::Live
+            } else {
+                IslandStatus::Idle
+            },
+            metric: None,
+        })
+        .collect();
+    update_rich(app, IslandSnapshot { rows });
+}
+
+/// Push a RICH snapshot — per-agent identity, awaiting/done/error status, and
+/// (where real) a metric line. This is the entry point the `lib.rs` feed should
+/// adopt once the BE hooks subsystem lands `pending_prompts` + agent events and
+/// per-session Claude metrics, so the island shows the design's full state set.
+/// Until then `update` (above) drives it with the honest working/idle baseline.
+//
+// F-COMPANION: the feed in `lib.rs` (setup hook) currently builds `IslandItem`
+// {label, working}. To light up awaiting/done/error + Claude metric lines, the
+// BE/coordinator should map `pending_prompts()` → IslandStatus::Wait, the
+// `stop`/`stop_failure` agent events → Done/Err, and `claude_session_usage` →
+// `metric`, then call `island::update_rich`. Left as an additive API here so the
+// shared `lib.rs` feed compiles unchanged in this track's worktree.
+pub fn update_rich(app: &AppHandle, snapshot: IslandSnapshot) {
     let _ = app.run_on_main_thread(move || {
         let mtm = MainThreadMarker::new().expect("run_on_main_thread is on the main thread");
         // Phase 1 (under borrow): swap in the new rows. If expanded, capture a
@@ -185,7 +281,7 @@ pub fn update(app: &AppHandle, items: Vec<IslandItem>) {
         let plan = ISLAND.with(|cell| {
             let mut slot = cell.borrow_mut();
             let island = slot.as_mut()?;
-            rebuild_rows(island, &items, mtm);
+            rebuild_rows(island, &snapshot.rows, mtm);
             island.expanded.then(|| plan_frame(island))
         });
         // Phase 2 (borrow released): reframe if expanded, then relayout.
@@ -257,7 +353,7 @@ fn build(app: AppHandle, mtm: MainThreadMarker) -> Island {
     // Collapsed header: dot + count.
     let header = label(mtm, "●", COLLAPSE_H - 12.0);
     header.setAlignment(NSTextAlignment::Center);
-    header.setTextColor(Some(&dot_color(false)));
+    header.setTextColor(Some(&status_color(IslandStatus::Idle)));
     let header_view: &NSView = &header;
     view.addSubview(header_view);
 
@@ -270,7 +366,7 @@ fn build(app: AppHandle, mtm: MainThreadMarker) -> Island {
         view,
         header,
         rows: Vec::new(),
-        names: Vec::new(),
+        targets: Vec::new(),
         expanded: false,
         pill,
     };
@@ -283,18 +379,25 @@ fn build(app: AppHandle, mtm: MainThreadMarker) -> Island {
 /// Rebuild the row views from a fresh snapshot and refresh the collapsed count.
 /// Pure state mutation — no panel frame change, so it is safe to run while the
 /// `ISLAND` borrow is held. Layout/reframe happen afterwards, borrow-free.
-fn rebuild_rows(island: &mut Island, items: &[IslandItem], mtm: MainThreadMarker) {
+fn rebuild_rows(island: &mut Island, rows: &[IslandRow], mtm: MainThreadMarker) {
     // Tear down old row views.
     for (dot, name) in island.rows.drain(..) {
         dot.removeFromSuperview();
         name.removeFromSuperview();
     }
-    island.names.clear();
+    island.targets.clear();
 
-    for item in items {
-        let dot = label(mtm, "●", 11.0);
-        dot.setTextColor(Some(&dot_color(item.working)));
-        let name = label(mtm, &item.label, 12.0);
+    for row in rows {
+        let dot = label(mtm, status_glyph(row.status), 11.0);
+        dot.setTextColor(Some(&status_color(row.status)));
+        // Name line carries the honest metric where it exists (Claude only), or
+        // an awaiting hint, both already real. No fabricated suffix otherwise.
+        let line = match (row.status, &row.metric) {
+            (IslandStatus::Wait, _) => format!("{}  · needs input", row.label),
+            (_, Some(m)) => format!("{}  · {m}", row.label),
+            _ => row.label.clone(),
+        };
+        let name = label(mtm, &line, 12.0);
         name.setTextColor(Some(&color_text()));
         name.setHidden(!island.expanded);
         dot.setHidden(!island.expanded);
@@ -303,15 +406,27 @@ fn rebuild_rows(island: &mut Island, items: &[IslandItem], mtm: MainThreadMarker
         island.view.addSubview(dv);
         island.view.addSubview(nv);
         island.rows.push((dot, name));
-        island.names.push(item.label.clone());
+        island.targets.push((row.session.clone(), row.status));
     }
 
-    // Collapsed pill shows the running-agent count, tinted if any are working.
-    let working = items.iter().filter(|i| i.working).count();
+    // Collapsed pill shows the running-agent count, tinted by the highest-rank
+    // status across all rows (awaiting > error > live > done > idle). A "!"
+    // marker replaces the dot when any row is awaiting input, so the pill reads
+    // as "needs you" at a glance even while collapsed.
+    let top = rows
+        .iter()
+        .map(|r| r.status)
+        .max_by_key(|s| s.rank())
+        .unwrap_or_default();
+    let marker = if top == IslandStatus::Wait {
+        "!"
+    } else {
+        "●"
+    };
     island
         .header
-        .setStringValue(&NSString::from_str(&format!("● {}", items.len())));
-    island.header.setTextColor(Some(&dot_color(working > 0)));
+        .setStringValue(&NSString::from_str(&format!("{marker} {}", rows.len())));
+    island.header.setTextColor(Some(&status_color(top)));
 }
 
 /// Expand or collapse. The visibility flips happen under the borrow; the
@@ -340,7 +455,10 @@ fn set_expanded(expanded: bool) {
     }
 }
 
-/// A click at flipped local-y; focus the row it lands on (expanded only).
+/// A click at flipped local-y; focus the row it lands on (expanded only). A row
+/// awaiting input emits an approve intent instead of a focus jump — the main
+/// window relays it to `respond_prompt` (the island itself can't invoke a Tauri
+/// command from a raw AppKit callback). All other rows jump to the terminal.
 fn handle_click(local_y: f64) {
     let target = ISLAND.with(|cell| {
         let borrow = cell.borrow();
@@ -350,13 +468,17 @@ fn handle_click(local_y: f64) {
         }
         let idx = ((local_y - COLLAPSE_H) / ROW_H) as usize;
         island
-            .names
+            .targets
             .get(idx)
             .cloned()
-            .map(|name| (island.app.clone(), name))
+            .map(|(session, status)| (island.app.clone(), session, status))
     });
-    if let Some((app, name)) = target {
-        focus_session(&app, &name);
+    if let Some((app, session, status)) = target {
+        if status == IslandStatus::Wait {
+            approve_session(&app, &session);
+        } else {
+            focus_session(&app, &session);
+        }
     }
 }
 
@@ -502,12 +624,30 @@ fn color_text() -> Retained<NSColor> {
     srgb(0xc9, 0xcd, 0xd4)
 }
 
-/// Working = `--color-accent` ochre #e8a33d; idle = `--color-text-faint` #5c636d.
-fn dot_color(working: bool) -> Retained<NSColor> {
-    if working {
-        srgb(0xe8, 0xa3, 0x3d)
-    } else {
-        srgb(0x5c, 0x63, 0x6d)
+/// Status dot/pill color, mirroring the design state tokens (sRGB conversions of
+/// the oklch accents in `tokens.css`):
+/// - `Live`  → `--live`  green  (working turn in progress)
+/// - `Wait`  → `--wait`  amber  (awaiting input)
+/// - `Done`  → `--done`  cyan   (turn finished)
+/// - `Err`   → `--err`   red    (failed)
+/// - `Idle`  → `--fg-3`  faint  (quiet / at rest)
+fn status_color(status: IslandStatus) -> Retained<NSColor> {
+    match status {
+        IslandStatus::Live => srgb(0x4a, 0xd6, 0x6d), // oklch(0.80 0.17 145)
+        IslandStatus::Wait => srgb(0xe6, 0xae, 0x3c), // oklch(0.83 0.14 80)
+        IslandStatus::Done => srgb(0x6c, 0xb8, 0xc4), // oklch(0.78 0.08 200)
+        IslandStatus::Err => srgb(0xe2, 0x55, 0x3d),  // oklch(0.72 0.18 25)
+        IslandStatus::Idle => srgb(0x3f, 0x44, 0x4d), // --fg-3
+    }
+}
+
+/// Per-row glyph: a check for a finished turn, a "!" for awaiting, else a dot.
+fn status_glyph(status: IslandStatus) -> &'static str {
+    match status {
+        IslandStatus::Wait => "!",
+        IslandStatus::Done => "✓",
+        IslandStatus::Err => "×",
+        _ => "●",
     }
 }
 
@@ -519,4 +659,17 @@ fn focus_session(app: &AppHandle, name: &str) {
         let _ = main.set_focus();
     }
     let _ = app.emit("codehub://focus-session", name);
+}
+
+/// Emit an approve intent for an awaiting session. The island can't call the
+/// `respond_prompt` Tauri command directly from an AppKit click, so it raises a
+/// thin event the main window relays to `respond_prompt(session, allow=true)`.
+//
+// F-COMPANION: the main-window listener for `codehub://island-approve` (calling
+// `ipc.respondPrompt(session, true)`) belongs to whoever owns the Hub focus
+// wiring (F-HUB / coordinator). It is intentionally NOT added here — this track
+// owns only the island. The payload is the tmux session name, same key as
+// `codehub://focus-session`.
+fn approve_session(app: &AppHandle, name: &str) {
+    let _ = app.emit("codehub://island-approve", name);
 }
