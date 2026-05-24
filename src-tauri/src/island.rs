@@ -35,20 +35,6 @@ use objc2_app_kit::{
 use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
 use tauri::{AppHandle, Emitter, Manager};
 
-/// One row in the island: a display label and whether the agent is producing.
-///
-/// This is the *honest baseline* shape the live feed in `lib.rs` already builds
-/// from `session_activity` — working vs idle, the only signal that is real for
-/// every agent. The richer states (awaiting/done/error + per-agent identity +
-/// Claude metrics) ride on [`IslandRow`] / [`IslandSnapshot`] and the
-/// [`update_rich`] entry point, which the feed adopts once the BE hooks
-/// subsystem (`pending_prompts`, agent events) and per-session metrics land.
-#[derive(Clone)]
-pub struct IslandItem {
-    pub label: String,
-    pub working: bool,
-}
-
 /// Live status of one island row, mirroring the companion design's avatar
 /// states. Derived from real signals only: `Live`/`Idle` from output flow;
 /// `Wait` from `pending_prompts`; `Done`/`Err` from `stop`/`stop_failure` hook
@@ -236,43 +222,12 @@ pub fn hide(app: &AppHandle) {
     });
 }
 
-/// Push the latest activity snapshot (honest baseline: working vs idle). This is
-/// what the `lib.rs` feed calls today. Rebuilds the rows and refreshes the
-/// collapsed count; re-lays-out live if currently expanded. Cheap no-op when the
-/// island has never been shown.
-pub fn update(app: &AppHandle, items: Vec<IslandItem>) {
-    // Lift the baseline items to rich rows: Live when producing, else Idle. No
-    // agent identity or metrics are available on this path — they stay None, so
-    // the island shows only what is real.
-    let rows = items
-        .into_iter()
-        .map(|i| IslandRow {
-            session: i.label.clone(),
-            label: i.label,
-            agent: None,
-            status: if i.working {
-                IslandStatus::Live
-            } else {
-                IslandStatus::Idle
-            },
-            metric: None,
-        })
-        .collect();
-    update_rich(app, IslandSnapshot { rows });
-}
-
-/// Push a RICH snapshot — per-agent identity, awaiting/done/error status, and
-/// (where real) a metric line. This is the entry point the `lib.rs` feed should
-/// adopt once the BE hooks subsystem lands `pending_prompts` + agent events and
-/// per-session Claude metrics, so the island shows the design's full state set.
-/// Until then `update` (above) drives it with the honest working/idle baseline.
-//
-// F-COMPANION: the feed in `lib.rs` (setup hook) currently builds `IslandItem`
-// {label, working}. To light up awaiting/done/error + Claude metric lines, the
-// BE/coordinator should map `pending_prompts()` → IslandStatus::Wait, the
-// `stop`/`stop_failure` agent events → Done/Err, and `claude_session_usage` →
-// `metric`, then call `island::update_rich`. Left as an additive API here so the
-// shared `lib.rs` feed compiles unchanged in this track's worktree.
+/// Push a RICH snapshot — per-agent identity, awaiting status, and (where real) a
+/// metric line. This is the live entry point the `lib.rs` setup-hook feed calls:
+/// it maps `pending_prompts()` → [`IslandStatus::Wait`], activity Working →
+/// [`IslandStatus::Live`], and `claude_session_usage` → `metric`. Rebuilds the
+/// rows and refreshes the collapsed count; re-lays-out live if currently
+/// expanded. Cheap no-op when the island has never been shown.
 pub fn update_rich(app: &AppHandle, snapshot: IslandSnapshot) {
     let _ = app.run_on_main_thread(move || {
         let mtm = MainThreadMarker::new().expect("run_on_main_thread is on the main thread");

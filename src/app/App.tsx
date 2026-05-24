@@ -16,6 +16,7 @@ import { useAgentEvents } from "./hooks/useAgentEvents";
 import { useContainerStatsPoll } from "./hooks/useContainerStatsPoll";
 import { useKeyboard } from "./hooks/useKeyboard";
 import { listen } from "./lib/bridge";
+import { ipc } from "./lib/ipc";
 import { useLauncher } from "./lib/launcher";
 import { activeWorkspace, initLifecycle, useStore } from "./lib/store";
 import { ContainerInspector } from "./screens/ContainerInspector";
@@ -42,20 +43,31 @@ export function App() {
     void initLifecycle();
   }, []);
 
-  // The always-on-top companion (its own window) jumps here via the backend,
-  // which raises this window and emits codehub://focus-session. Focus that
-  // session in the Hub (setView clears any open detail view). Actions are read
-  // from the store at event time, so this subscribes exactly once.
+  // The always-on-top companion (its own window / the macOS native island)
+  // reaches the app through two backend events:
+  //   - codehub://focus-session  → raise this window + focus that session
+  //   - codehub://island-approve → answer an awaiting permission prompt (the
+  //     native island can't call the respond_prompt command directly from an
+  //     AppKit click, so it relays the tmux session name here). Payload is the
+  //     session name for both. Actions/ipc are read at event time, so this
+  //     subscribes exactly once.
   useEffect(() => {
-    let un: (() => void) | undefined;
+    const uns: Array<() => void> = [];
     void listen<string>("codehub://focus-session", (e) => {
       const s = useStore.getState();
       s.focusSession(e.payload);
       s.setView("hub");
-    }).then((u) => {
-      un = u;
-    });
-    return () => un?.();
+    }).then((u) => uns.push(u));
+    void listen<string>("codehub://island-approve", (e) => {
+      // Fire-and-forget: a stale/expired prompt makes this a no-op, so log
+      // rather than swallow silently if the relay arrives after it resolved.
+      ipc.respondPrompt(e.payload, true).catch((err) => {
+        console.warn("island-approve: respond_prompt failed", err);
+      });
+    }).then((u) => uns.push(u));
+    return () => {
+      for (const un of uns) un();
+    };
   }, []);
 
   return (

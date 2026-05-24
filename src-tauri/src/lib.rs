@@ -460,6 +460,28 @@ async fn claude_session_usage(
         .map_err(|e| e.to_string())
 }
 
+/// Build the native island's honest one-line Claude metric (e.g.
+/// "14 edits · 184.2k tok") from a real [`SessionUsage`]. Returns `None` when
+/// there is nothing real to show (no edits and no tokens) so the row stays
+/// metric-less rather than displaying a fabricated "0".
+#[cfg(target_os = "macos")]
+fn island_metric(u: &SessionUsage) -> Option<String> {
+    let tok = u.tokens_in.saturating_add(u.tokens_out);
+    if u.edits == 0 && tok == 0 {
+        return None;
+    }
+    let tok_str = if tok >= 1000 {
+        format!("{:.1}k tok", tok as f64 / 1000.0)
+    } else {
+        format!("{tok} tok")
+    };
+    if u.edits > 0 {
+        Some(format!("{} edits · {tok_str}", u.edits))
+    } else {
+        Some(tok_str)
+    }
+}
+
 /// What the runtime's Claude is connected to (Integrations screen): the signed-in
 /// account + configured MCP servers, from on-disk config. Identity only, no
 /// credential. Errs only when the container is down.
@@ -991,6 +1013,10 @@ pub fn run() {
 
             #[cfg(target_os = "macos")]
             let island_registry = registry.clone();
+            #[cfg(target_os = "macos")]
+            let island_events = events.clone();
+            #[cfg(target_os = "macos")]
+            let island_docker = docker.clone();
 
             app.manage(AppState {
                 lifecycle: lifecycle.clone(),
@@ -1000,29 +1026,92 @@ pub fn run() {
                 events: events.clone(),
             });
 
-            // macOS: feed the native Dynamic Island the live activity snapshot
-            // while it is on screen. Honest signal only (working vs idle), polled
-            // off the same source the companion webview uses on other platforms.
+            // macOS: feed the native Dynamic Island a RICH snapshot while it is on
+            // screen. Every signal is honest:
+            //   - Wait    ← `events.pending_prompts()` (a real permission prompt)
+            //   - Live    ← activity state Working (output within the grace window)
+            //   - Idle    ← otherwise
+            //   - agent   ← the registered cli id (dot identity)
+            //   - metric  ← `claude_session_usage` for Claude sessions only, where a
+            //               transcript with real usage exists; never fabricated.
+            // Done/Err are intentionally NOT emitted: the hook taxonomy folds
+            // `StopFailure` into `stop`, and a finished turn is indistinguishable
+            // from idle without inventing a recency heuristic — so we stay silent
+            // rather than fake them.
+            //
+            // Status refreshes every 1s (responsive awaiting/working). The Claude
+            // metric is heavier (a `cat` of the transcript per session), so it is
+            // re-read on a slower cadence and cached between reads — the island
+            // shows the last real reading, not a stale-frozen or fabricated one.
             #[cfg(target_os = "macos")]
             {
+                use std::collections::{HashMap, HashSet};
                 let handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
+                    // ~1s status cadence; refresh Claude metrics every 5th tick.
+                    const METRIC_EVERY: u64 = 5;
                     let mut tick = tokio::time::interval(std::time::Duration::from_millis(1000));
+                    let mut metric_cache: HashMap<String, String> = HashMap::new();
+                    let mut ticks: u64 = 0;
                     loop {
                         tick.tick().await;
                         if !island::is_visible() {
                             continue;
                         }
-                        let items = island_registry
-                            .activity()
-                            .snapshot()
+                        let activity = island_registry.activity().snapshot();
+                        let waiting: HashSet<String> = island_events
+                            .pending_prompts()
                             .into_iter()
-                            .map(|a| island::IslandItem {
-                                label: a.alias.unwrap_or(a.session),
-                                working: matches!(a.state, activity::ActivityState::Working),
+                            .map(|p| p.session)
+                            .collect();
+
+                        // Refresh the Claude metric line on the slow cadence, then
+                        // prune cache entries for sessions that no longer exist.
+                        if ticks % METRIC_EVERY == 0 {
+                            for a in &activity {
+                                let Some(id) = a.claude_id.as_deref() else {
+                                    continue;
+                                };
+                                match island_docker.claude_session_usage(id).await {
+                                    Ok(Some(u)) => {
+                                        if let Some(m) = island_metric(&u) {
+                                            metric_cache.insert(a.session.clone(), m);
+                                        } else {
+                                            metric_cache.remove(&a.session);
+                                        }
+                                    },
+                                    _ => {
+                                        metric_cache.remove(&a.session);
+                                    },
+                                }
+                            }
+                            let live: HashSet<&str> =
+                                activity.iter().map(|a| a.session.as_str()).collect();
+                            metric_cache.retain(|s, _| live.contains(s.as_str()));
+                        }
+                        ticks = ticks.wrapping_add(1);
+
+                        let rows = activity
+                            .into_iter()
+                            .map(|a| {
+                                let status = if waiting.contains(&a.session) {
+                                    island::IslandStatus::Wait
+                                } else if matches!(a.state, activity::ActivityState::Working) {
+                                    island::IslandStatus::Live
+                                } else {
+                                    island::IslandStatus::Idle
+                                };
+                                let metric = metric_cache.get(&a.session).cloned();
+                                island::IslandRow {
+                                    label: a.alias.unwrap_or_else(|| a.session.clone()),
+                                    session: a.session,
+                                    agent: a.cli,
+                                    status,
+                                    metric,
+                                }
                             })
                             .collect();
-                        island::update(&handle, items);
+                        island::update_rich(&handle, island::IslandSnapshot { rows });
                     }
                 });
             }
