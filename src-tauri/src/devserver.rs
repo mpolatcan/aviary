@@ -138,14 +138,20 @@ pub async fn serve() {
     // this handles hook events.
     {
         let tx_for_events = tx.clone();
-        crate::events::spawn_event_tailer(docker.clone(), events.clone(), move |event| {
-            if let Ok(frame) = serde_json::to_string(&serde_json::json!({
-                "event": "codehub://agent-event",
-                "payload": event,
-            })) {
-                let _ = tx_for_events.send(frame);
-            }
-        });
+        // Runs under `#[tokio::main]`, so spawn the shared loop with tokio directly
+        // (the Tauri app uses tauri::async_runtime — see events::start_event_tailer).
+        tokio::spawn(crate::events::event_tailer_loop(
+            docker.clone(),
+            events.clone(),
+            move |event| {
+                if let Ok(frame) = serde_json::to_string(&serde_json::json!({
+                    "event": "codehub://agent-event",
+                    "payload": event,
+                })) {
+                    let _ = tx_for_events.send(frame);
+                }
+            },
+        ));
     }
 
     let state = AppState {

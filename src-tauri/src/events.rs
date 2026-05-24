@@ -243,34 +243,40 @@ pub fn start_event_tailer(
     tracker: Arc<EventsTracker>,
     app: tauri::AppHandle,
 ) {
-    spawn_event_tailer(docker, tracker, move |event| {
+    // Spawn on Tauri's managed runtime — the `setup` hook runs on the main thread
+    // with NO entered tokio runtime, so a bare `tokio::spawn` here aborts the app
+    // ("there is no reactor running"). The dev bridge, which runs under
+    // `#[tokio::main]`, spawns `event_tailer_loop` with `tokio::spawn` instead.
+    tauri::async_runtime::spawn(event_tailer_loop(docker, tracker, move |event| {
         let _ = app.emit("codehub://agent-event", event);
-    });
+    }));
 }
 
-/// Spawn the retrying event tailer with a caller-supplied per-event sink. The
-/// retry loop handles a not-yet-ready container or an absent events dir (`tail -F`
-/// picks up files as they appear). The Tauri app passes a window-emit sink
-/// (`start_event_tailer`); the dev bridge passes a WS-frame sink — one tail
-/// implementation, two transports.
-pub fn spawn_event_tailer<F>(docker: Arc<DockerClient>, tracker: Arc<EventsTracker>, on_event: F)
-where
+/// The retrying event-tailer loop with a caller-supplied per-event sink. Handles
+/// a not-yet-ready container or an absent events dir (`tail -F` picks up files as
+/// they appear). Transport-agnostic: the Tauri app passes a window-emit sink, the
+/// dev bridge a WS-frame sink — one tail implementation, two transports. The
+/// caller owns the spawn so each can use the runtime available in its context
+/// (see [`start_event_tailer`]).
+pub async fn event_tailer_loop<F>(
+    docker: Arc<DockerClient>,
+    tracker: Arc<EventsTracker>,
+    on_event: F,
+) where
     F: Fn(&AgentEvent) + Send + Sync + 'static,
 {
-    tokio::spawn(async move {
-        loop {
-            if let Err(e) = run_tail(&docker, &tracker, &on_event).await {
-                tracing::debug!("event tailer stopped ({e}), will retry in 5s");
-            }
-            tokio::time::sleep(Duration::from_secs(5)).await;
+    loop {
+        if let Err(e) = run_tail(&docker, &tracker, &on_event).await {
+            tracing::debug!("event tailer stopped ({e}), will retry in 5s");
         }
-    });
+        tokio::time::sleep(Duration::from_secs(5)).await;
+    }
 }
 
 /// One tail attach: drains the events stream until it ends/errors, feeding each
 /// parsed line to the `EventsTracker` and handing every resulting `AgentEvent`
 /// to `on_event`. Transport-agnostic — the Tauri app emits a window event, the
-/// dev bridge forwards a WS frame; both share this body (see `spawn_event_tailer`).
+/// dev bridge forwards a WS frame; both share this body (see `event_tailer_loop`).
 async fn run_tail<F: Fn(&AgentEvent)>(
     docker: &DockerClient,
     tracker: &EventsTracker,
