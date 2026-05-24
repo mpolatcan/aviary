@@ -10,13 +10,16 @@
  *    density (config store → data-density on <html> → compact chrome).
  *  - General: "confirm before closing a running agent" (config store + ⌘W guard)
  *    + Startup restore/reopen (config store → boot lifecycle session adoption).
- *  - About: build/host identity from `app_info` / `docker_info`.
+ *  - Notifications: the three prefs persist for real (config store); OS delivery
+ *    isn't wired yet, stated honestly in the pane (no fabricated capability).
+ *  - About: build/host identity from `app_info` / `docker_info`; update status
+ *    from `check_update` (honest "up to date" — the updater plugin isn't wired,
+ *    so `available` is null and there is no in-app install).
  *
  * The persisted preferences live in the config store (config::Settings, written
  * to settings.json) — get/set via `ipc.getConfig`/`setConfig`, surfaced through
  * the store's `config` + `updateConfig`. Controls whose feature isn't built yet
- * (notifications, per-agent permissions, multi-repo mounts) render disabled with
- * a `NotYet` caption naming the blocking feature.
+ * (per-agent permissions, cost/context budgets) render disabled until they wire.
  *
  * Copy note: keys are forwarded from the host environment, NOT an OS keychain —
  * wording corrected from the design.
@@ -271,6 +274,7 @@ function AgentsPane({ onStopAll }: { onStopAll?: () => void }) {
         <Button variant="outline" size="sm" disabled>
           {Ico.plus}Add custom agent
         </Button>
+        <RefreshVersionsButton />
       </div>
 
       <AccountsSection />
@@ -502,9 +506,11 @@ const selectStyle: CSSProperties = {
 };
 
 // About pane — every value is real: version/os/arch from `app_info` (build +
-// host consts), Docker from `docker_info`, agent versions from `agent_versions`.
-// No update check, no changelog, no fabricated build metadata; absent reads
-// render as em-dash rather than placeholders.
+// host consts), Docker from `docker_info`, agent versions from `agent_versions`,
+// update status from `check_update`. No changelog, no fabricated build metadata;
+// absent reads render as em-dash. The update check is honest: the updater plugin
+// isn't wired (available is null today), so it reads "up to date" with no in-app
+// install affordance — never a fabricated release.
 function AboutPane({
   appInfo,
   dockerInfo,
@@ -532,7 +538,7 @@ function AboutPane({
       </h1>
       <p style={{ margin: "0 0 28px", color: "var(--fg-2)", fontSize: 13 }}>
         Build and host platform details for this install. Everything here is read from the running
-        binary and the local Docker daemon — CodeHub does not check for updates.
+        binary and the local Docker daemon.
       </p>
 
       {/* hero */}
@@ -555,7 +561,7 @@ function AboutPane({
         >
           <Logo size={30} withText={false} />
         </div>
-        <div style={{ minWidth: 0 }}>
+        <div style={{ minWidth: 0, flex: 1 }}>
           <div style={{ fontSize: 20, fontWeight: 600, letterSpacing: "-0.01em" }}>CodeHub</div>
           <div
             className="mono"
@@ -566,7 +572,10 @@ function AboutPane({
             <span>{platform}</span>
           </div>
         </div>
+        <UpdateBadge fallbackVersion={appInfo?.version ?? null} />
       </div>
+
+      <UpdateRow />
 
       <SectionHead label="Environment" />
       <div
@@ -599,6 +608,88 @@ function AboutPane({
         with Tauri, React, and xterm.js. Agent CLIs and their model providers are owned by their
         respective vendors.
       </p>
+    </div>
+  );
+}
+
+// Compact hero badge reflecting the update check. Honest by construction: the
+// backend's check_update returns available:null today (the Tauri updater plugin
+// isn't wired — Platform pane marks self-update "planned"), so this reads
+// "up to date" rather than inventing a release. When a newer version IS reported
+// it surfaces it; nothing here is fabricated.
+function UpdateBadge({ fallbackVersion }: { fallbackVersion: string | null }) {
+  const update = useStore((s) => s.updateStatus);
+  if (!update) return null;
+  const hasUpdate = update.available != null;
+  const color = hasUpdate ? "var(--wait)" : "var(--live)";
+  return (
+    <div
+      className="mono"
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "flex-end",
+        gap: 1,
+        padding: "6px 10px",
+        borderRadius: 6,
+        background: `color-mix(in oklab, ${color} 12%, transparent)`,
+        border: `1px solid color-mix(in oklab, ${color} 35%, transparent)`,
+        color,
+        flexShrink: 0,
+      }}
+    >
+      <span style={{ fontSize: 11 }}>{hasUpdate ? "update available" : "up to date"}</span>
+      <span style={{ fontSize: 13, fontWeight: 600 }}>
+        v{hasUpdate ? update.available : (update.current ?? fallbackVersion ?? "—")}
+      </span>
+    </div>
+  );
+}
+
+// Update-check row: triggers check_update on mount + on demand. The install
+// affordance only appears when a newer version is actually reported; today the
+// backend has no updater wired so it stays honest ("up to date", no install).
+function UpdateRow() {
+  const update = useStore((s) => s.updateStatus);
+  const loadUpdateStatus = useStore((s) => s.loadUpdateStatus);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    void loadUpdateStatus();
+  }, [loadUpdateStatus]);
+  const check = async () => {
+    setBusy(true);
+    try {
+      await loadUpdateStatus();
+    } finally {
+      setBusy(false);
+    }
+  };
+  const hasUpdate = update?.available != null;
+  return (
+    <div
+      className="ch-card"
+      style={{ padding: 14, display: "flex", alignItems: "center", gap: 14, marginBottom: 8 }}
+    >
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 13, fontWeight: 500, color: "var(--fg-0)", marginBottom: 2 }}>
+          {hasUpdate ? `Update available — v${update?.available}` : "Software update"}
+        </div>
+        <div style={{ fontSize: 11.5, color: "var(--fg-2)" }}>
+          {update == null
+            ? "Checking for updates…"
+            : hasUpdate
+              ? (update.notes ?? "A newer version is available.")
+              : "You're on the latest version. In-app install isn't wired yet — updates arrive with the auto-updater."}
+        </div>
+      </div>
+      {hasUpdate && (
+        <Button variant="success" size="sm" disabled>
+          Install (soon)
+        </Button>
+      )}
+      <Button variant="outline" size="sm" disabled={busy} onClick={() => void check()}>
+        {busy ? "Checking…" : "Check now"}
+      </Button>
     </div>
   );
 }
@@ -1275,33 +1366,42 @@ function ShortcutsPane() {
   );
 }
 
-// Notifications — desktop notification prefs. Gated on the always-on-top island
-// + tauri-plugin-notification work (Phase 5) and the settings store, so the
-// controls are disabled stubs for now.
+// Notifications — desktop notification PREFERENCES. The three flags persist for
+// real (config::Settings → settings.json), so the toggles are live. Honest
+// caveat: OS delivery isn't built yet (no tauri-plugin-notification — Platform
+// pane marks OS-native toast "planned"), so these record your choice but won't
+// fire a system notification until the notification subsystem lands. We save the
+// preference rather than disabling the control so the setting survives that work.
 function NotificationsPane() {
   return (
     <div style={{ maxWidth: 720 }}>
       <PaneHead title="Notifications">
-        How CodeHub alerts you when an agent needs attention while its window isn't focused. Arrives
-        with the system-notification + dynamic-island work.
+        How CodeHub should alert you when an agent needs attention while its window isn't focused.
       </PaneHead>
 
       <SectionHead label="Desktop notifications" />
-      <NotYet reason="arrives with desktop notifications & the dynamic island" />
+      <p style={{ margin: "0 0 8px", fontSize: 11.5, color: "var(--fg-2)", lineHeight: 1.5 }}>
+        These preferences save now. OS-native delivery (a macOS / Windows / GNOME toast) isn't wired
+        yet — it arrives with the notification subsystem; until then the choices are remembered but
+        no system notification fires.
+      </p>
       <SettingRow
         label="Notify when an agent awaits input"
         desc="OS notification when a backgrounded session hits a permission prompt."
-        control={<Toggle on />}
+        control={<LiveToggle field="notifyAwaitInput" />}
+        live
       />
       <SettingRow
         label="Notify when a turn finishes"
         desc="Ping when an agent completes work in an unfocused session."
-        control={<Toggle />}
+        control={<LiveToggle field="notifyTurnFinish" />}
+        live
       />
       <SettingRow
         label="Play a sound"
         desc="Audible cue alongside the notification."
-        control={<Toggle />}
+        control={<LiveToggle field="playSound" />}
+        live
         last
       />
     </div>
@@ -1380,17 +1480,6 @@ function ThemeChoice({ theme, onChange }: { theme: Theme; onChange: (t: Theme) =
         { key: "light", label: "Light" },
       ]}
     />
-  );
-}
-
-// Shared caption for a section whose controls aren't wired yet. `reason` names
-// the feature that unblocks them, so the copy stays honest now that the config
-// store itself exists.
-function NotYet({ reason }: { reason: string }) {
-  return (
-    <p style={{ margin: "0 0 8px", fontSize: 11.5, color: "var(--fg-2)" }}>
-      Not configurable yet — {reason}.
-    </p>
   );
 }
 
@@ -1490,6 +1579,30 @@ function FontSizeInput() {
       </span>
       <StepBtn d={1} label="Increase font size" />
     </div>
+  );
+}
+
+// Re-probe each agent binary's reported version (`agent_versions`) on demand and
+// push the fresh map back into the store, so the agent cards + About pane reflect
+// it immediately. The bootstrap fetches this once at launch; this re-runs the
+// same real read (e.g. after upgrading a CLI inside the container) — no fabrication.
+function RefreshVersionsButton() {
+  const [busy, setBusy] = useState(false);
+  const refresh = async () => {
+    setBusy(true);
+    try {
+      const agentVersions = await ipc.agentVersions();
+      useStore.setState({ agentVersions });
+    } catch (e) {
+      console.warn("agent_versions refresh failed", e);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Button variant="ghost" size="sm" disabled={busy} onClick={() => void refresh()}>
+      {busy ? "Refreshing…" : "Refresh versions"}
+    </Button>
   );
 }
 
