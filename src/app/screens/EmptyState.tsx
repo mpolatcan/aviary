@@ -27,11 +27,15 @@ export interface EmptyStateProps {
   onNew?: (cli?: Cli) => void;
 }
 
-// Static per-agent descriptions; version + key presence come from the store.
+// Static per-agent prose; version + key presence come from the store. Describes
+// each agent's character — no fabricated metrics, just what the agent is good at.
 const AGENT_DESC: Record<AgentCli, string> = {
-  claude: "Long-context refactors, planned edits, deep code reading.",
-  codex: "Snappy iteration, safe shell tools, focused diffs.",
-  antigravity: "Multi-step automations, profiling, longer-running analyses.",
+  claude:
+    "Long-context refactors and planned edits. Reads deeply across a codebase before it touches anything, and explains its reasoning as it goes.",
+  codex:
+    "Snappy, iterative coding with safe shell tools. Best for focused diffs and quick turnarounds where you stay in the loop.",
+  antigravity:
+    "Multi-step automations and longer-running analyses. Built for profiling and tasks that span many tool calls.",
 };
 
 export function EmptyHero({ onNew }: EmptyStateProps) {
