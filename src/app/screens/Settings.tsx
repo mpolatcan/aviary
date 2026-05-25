@@ -311,6 +311,11 @@ function AgentsPane({ onStopAll }: { onStopAll?: () => void }) {
         control={<Toggle on />}
       />
       <SettingRow
+        label="Cost budget per turn"
+        desc="Auto-pause when a turn exceeds this. 0 disables."
+        control={<InputStub value="$1.00" suffix="USD" />}
+      />
+      <SettingRow
         label="Context budget"
         desc="Stop loading more context once this fills."
         control={<InputStub value="800k" suffix="tokens" />}
