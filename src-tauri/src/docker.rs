@@ -367,15 +367,24 @@ pub struct PluginInfo {
 /// The runtime Claude's configurable surface, read from on-disk config
 /// (`~/.claude.json`, `settings.json`, `.claude/agents`, `.claude/skills`,
 /// `plugins/known_marketplaces.json`). All FACTUAL: the active `model`, the
-/// default `permission_mode`, configured sub-agents/skills/plugins and
-/// installed marketplaces. Empty collections are reported honestly (the UI shows
-/// a "none configured" state) rather than filled with sample data. No credential
-/// is surfaced. Backs the Agent settings detail screen.
+/// default `permission_mode`, the literal allow/ask/deny permission rules, the
+/// configured sub-agents/skills/plugins and installed marketplaces. Empty
+/// collections are reported honestly (the UI shows a "none configured" state)
+/// rather than filled with sample data. No credential is surfaced. Backs the
+/// Agent settings detail screen.
 #[derive(Debug, Serialize, Clone, PartialEq, Eq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentConfig {
     pub model: Option<String>,
     pub permission_mode: Option<String>,
+    /// The exact tool-rule strings from `settings.json` `permissions.allow`
+    /// (e.g. `Read(/workspace/**)`, `Bash(git diff:*)`). Verbatim, never
+    /// synthesized — the UI renders them read-only.
+    pub permission_allow: Vec<String>,
+    /// `permissions.ask` rules — tools that prompt before running.
+    pub permission_ask: Vec<String>,
+    /// `permissions.deny` rules — tools that are blocked outright.
+    pub permission_deny: Vec<String>,
     pub subagents: Vec<SubAgentInfo>,
     pub skills: Vec<SkillInfo>,
     pub plugins: Vec<PluginInfo>,
@@ -1669,6 +1678,27 @@ fn parse_agent_config(
         .filter(|s| !s.is_empty())
         .map(str::to_string);
 
+    // Literal permission rules, verbatim from `permissions.{allow,ask,deny}`.
+    // Each is an array of tool-rule strings; a missing/non-array bucket yields an
+    // empty list (the UI shows "no rules"), never invented entries.
+    let rules = |bucket: &str| -> Vec<String> {
+        settings
+            .get("permissions")
+            .and_then(|p| p.get(bucket))
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let permission_allow = rules("allow");
+    let permission_ask = rules("ask");
+    let permission_deny = rules("deny");
+
     // Sub-agents: one card per `.claude/agents/*.md`, frontmatter-parsed.
     let mut subagents: Vec<SubAgentInfo> = split_file_bundle(agents_raw)
         .into_iter()
@@ -1746,6 +1776,9 @@ fn parse_agent_config(
     AgentConfig {
         model,
         permission_mode,
+        permission_allow,
+        permission_ask,
+        permission_deny,
         subagents,
         skills,
         plugins,
@@ -3500,7 +3533,7 @@ mod tests {
             "model": "claude-opus-4-7",
             "enabledPlugins": { "eslint@official": true, "prettier@official": false }
         }"#;
-        let settings = r#"{"permissions":{"defaultMode":"auto"},"theme":"dark"}"#;
+        let settings = r#"{"permissions":{"defaultMode":"auto","allow":["Read(/workspace/**)","Edit(/workspace/**)"],"ask":["Bash(git push:*)"],"deny":["Read(./secrets/**)"]},"theme":"dark"}"#;
         let agents = "===CODEHUB-FILE:/config/claude/agents/reviewer.md===\n---\nname: reviewer\ndescription: Reviews code\nmodel: sonnet-4.7\ntools: [Read, Grep]\n---\nprompt\n===CODEHUB-FILE:/workspace/.claude/agents/tester.md===\n---\ndescription: Writes tests\n---\nx";
         let skills = "===CODEHUB-FILE:/config/claude/skills/write-commit/SKILL.md===\n---\nname: write-commit\ndescription: git commit helper\n---\nbody";
         let marketplaces = r#"{"claude-plugins-official":{"source":{}}}"#;
@@ -3508,6 +3541,13 @@ mod tests {
 
         assert_eq!(c.model.as_deref(), Some("claude-opus-4-7"));
         assert_eq!(c.permission_mode.as_deref(), Some("auto"));
+        // Permission rules surfaced verbatim, bucketed.
+        assert_eq!(
+            c.permission_allow,
+            vec!["Read(/workspace/**)", "Edit(/workspace/**)"]
+        );
+        assert_eq!(c.permission_ask, vec!["Bash(git push:*)"]);
+        assert_eq!(c.permission_deny, vec!["Read(./secrets/**)"]);
         // Two sub-agents, sorted project < user; the project one falls back to
         // its file stem for the name (no frontmatter `name`).
         assert_eq!(c.subagents.len(), 2);

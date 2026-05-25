@@ -179,6 +179,14 @@ export function AgentDetail({ agent, onBack }: { agent: AgentCli; onBack: () => 
             </Card>
           </Section>
 
+          {/* Permission rules — the literal allow/ask/deny tool-rule strings from
+              settings.json, read-only. The design mocked this as an interactive
+              segmented matrix over invented action labels; CodeHub renders the
+              REAL rules verbatim (no editing — those rules are managed in the
+              agent's own config). allow=live / ask=wait / deny=err mirrors the
+              design's color language. */}
+          <PermissionRules config={config} />
+
           {/* MCP servers */}
           <Section label={`MCP servers · ${mcp.length}`}>
             {mcp.length === 0 ? (
@@ -360,6 +368,63 @@ function Field({ label, value }: { label: string; value: string }) {
         {value}
       </div>
     </div>
+  );
+}
+
+// Read-only list of the agent's literal permission rules. Each row is one rule
+// string verbatim from settings.json, tagged with its bucket; the bucket color
+// follows the design (allow=live / ask=wait / deny=err). All-empty → an honest
+// note, never invented rules.
+function PermissionRules({ config }: { config: AgentConfig | null }) {
+  const groups = [
+    { bucket: "allow", color: "var(--live)", rules: config?.permissionAllow ?? [] },
+    { bucket: "ask", color: "var(--wait)", rules: config?.permissionAsk ?? [] },
+    { bucket: "deny", color: "var(--err)", rules: config?.permissionDeny ?? [] },
+  ] as const;
+  const flat = groups.flatMap((g) => g.rules.map((rule) => ({ ...g, rule })));
+
+  return (
+    <Section label={`Permission rules · ${flat.length}`}>
+      {flat.length === 0 ? (
+        <Empty note="No explicit allow / ask / deny rules in settings.json — Claude Code falls back to its built-in defaults under the permission mode above." />
+      ) : (
+        <div className="ch-card" style={{ padding: 0, overflow: "hidden" }}>
+          {flat.map((r, i) => (
+            <div
+              key={`${r.bucket}:${r.rule}`}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                padding: "9px 14px",
+                borderBottom: i === flat.length - 1 ? "none" : "1px solid var(--bd-soft)",
+              }}
+            >
+              <span
+                className="mono"
+                style={{
+                  width: 42,
+                  flexShrink: 0,
+                  fontSize: 9.5,
+                  fontWeight: 600,
+                  textTransform: "uppercase",
+                  letterSpacing: "0.04em",
+                  color: r.color,
+                }}
+              >
+                {r.bucket}
+              </span>
+              <span
+                className="mono"
+                style={{ fontSize: 12, color: "var(--fg-0)", wordBreak: "break-all" }}
+              >
+                {r.rule}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </Section>
   );
 }
 

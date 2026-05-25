@@ -381,12 +381,18 @@ export interface PluginInfo {
 }
 
 // The runtime Claude's configurable surface (Agent settings detail): active
-// model + default permission mode + sub-agents/skills/plugins/marketplaces, all
-// read from on-disk config. Empty collections are the honest truth — the UI
-// shows "none configured", never sample data.
+// model + default permission mode + the literal allow/ask/deny permission rules
+// + sub-agents/skills/plugins/marketplaces, all read from on-disk config. Empty
+// collections are the honest truth — the UI shows "none configured", never
+// sample data.
 export interface AgentConfig {
   model: string | null;
   permissionMode: string | null;
+  // Verbatim tool-rule strings from settings.json permissions.{allow,ask,deny}
+  // (e.g. "Read(/workspace/**)", "Bash(git push:*)"). Rendered read-only.
+  permissionAllow: string[];
+  permissionAsk: string[];
+  permissionDeny: string[];
   subagents: SubAgentInfo[];
   skills: SkillInfo[];
   plugins: PluginInfo[];
