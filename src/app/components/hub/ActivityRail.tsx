@@ -15,8 +15,6 @@ import {
 } from "../../lib/ipc";
 import { useOverlay } from "../../lib/overlay";
 import { useStore } from "../../lib/store";
-import { DiffViewer } from "./DiffViewer";
-import { FilesBrowser } from "./FilesBrowser";
 
 // Right activity rail, ported from design/screens/main-hub-a.jsx.
 //
@@ -34,13 +32,10 @@ export function ActivityRail() {
   // apart; a failed read (container stopped mid-poll) clears to null → the
   // section falls back to its placeholder rather than freezing a stale list.
   const [git, setGit] = useState<GitStatus | null>(null);
-  // Which diff is open lives in the overlay store so the Hub toolbar's Diff
-  // button can open the same viewer (a path, "" for all-changes, or null).
-  const diffPath = useOverlay((s) => s.diff);
+  // Opening a changed file routes through the overlay store so the docked diff
+  // panel (rendered by HubView) shows it. The panel itself lives outside the
+  // rail now; here we only set which path is open (a path, or "" for all).
   const setDiffPath = useOverlay((s) => s.setDiff);
-  // Files browser open-state, also toolbar-driven (HubTabs Files button).
-  const filesOpen = useOverlay((s) => s.files);
-  const setFilesOpen = useOverlay((s) => s.setFiles);
   useEffect(() => {
     if (!running) {
       setGit(null);
@@ -159,9 +154,6 @@ export function ActivityRail() {
       </div>
       <Feed />
       <Activity running={running} />
-
-      <DiffViewer path={diffPath} onClose={() => setDiffPath(null)} />
-      <FilesBrowser open={filesOpen} onClose={() => setFilesOpen(false)} />
     </aside>
   );
 }

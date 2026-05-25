@@ -1,19 +1,28 @@
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
+import { IconBtn } from "../../components/primitives/IconBtn";
 import { Ico } from "../../components/primitives/icons";
 import { fmtBytes, joinPath as join, orderEntries as order } from "../../lib/fs";
 import { type FileEntry, ipc } from "../../lib/ipc";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../../ui/dialog";
 
 // Browses the runtime container's /workspace, one directory at a time
 // (container_list_dir → `find -maxdepth 1`), with a read-only preview of a
 // selected file's first 256 KiB (container_read_file → `head -c`). Both reads
 // are confined to /workspace server-side. Nothing here is fabricated — an empty
 // directory, a down runtime, or a binary file each render an honest line.
+//
+// Docked left panel (design/screens/hub-states.jsx FilesPanel), toggled from the
+// hub ActionBar (⌘E). The parent (HubView) mounts it only while open, so a fresh
+// mount starts at the workspace root. Unlike the design's fabricated multi-repo
+// tree, this is the ONE real /workspace mount — narrow enough for a dock, so the
+// listing and the file preview share the column (master ↔ detail) rather than
+// sitting side by side as the old modal did.
 
 const ROOT = "/workspace";
+// 16rem — matches the design's FilesPanel width.
+const WIDTH = 256;
 
-export function FilesBrowser({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function FilesBrowser({ onClose }: { onClose: () => void }) {
   // Current directory, its listing (null = loading, [] = empty/error), and the
   // selected file's path + contents (null content = loading).
   const [cwd, setCwd] = useState(ROOT);
@@ -23,19 +32,8 @@ export function FilesBrowser({ open, onClose }: { open: boolean; onClose: () => 
   const [body, setBody] = useState<string | null>(null);
   const [query, setQuery] = useState("");
 
-  // Each open starts fresh at the workspace root.
+  // Load the listing whenever the directory changes.
   useEffect(() => {
-    if (open) {
-      setCwd(ROOT);
-      setFile(null);
-      setBody(null);
-      setQuery("");
-    }
-  }, [open]);
-
-  // Load the listing whenever the directory changes while open.
-  useEffect(() => {
-    if (!open) return;
     let alive = true;
     setEntries(null);
     setErr(null);
@@ -51,7 +49,7 @@ export function FilesBrowser({ open, onClose }: { open: boolean; onClose: () => 
     return () => {
       alive = false;
     };
-  }, [open, cwd]);
+  }, [cwd]);
 
   // Load a file's preview when one is selected.
   useEffect(() => {
@@ -84,11 +82,40 @@ export function FilesBrowser({ open, onClose }: { open: boolean; onClose: () => 
   const rows = entries ? order(entries).filter((e) => !q || e.name.toLowerCase().includes(q)) : [];
 
   return (
-    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent style={{ maxWidth: 860, padding: 0 }}>
-        <DialogHeader style={{ padding: "16px 18px 10px" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <DialogTitle style={{ fontSize: 13, fontWeight: 500, flex: 1 }}>Files</DialogTitle>
+    <aside
+      style={{
+        width: WIDTH,
+        flexShrink: 0,
+        background: "var(--bg-1)",
+        borderRight: "1px solid var(--bd-soft)",
+        display: "flex",
+        flexDirection: "column",
+        minHeight: 0,
+        color: "var(--fg-1)",
+      }}
+    >
+      <div
+        style={{
+          padding: "8px 10px",
+          borderBottom: "1px solid var(--bd-soft)",
+          display: "flex",
+          alignItems: "center",
+          gap: 7,
+        }}
+      >
+        <span style={{ color: "var(--idle)", display: "inline-flex" }}>{Ico.files}</span>
+        <span style={{ fontSize: 13, fontWeight: 500, color: "var(--fg-0)" }}>Files</span>
+        <span style={{ flex: 1 }} />
+        <IconBtn title="Hide files panel (⌘E)" onClick={onClose}>
+          {Ico.close}
+        </IconBtn>
+      </div>
+
+      {/* When previewing a file the listing is hidden, so the filter only makes
+          sense in listing mode. */}
+      {file === null && (
+        <>
+          <div style={{ padding: "8px 10px 0" }}>
             <input
               className="mono"
               placeholder="filter by name…"
@@ -96,7 +123,7 @@ export function FilesBrowser({ open, onClose }: { open: boolean; onClose: () => 
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => e.key === "Escape" && setQuery("")}
               style={{
-                width: 200,
+                width: "100%",
                 padding: "4px 8px",
                 borderRadius: 5,
                 border: "1px solid var(--bd-soft)",
@@ -107,35 +134,18 @@ export function FilesBrowser({ open, onClose }: { open: boolean; onClose: () => 
               }}
             />
           </div>
-          <Crumbs
-            cwd={cwd}
-            onNav={(p) => {
-              setFile(null);
-              setBody(null);
-              setQuery("");
-              setCwd(p);
-            }}
-          />
-        </DialogHeader>
-        <div
-          style={{
-            display: "flex",
-            borderTop: "1px solid var(--bd-soft)",
-            background: "var(--bg-0)",
-            height: "62vh",
-          }}
-        >
-          {/* directory listing */}
-          <div
-            className="scroll"
-            style={{
-              width: file ? 300 : "100%",
-              flexShrink: 0,
-              overflow: "auto",
-              borderRight: file ? "1px solid var(--bd-soft)" : "none",
-              padding: "6px 8px",
-            }}
-          >
+          <div style={{ padding: "8px 10px 6px" }}>
+            <Crumbs
+              cwd={cwd}
+              onNav={(p) => {
+                setFile(null);
+                setBody(null);
+                setQuery("");
+                setCwd(p);
+              }}
+            />
+          </div>
+          <div className="scroll" style={{ flex: 1, overflow: "auto", padding: "0 8px 8px" }}>
             {entries === null ? (
               <Note>Reading {cwd}…</Note>
             ) : err ? (
@@ -153,57 +163,81 @@ export function FilesBrowser({ open, onClose }: { open: boolean; onClose: () => 
               ))
             )}
           </div>
+        </>
+      )}
 
-          {/* file preview */}
-          {file && (
-            <div
-              className="scroll"
+      {/* File preview — replaces the listing in the same column; a back row
+          returns to the directory. */}
+      {file !== null && (
+        <>
+          <button
+            type="button"
+            onClick={() => {
+              setFile(null);
+              setBody(null);
+            }}
+            className="rail-file mono"
+            title="Back to listing"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              width: "100%",
+              padding: "7px 10px",
+              border: "none",
+              borderBottom: "1px solid var(--bd-soft)",
+              background: "var(--bg-1)",
+              color: "var(--fg-1)",
+              cursor: "pointer",
+              fontSize: 11.5,
+              textAlign: "left",
+            }}
+          >
+            <span style={{ transform: "rotate(180deg)", display: "inline-flex" }}>
+              {Ico.arrowR}
+            </span>
+            <span
               style={{
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
                 flex: 1,
-                minWidth: 0,
-                overflow: "auto",
-                fontFamily: "var(--mono)",
-                fontSize: 11.5,
-                lineHeight: 1.55,
               }}
             >
-              <div
-                className="mono"
+              {file.slice(cwd.length + 1)}
+            </span>
+          </button>
+          <div
+            className="scroll"
+            style={{
+              flex: 1,
+              minWidth: 0,
+              overflow: "auto",
+              fontFamily: "var(--mono)",
+              fontSize: 11.5,
+              lineHeight: 1.55,
+              background: "var(--bg-0)",
+            }}
+          >
+            {body === null ? (
+              <Note>Reading file…</Note>
+            ) : (
+              <pre
                 style={{
-                  position: "sticky",
-                  top: 0,
-                  padding: "8px 12px",
-                  fontSize: 11,
-                  color: "var(--fg-2)",
-                  background: "var(--bg-1)",
-                  borderBottom: "1px solid var(--bd-soft)",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
+                  margin: 0,
+                  padding: "10px 12px",
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                  color: "var(--fg-1)",
                 }}
               >
-                {file.slice(cwd.length + 1)}
-              </div>
-              {body === null ? (
-                <Note>Reading file…</Note>
-              ) : (
-                <pre
-                  style={{
-                    margin: 0,
-                    padding: "10px 12px",
-                    whiteSpace: "pre-wrap",
-                    wordBreak: "break-word",
-                    color: "var(--fg-1)",
-                  }}
-                >
-                  {body || "(empty file)"}
-                </pre>
-              )}
-            </div>
-          )}
-        </div>
-      </DialogContent>
-    </Dialog>
+                {body || "(empty file)"}
+              </pre>
+            )}
+          </div>
+        </>
+      )}
+    </aside>
   );
 }
 
