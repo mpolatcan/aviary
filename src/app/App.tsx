@@ -136,6 +136,8 @@ function HubView() {
   // Resume drawer docks at the right, replacing the activity-rail slot (design
   // resume.jsx). The drawer self-gates on the same flag, so it's null when closed.
   const resume = useOverlay((s) => s.resume);
+  // The drawer can dock left (before the hub) or right (replacing the rail).
+  const resumeSide = useOverlay((s) => s.resumeSide);
   // Real working/idle signal for PaneHead + the rail's Activity section.
   useActivityPoll();
   // Live awaiting-input + turn-history stream (← agent-native hooks, §7): keeps
@@ -145,6 +147,7 @@ function HubView() {
 
   return (
     <>
+      {resume && resumeSide === "left" && <ResumeDrawer />}
       {files && <FilesBrowser onClose={() => setFiles(false)} />}
       <main
         style={{
@@ -183,7 +186,7 @@ function HubView() {
       </main>
 
       {diff !== null && <DiffViewer path={diff} onClose={() => setDiff(null)} />}
-      {resume ? <ResumeDrawer /> : <ActivityRail />}
+      {resume && resumeSide === "right" ? <ResumeDrawer /> : <ActivityRail />}
     </>
   );
 }

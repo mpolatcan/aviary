@@ -55,9 +55,25 @@ const AGENT_ORDER: { agent: "claude" | "codex"; label: string }[] = [
   { agent: "codex", label: "Codex" },
 ];
 
+// Time buckets for the filter pills (design resume.jsx All/Today/Week/Older).
+// Real, derived from each transcript's lastActive timestamp — disjoint windows
+// so the per-bucket counts sum to the All total.
+type Bucket = "all" | "today" | "week" | "older";
+
+function bucketOf(iso: string): Exclude<Bucket, "all"> {
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return "older";
+  const days = (Date.now() - t) / 86_400_000;
+  if (days < 1) return "today";
+  if (days < 7) return "week";
+  return "older";
+}
+
 export function ResumeDrawer() {
   const open = useOverlay((s) => s.resume);
   const setResume = useOverlay((s) => s.setResume);
+  const side = useOverlay((s) => s.resumeSide);
+  const setSide = useOverlay((s) => s.setResumeSide);
   const status = useStore((s) => s.status);
   const newPlate = useStore((s) => s.newPlate);
   const setView = useStore((s) => s.setView);
@@ -71,6 +87,7 @@ export function ResumeDrawer() {
   const [codex, setCodex] = useState<CodexSession[] | null>(null);
   const [resuming, setResuming] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  const [bucket, setBucket] = useState<Bucket>("all");
 
   useEffect(() => {
     if (!open || !running) {
@@ -117,18 +134,32 @@ export function ResumeDrawer() {
     );
   }, [all, query]);
 
-  // Group the filtered rows by agent, preserving the newest-first order. The
-  // section's "showing" count reflects the filter; the header badge is the true
-  // unfiltered total.
+  // Per-bucket counts over the query-filtered set, so the pills reflect the
+  // current search. All / Today / Week / Older partition the same rows.
+  const bucketCounts = useMemo(() => {
+    const c = { all: filtered.length, today: 0, week: 0, older: 0 };
+    for (const r of filtered) c[bucketOf(r.lastActive)] += 1;
+    return c;
+  }, [filtered]);
+
+  // Apply the active time bucket on top of the text filter.
+  const shown = useMemo(
+    () => (bucket === "all" ? filtered : filtered.filter((r) => bucketOf(r.lastActive) === bucket)),
+    [filtered, bucket],
+  );
+
+  // Group the shown rows by agent, preserving the newest-first order. The
+  // section's "showing" count reflects the active filters; the header badge is
+  // the true unfiltered total. Sections with no rows after filtering are hidden.
   const sections = useMemo(
     () =>
       AGENT_ORDER.map(({ agent, label }) => ({
         agent,
         label,
-        rows: filtered.filter((r) => r.agent === agent),
+        rows: shown.filter((r) => r.agent === agent),
         total: all.filter((r) => r.agent === agent).length,
-      })).filter((s) => s.total > 0),
-    [filtered, all],
+      })).filter((s) => s.rows.length > 0),
+    [shown, all],
   );
 
   // Claude → true restore via `--resume`. Codex → no backend resume path, so spawn
@@ -156,7 +187,11 @@ export function ResumeDrawer() {
         width: 350,
         flexShrink: 0,
         background: "var(--bg-1)",
-        borderLeft: "1px solid var(--bd-soft)",
+        // Border faces the hub: right-docked → border on its left edge, and
+        // vice-versa when flipped to the left.
+        ...(side === "left"
+          ? { borderRight: "1px solid var(--bd-soft)" }
+          : { borderLeft: "1px solid var(--bd-soft)" }),
         display: "flex",
         flexDirection: "column",
         minHeight: 0,
@@ -190,6 +225,32 @@ export function ResumeDrawer() {
           </span>
         )}
         <span style={{ flex: 1 }} />
+        {/* Dock side toggle (design resume.jsx) — flip the drawer left/right. */}
+        <div
+          style={{
+            display: "inline-flex",
+            border: "1px solid var(--bd-soft)",
+            borderRadius: 4,
+            overflow: "hidden",
+          }}
+        >
+          <IconBtn
+            title="Dock left"
+            active={side === "left"}
+            onClick={() => setSide("left")}
+            style={{ width: 22, height: 22, borderRadius: 0 }}
+          >
+            {Ico.sidebarL}
+          </IconBtn>
+          <IconBtn
+            title="Dock right"
+            active={side === "right"}
+            onClick={() => setSide("right")}
+            style={{ width: 22, height: 22, borderRadius: 0 }}
+          >
+            {Ico.sidebarR}
+          </IconBtn>
+        </div>
         <IconBtn title="Close drawer (⌘R)" onClick={() => setResume(false)}>
           {Ico.close}
         </IconBtn>
@@ -227,6 +288,23 @@ export function ResumeDrawer() {
             }}
           />
         </div>
+
+        {/* Time-bucket pills (design resume.jsx). Counts are real — derived from
+            each transcript's lastActive over the current text-filtered set. */}
+        <div style={{ display: "flex", gap: 4, marginTop: 8, flexWrap: "wrap" }}>
+          <Pill active={bucket === "all"} onClick={() => setBucket("all")}>
+            All · {bucketCounts.all}
+          </Pill>
+          <Pill active={bucket === "today"} onClick={() => setBucket("today")}>
+            Today · {bucketCounts.today}
+          </Pill>
+          <Pill active={bucket === "week"} onClick={() => setBucket("week")}>
+            Week · {bucketCounts.week}
+          </Pill>
+          <Pill active={bucket === "older"} onClick={() => setBucket("older")}>
+            Older · {bucketCounts.older}
+          </Pill>
+        </div>
       </div>
 
       {/* body — sessions grouped by agent */}
@@ -241,6 +319,8 @@ export function ResumeDrawer() {
           </Note>
         ) : filtered.length === 0 ? (
           <Note>No sessions match “{query}”.</Note>
+        ) : sections.length === 0 ? (
+          <Note>No sessions in this time range.</Note>
         ) : (
           sections.map((sec) => (
             <AgentSection
@@ -436,6 +516,37 @@ function DrawerRow({
         </Button>
       </div>
     </div>
+  );
+}
+
+// A time-bucket filter pill. Active = filled chip; idle = ghost. (design's
+// `.btn xs` / `.btn xs ghost` pair, expressed in our token palette.)
+function Pill({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="mono"
+      style={{
+        padding: "2px 8px",
+        borderRadius: 5,
+        fontSize: 10.5,
+        background: active ? "var(--bg-3)" : "transparent",
+        border: `1px solid ${active ? "var(--bd-soft)" : "transparent"}`,
+        color: active ? "var(--fg-0)" : "var(--fg-3)",
+        cursor: "pointer",
+      }}
+    >
+      {children}
+    </button>
   );
 }
 

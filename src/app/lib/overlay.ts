@@ -21,6 +21,10 @@ interface OverlayState {
   // Claude/Codex transcripts, grouped by agent. Lives here (not a top-level view)
   // so resuming pulls a session INTO the current workspace without leaving it.
   resume: boolean;
+  // Which side the Resume drawer docks on (design resume.jsx header toggle). The
+  // drawer replaces the activity-rail slot on the right by default; the user can
+  // flip it to the left of the hub. Session-local (a UI preference, not data).
+  resumeSide: "left" | "right";
   // About dialog open/closed — app + environment identity (real data), opened
   // from the sidebar wordmark. A modal "About this app", separate from the
   // Settings › About pane which embeds the same facts in the config surface.
@@ -34,6 +38,7 @@ interface OverlayState {
   setDiff: (path: string | null) => void;
   setFiles: (open: boolean) => void;
   setResume: (open: boolean) => void;
+  setResumeSide: (side: "left" | "right") => void;
   setAbout: (open: boolean) => void;
   setNewWorkspace: (open: boolean) => void;
   togglePalette: () => void;
@@ -46,6 +51,7 @@ export const useOverlay = create<OverlayState>((set) => ({
   diff: null,
   files: false,
   resume: false,
+  resumeSide: "right",
   about: false,
   newWorkspace: false,
   setPalette: (palette) => set({ palette }),
@@ -53,6 +59,7 @@ export const useOverlay = create<OverlayState>((set) => ({
   setDiff: (diff) => set({ diff }),
   setFiles: (files) => set({ files }),
   setResume: (resume) => set({ resume }),
+  setResumeSide: (resumeSide) => set({ resumeSide }),
   setAbout: (about) => set({ about }),
   setNewWorkspace: (newWorkspace) => set({ newWorkspace }),
   // Opening one overlay closes the other so they never stack.
