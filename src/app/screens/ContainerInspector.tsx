@@ -30,6 +30,7 @@ import {
   type RuntimeHealth,
   ipc,
 } from "@/app/lib/ipc";
+import { useOverlay } from "@/app/lib/overlay";
 import { useStore } from "@/app/lib/store";
 import { Button } from "@/app/ui/button";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -74,6 +75,8 @@ export function ContainerInspector() {
   const startRuntime = useStore((s) => s.startRuntime);
   const stopRuntime = useStore((s) => s.stopRuntime);
   const restartRuntime = useStore((s) => s.restartRuntime);
+  const newPlate = useStore((s) => s.newPlate);
+  const setNewWorkspace = useOverlay((s) => s.setNewWorkspace);
 
   const name = status?.name ?? "codehub-runtime";
   const state = status?.state ?? "missing";
@@ -222,6 +225,13 @@ export function ContainerInspector() {
     setView("hub");
   };
 
+  // Exec shell — spawn a plain bash pane in the shared runtime and jump to it,
+  // the same path the Hub's "+ shell" control uses (newPlate("shell")).
+  const execShell = () => {
+    void newPlate("shell", "standard");
+    setView("hub");
+  };
+
   return (
     <main
       style={{
@@ -243,6 +253,12 @@ export function ContainerInspector() {
             {state === "running" ? "1 running" : `0 running · ${state}`}
             {dockerInfo?.version && ` · docker ${dockerInfo.version}`}
           </span>
+          <span style={{ flex: 1 }} />
+          <Button size="sm" onClick={() => setNewWorkspace(true)}>
+            <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              {Ico.plus}New workspace
+            </span>
+          </Button>
         </div>
         <p className="mono" style={{ margin: "6px 0 0", fontSize: 11, color: "var(--fg-3)" }}>
           CodeHub runs every session on one shared runtime container.
@@ -360,6 +376,7 @@ export function ContainerInspector() {
               onStart={() => void startRuntime()}
               onStop={() => void stopRuntime()}
               onRestart={() => void restartRuntime()}
+              onExec={execShell}
             />
           </div>
 
@@ -968,12 +985,14 @@ function RuntimeControls({
   onStart,
   onStop,
   onRestart,
+  onExec,
 }: {
   state: ContainerState;
   sessionCount: number;
   onStart: () => void;
   onStop: () => void;
   onRestart: () => void;
+  onExec: () => void;
 }) {
   const sessionsClause =
     sessionCount > 0
@@ -1003,6 +1022,9 @@ function RuntimeControls({
   if (state === "running") {
     return (
       <div style={{ display: "flex", gap: 8 }}>
+        <Button size="sm" variant="outline" onClick={onExec}>
+          Exec shell
+        </Button>
         <Button size="sm" variant="outline" onClick={confirmRestart}>
           Restart
         </Button>
