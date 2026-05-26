@@ -48,10 +48,9 @@ type TailError = Box<dyn std::error::Error + Send + Sync + 'static>;
 /// up-to-1s discovery lag, and an agent can burst more than 10 lines into a fresh
 /// file in that window; a last-10 tail would silently drop the earliest events.
 /// `-n +1` emits the whole file on discovery, so nothing written before the poll
-/// noticed is lost. (Re-ingesting a full file is harmless: `ingest` is replay-safe
-/// — pending state converges and the activity ring is bounded — and the dedup set
-/// means it only re-replays if the OUTER loop re-attaches after a container
-/// stop/stream error, which is rare.)
+/// noticed is lost. The resulting full-file re-emission on every (re)attach is
+/// de-duplicated upstream by the per-session [`ReplayCursor`], so a `run_tail`
+/// retry or reconciler respawn never double-ingests already-seen lines.
 ///
 /// `.keep` (the dir sentinel) never matches `*.jsonl`, so it's skipped. `trap
 /// 'kill 0'` reaps the child tails when the exec shell exits. dash-compatible (the
@@ -331,7 +330,9 @@ const RECONCILE_INTERVAL: Duration = Duration::from_secs(5);
 /// (`list_workspace_containers`, which returns empty when the per-workspace flag
 /// is off — so this degrades to exactly the old single-tailer behaviour). New
 /// containers get a tailer spawned; vanished/stopped ones get theirs aborted.
-/// Tailers are keyed by container name and all share the cloned `on_event` sink.
+/// Tailers (and their replay cursors) are keyed by container ID so a recreate —
+/// new ID, fresh /tmp — drops the stale cursor; all share the cloned `on_event`
+/// sink.
 ///
 /// The caller owns the OUTER spawn (Tauri's runtime vs `tokio` — see
 /// [`start_event_tailer`]); the per-container tailers spawned INSIDE run under
@@ -344,22 +345,61 @@ pub async fn reconcile_event_tailers_loop<F>(
 ) where
     F: Fn(&AgentEvent) + Send + Sync + Clone + 'static,
 {
-    // container name → its running tailer task.
+    // Tailers and their replay cursors are keyed STRICTLY by container ID — never
+    // by name. Using the ID is load-bearing on two fronts:
+    //   * Recreate (recreate_runtime / mount-mismatch ensure_container) keeps the
+    //     NAME but assigns a NEW id and a FRESH /tmp. A name key would carry a
+    //     stale high-water into the new container and suppress its early events; an
+    //     ID key changes → old tailer + cursor dropped, fresh pair spawned. A plain
+    //     stop/start keeps the same id → cursor reused (no replay of persisted /tmp).
+    //   * A name FALLBACK (for a container whose id we couldn't read yet) is itself
+    //     a replay-dup source: the name-keyed tailer ingests events and builds a
+    //     cursor, then the moment `status()`/list first yields the id the key flips
+    //     name→id, discarding that cursor and replaying /tmp from line 1. So we
+    //     simply DON'T tail a container until we know its id; once it appears, the
+    //     id-keyed tailer reads the file from line 1 and captures every event once.
     let mut active: HashMap<String, tokio::task::JoinHandle<()>> = HashMap::new();
+    let mut cursors: HashMap<String, ReplayCursor> = HashMap::new();
+    // Last id positively read for the shared runtime, remembered across ticks so a
+    // transient `status()` id=None blip (container still up) doesn't drop its live
+    // cursor; only a SUCCESSFUL read of a DIFFERENT id (a genuine recreate) re-keys.
+    let mut shared_id: Option<String> = None;
 
     loop {
-        // Build the target set: shared runtime first (always tailed — `run_tail`
-        // retries harmlessly while it is down), then each running workspace
-        // container resolved BY KEY so its dedicated docker client is used.
+        // Pin the tailer's exec target to the container ID. The resolved
+        // DockerClient otherwise execs by NAME, so an old (soon-to-be-aborted)
+        // tailer whose container was recreated would, on its next `run_tail` retry,
+        // exec into the same-NAME replacement — reading the new container's fresh
+        // /tmp through the OLD stale cursor and suppressing / double-ingesting its
+        // events. Pinned to the old ID, that exec 404s and retries harmlessly until
+        // the reconciler aborts it; only the fresh id-keyed tailer touches the new
+        // container.
+        fn pin_to_id(base: DockerClient, id: &str) -> DockerClient {
+            DockerClient::from_docker(base.docker.clone(), id.to_string())
+        }
+
+        // `running` = id-keyed targets to tail this cycle; `existing` = every
+        // container that still exists (any state) for cursor retention.
+        let mut running: Vec<(String, Arc<DockerClient>)> = Vec::new();
+        let mut existing: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+        // Shared runtime: sticky id across transient inspect blips. Tail it only
+        // once we know its id (never by name); while its id is unknown — down at
+        // boot or a transient failure — skip it this tick and let a later tick
+        // attach the id-keyed tailer (which replays /tmp from line 1, no loss).
         let shared = manager.default();
-        let mut targets: Vec<(String, Arc<DockerClient>)> = vec![(
-            shared.container_name.clone(),
-            Arc::new(shared.docker_client()),
-        )];
-        // A transient daemon error must NOT tear down every per-workspace tailer:
-        // an empty fleet would abort them all this cycle (churn) and drop their
-        // events until respawn. On error, keep the current `active` set untouched
-        // and retry next tick — the shared runtime tailer is unaffected either way.
+        let shared_status = shared.status().await;
+        if shared_status.id.is_some() {
+            shared_id = shared_status.id.clone();
+        }
+        if let Some(id) = shared_id.clone() {
+            let client = pin_to_id(shared.docker_client(), &id);
+            existing.insert(id.clone());
+            running.push((id, Arc::new(client)));
+        }
+
+        // A transient daemon error must NOT tear down every per-workspace tailer
+        // (churn + dropped events for a cycle): keep the current state and retry.
         let workspaces = match manager.list_workspace_containers().await {
             Ok(list) => list,
             Err(e) => {
@@ -369,29 +409,49 @@ pub async fn reconcile_event_tailers_loop<F>(
             },
         };
         for wc in workspaces {
+            // No id → don't key it (name fallback would replay-dup on the later
+            // id flip). A listed container essentially always has an id; skipping
+            // it for a tick is harmless.
+            let Some(id) = wc.status.id.clone() else {
+                continue;
+            };
+            existing.insert(id.clone());
             if wc.status.state == ContainerState::Running {
                 let lc = manager.workspace_container(&wc.key);
-                targets.push((wc.status.name.clone(), Arc::new(lc.docker_client())));
+                let client = pin_to_id(lc.docker_client(), &id);
+                running.push((id, Arc::new(client)));
             }
         }
 
-        // Drop tailers whose container is gone/stopped (frees the bollard exec).
-        let wanted: std::collections::HashSet<&String> = targets.iter().map(|(n, _)| n).collect();
-        active.retain(|name, handle| {
-            let keep = wanted.contains(name);
+        // Drop tailers whose container is no longer running (frees the bollard
+        // exec); their cursor is retained below unless the container is gone.
+        let running_keys: std::collections::HashSet<&String> =
+            running.iter().map(|(k, _)| k).collect();
+        active.retain(|key, handle| {
+            let keep = running_keys.contains(key);
             if !keep {
                 handle.abort();
             }
             keep
         });
+        // Forget cursors for containers that no longer exist (removed OR recreated
+        // → their old /tmp is gone, so a stale high-water would wrongly skip the
+        // fresh container's new lines).
+        cursors.retain(|key, _| existing.contains(key));
 
-        // Spawn a tailer for any newly-seen container.
-        for (name, docker) in targets {
-            active.entry(name).or_insert_with(|| {
-                let tracker = tracker.clone();
-                let on_event = on_event.clone();
-                tokio::spawn(event_tailer_loop(docker, tracker, on_event))
-            });
+        // Spawn a tailer for any running container not already tailed, reusing
+        // (or creating) its persistent cursor.
+        for (key, docker) in running {
+            if active.contains_key(&key) {
+                continue;
+            }
+            let cursor = cursors.entry(key.clone()).or_default().clone();
+            let tracker = tracker.clone();
+            let on_event = on_event.clone();
+            active.insert(
+                key,
+                tokio::spawn(event_tailer_loop(docker, tracker, on_event, cursor)),
+            );
         }
 
         tokio::time::sleep(RECONCILE_INTERVAL).await;
@@ -448,21 +508,50 @@ fn maybe_notify(app: &tauri::AppHandle, config: &crate::config::ConfigStore, eve
     }
 }
 
+/// Per-session replay cursor for ONE container: `session → count of lines already
+/// ingested`. [`TAIL_SCRIPT`] re-emits every file from line 1 on each (re)attach,
+/// so without this a `run_tail` retry (transient stream drop) — or a reconciler
+/// respawn after a container stop/start — would re-ingest the whole history and
+/// duplicate every event. The cursor is held by the reconciler and shared (by
+/// `Arc`) into the container's tailer, so it survives BOTH retries and respawns;
+/// it is dropped when the container is removed OR recreated (the reconciler keys
+/// cursors by container ID, so a new container with a fresh /tmp gets a fresh
+/// cursor — see [`reconcile_event_tailers_loop`]). Keyed per container (one map
+/// each), so the same session name in two containers never collides.
+pub type ReplayCursor = Arc<Mutex<HashMap<String, usize>>>;
+
+/// Extract just the `session` field from a hook line, to position it against the
+/// cursor without committing to the full parse `ingest` does. A line that isn't a
+/// session-bearing JSON object (header, blank, malformed) yields `None` and is
+/// skipped consistently on every replay, so it never desyncs the per-session
+/// count (the cursor counts session-attributable lines, not raw file lines).
+fn line_session(line: &str) -> Option<String> {
+    #[derive(Deserialize)]
+    struct SessionOnly {
+        session: String,
+    }
+    serde_json::from_str::<SessionOnly>(line)
+        .ok()
+        .map(|s| s.session)
+}
+
 /// The retrying event-tailer loop with a caller-supplied per-event sink. Handles
 /// a not-yet-ready container or an absent events dir (`tail -F` picks up files as
 /// they appear). Transport-agnostic: the Tauri app passes a window-emit sink, the
 /// dev bridge a WS-frame sink — one tail implementation, two transports. The
 /// caller owns the spawn so each can use the runtime available in its context
-/// (see [`start_event_tailer`]).
+/// (see [`start_event_tailer`]). `cursor` carries the per-session high-water mark
+/// across `run_tail` retries so a re-attach replay isn't re-ingested.
 pub async fn event_tailer_loop<F>(
     docker: Arc<DockerClient>,
     tracker: Arc<EventsTracker>,
     on_event: F,
+    cursor: ReplayCursor,
 ) where
     F: Fn(&AgentEvent) + Send + Sync + 'static,
 {
     loop {
-        if let Err(e) = run_tail(&docker, &tracker, &on_event).await {
+        if let Err(e) = run_tail(&docker, &tracker, &on_event, &cursor).await {
             tracing::debug!("event tailer stopped ({e}), will retry in 5s");
         }
         tokio::time::sleep(Duration::from_secs(5)).await;
@@ -477,7 +566,14 @@ async fn run_tail<F: Fn(&AgentEvent)>(
     docker: &DockerClient,
     tracker: &EventsTracker,
     on_event: &F,
+    cursor: &Mutex<HashMap<String, usize>>,
 ) -> Result<(), TailError> {
+    // Per-session line index WITHIN this attach (one `run_tail` call == one tail
+    // epoch). Reset to empty each call; compared against the persistent `cursor`
+    // high-water so only lines past what we've already ingested for a session are
+    // re-delivered after a re-attach replay. Lines for a session arrive in file
+    // order (one `tail` per file), so this index tracks file position reliably.
+    let mut epoch_seen: HashMap<String, usize> = HashMap::new();
     // Ensure the events dir exists so the tail script's `cd` succeeds on a
     // brand-new container (the dir is created lazily by the hook on first event).
     // `mkdir -p` + a sentinel `.keep` is idempotent; best-effort — if it fails we
@@ -535,8 +631,33 @@ async fn run_tail<F: Fn(&AgentEvent)>(
                         if line.starts_with("==>") {
                             continue;
                         }
-                        if let Some(event) = tracker.ingest(&line) {
-                            on_event(&event);
+                        // Position this line against the per-session cursor: skip
+                        // it if a prior epoch already ingested through this index
+                        // (a re-attach replay), otherwise advance the high-water
+                        // and ingest. Non-session lines are skipped without
+                        // counting — consistently across replays, so no desync.
+                        let Some(session) = line_session(&line) else {
+                            continue;
+                        };
+                        let idx = {
+                            let c = epoch_seen.entry(session.clone()).or_insert(0);
+                            *c += 1;
+                            *c
+                        };
+                        let is_new = {
+                            let mut hw = cursor.lock().unwrap_or_else(|e| e.into_inner());
+                            let entry = hw.entry(session).or_insert(0);
+                            if idx > *entry {
+                                *entry = idx;
+                                true
+                            } else {
+                                false
+                            }
+                        };
+                        if is_new {
+                            if let Some(event) = tracker.ingest(&line) {
+                                on_event(&event);
+                            }
                         }
                     }
                 },
