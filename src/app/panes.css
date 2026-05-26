@@ -670,3 +670,10 @@ body.dragging .divider::after {
   border-color: var(--bd-strong);
   background: var(--bg-3);
 }
+
+/* Auto-hide activity rail at narrow widths so the hub grid isn't squeezed */
+@media (max-width: 1100px) {
+  .activity-rail {
+    display: none !important;
+  }
+}

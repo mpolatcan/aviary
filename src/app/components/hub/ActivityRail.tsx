@@ -36,6 +36,7 @@ export function ActivityRail() {
 
   return (
     <aside
+      className="activity-rail"
       style={{
         width: 280,
         flexShrink: 0,

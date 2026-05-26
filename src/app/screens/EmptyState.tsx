@@ -127,10 +127,11 @@ export function EmptyHero({ onNew }: EmptyStateProps) {
             <h1
               style={{
                 margin: 0,
-                fontSize: 36,
+                fontSize: "clamp(22px, 3vw, 36px)",
                 fontWeight: 600,
                 letterSpacing: "-0.02em",
                 color: "var(--fg-0)",
+                whiteSpace: "nowrap",
               }}
             >
               Run coding agents,

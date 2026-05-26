@@ -70,6 +70,7 @@ export function Usage() {
   const [claudeAccount, setClaudeAccount] = useState<ClaudeAccount | null>(null);
   const [, setTick] = useState(0);
   const [updatedAt, setUpdatedAt] = useState(() => Date.now());
+  const [usageLoaded, setUsageLoaded] = useState(false);
 
   useEffect(() => {
     if (!running) {
@@ -77,6 +78,7 @@ export function Usage() {
       setCodex(null);
       setRates(null);
       setClaudeAccount(null);
+      setUsageLoaded(false);
       return;
     }
     let alive = true;
@@ -87,10 +89,14 @@ export function Usage() {
             if (alive) {
               set(v);
               setUpdatedAt(Date.now());
+              setUsageLoaded(true);
             }
           })
           .catch(() => {
-            if (alive) set(null);
+            if (alive) {
+              set(null);
+              setUsageLoaded(true);
+            }
           });
       };
       tick();
@@ -246,9 +252,11 @@ export function Usage() {
         }}
       >
         {!running ? (
-          <Note>Runtime not running — no usage data to read.</Note>
-        ) : claude === null && codex === null ? (
+          <Note>Runtime not running — start a workspace to see usage data.</Note>
+        ) : !usageLoaded ? (
           <Note>Reading session transcripts…</Note>
+        ) : claude === null && codex === null ? (
+          <Note>No session transcripts found — start an agent to begin tracking usage.</Note>
         ) : (
           <>
             {showClaude &&

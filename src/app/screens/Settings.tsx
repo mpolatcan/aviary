@@ -612,7 +612,7 @@ function AboutPane({
       <SectionHead label="Agents" />
       <div className="ch-card" style={{ padding: 16, display: "grid", gap: "10px 24px" }}>
         {CLIS.map((c) => (
-          <Kv key={c.id} k={c.label} v={agentVersions?.[c.id]?.version ?? dash} />
+          <Kv key={c.id} k={c.label} v={agentVersions?.[c.id]?.version || "not installed"} />
         ))}
       </div>
 
@@ -752,6 +752,8 @@ function GeneralPane() {
 // (CODEHUB_IMAGE, CODEHUB_NETWORK_MODE), not from here.
 function RuntimePane({ dockerInfo }: { dockerInfo: DockerInfo | null }) {
   const dash = "—";
+  const runtimeState = useStore((s) => s.status?.state);
+  const notRunning = runtimeState !== "running";
   const [image, setImage] = useState<ImageInfo | null>(null);
   const [health, setHealth] = useState<RuntimeHealth | null>(null);
   useEffect(() => {
@@ -778,6 +780,26 @@ function RuntimePane({ dockerInfo }: { dockerInfo: DockerInfo | null }) {
         <span className="mono">CODEHUB_NETWORK_MODE</span> env vars. Full inspection lives in the
         Containers view.
       </PaneHead>
+
+      {notRunning && (
+        <div
+          className="ch-card"
+          style={{
+            padding: "12px 16px",
+            marginBottom: 16,
+            borderColor: "color-mix(in oklab, var(--wait) 35%, var(--bd))",
+            background: "color-mix(in oklab, var(--wait) 5%, var(--bg-2))",
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            fontSize: 12.5,
+            color: "var(--fg-1)",
+          }}
+        >
+          <StatusDot status="wait" />
+          Container not running — image and health fields below may be stale.
+        </div>
+      )}
 
       <SectionHead label="Daemon" />
       <div className="ch-card" style={{ padding: 16, display: "grid", gap: "10px 24px" }}>
@@ -1342,7 +1364,7 @@ function WorkspaceChanger() {
 // sheet (single source: SHORTCUT_GROUPS in components/hub/Shortcuts.tsx).
 function ShortcutsPane() {
   return (
-    <div style={{ maxWidth: 720 }}>
+    <div style={{ maxWidth: 720, paddingTop: 4 }}>
       <PaneHead title="Keyboard shortcuts">
         Every binding that works today. Inside a terminal pane, all other keys pass straight through
         to the agent / tmux. The same list opens anywhere with <span className="kbd">⌘</span>{" "}
@@ -1438,7 +1460,7 @@ function AppearancePane() {
         <div style={{ flex: 1 }}>
           <div style={{ fontSize: 13, color: "var(--fg-0)", marginBottom: 2 }}>Color theme</div>
           <div style={{ fontSize: 11.5, color: "var(--fg-2)" }}>
-            Switches the whole interface between dark and light.
+            Switches the whole interface between dark, gray, and light.
           </div>
         </div>
         <ThemeChoice theme={theme} onChange={setTheme} />
@@ -1491,6 +1513,7 @@ function ThemeChoice({ theme, onChange }: { theme: Theme; onChange: (t: Theme) =
       onChange={onChange}
       options={[
         { key: "dark", label: "Dark" },
+        { key: "gray", label: "Gray" },
         { key: "light", label: "Light" },
       ]}
     />

@@ -19,7 +19,7 @@
  *    committer identity, an empty stage, or an absent token shows the real reason,
  *    never a faked success.
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { DiffBody, SplitDiffBody, diffCounts, parseDiff } from "../components/hub/DiffBody";
 import { AgentGlyph } from "../components/primitives/AgentGlyph";
 import { IconBtn } from "../components/primitives/IconBtn";
@@ -33,6 +33,25 @@ import { useStore } from "../lib/store";
 type Filter = "all" | "staged" | "unstaged";
 type Layout = "unified" | "split";
 type Note = { kind: "ok" | "err"; text: string } | null;
+
+// Extract file paths from a raw unified diff for the file tree sidebar.
+function extractFiles(raw: string): { path: string; added: number; removed: number }[] {
+  if (!raw) return [];
+  const rows = parseDiff(raw);
+  const result: { path: string; added: number; removed: number }[] = [];
+  let current: { path: string; added: number; removed: number } | null = null;
+  for (const r of rows) {
+    if (r.kind === "file") {
+      if (current) result.push(current);
+      current = { path: r.text, added: 0, removed: 0 };
+    } else if (current) {
+      if (r.kind === "add") current.added++;
+      else if (r.kind === "del") current.removed++;
+    }
+  }
+  if (current) result.push(current);
+  return result;
+}
 
 // File count of a raw diff (= number of `diff --git` headers), for the filter
 // pill badges. Empty diff → 0.
@@ -71,6 +90,11 @@ export function SessionDetail({ session }: { session: string }) {
   const [loaded, setLoaded] = useState(false);
   const [filter, setFilter] = useState<Filter>("all");
   const [layout, setLayout] = useState<Layout>("unified");
+
+  // File tree sidebar.
+  const [showTree, setShowTree] = useState(true);
+  const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const diffScrollRef = useRef<HTMLDivElement>(null);
 
   // Commit / PR action state.
   const [busy, setBusy] = useState(false);
@@ -206,6 +230,7 @@ export function SessionDetail({ session }: { session: string }) {
 
   const active = diffs[filter];
   const counts = active ? diffCounts(parseDiff(active)) : { added: 0, removed: 0 };
+  const files = extractFiles(active);
   const filterLabel: Record<Filter, string> = {
     all: "all",
     staged: "staged",
@@ -385,25 +410,50 @@ export function SessionDetail({ session }: { session: string }) {
               Split
             </Seg>
           </div>
+          <IconBtn
+            title={showTree ? "Hide file tree" : "Show file tree"}
+            onClick={() => setShowTree((v) => !v)}
+          >
+            {Ico.files}
+          </IconBtn>
           <IconBtn title="Refresh diff" onClick={() => void refresh()}>
             {Ico.search}
           </IconBtn>
         </div>
 
-        {/* the diff stream */}
-        {layout === "split" ? (
-          <SplitDiffBody
-            diff={loaded ? active : null}
-            emptyLabel={emptyLabel(running, filter)}
-            style={{ flex: 1, minHeight: 0 }}
-          />
-        ) : (
-          <DiffBody
-            diff={loaded ? active : null}
-            emptyLabel={emptyLabel(running, filter)}
-            style={{ flex: 1, minHeight: 0 }}
-          />
-        )}
+        {/* file tree + diff stream */}
+        <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
+          {showTree && files.length > 0 && (
+            <FileTree
+              files={files}
+              selected={selectedFile}
+              onSelect={(path) => {
+                setSelectedFile((prev) => (prev === path ? null : path));
+                if (diffScrollRef.current) {
+                  const el = diffScrollRef.current.querySelector(
+                    `[data-file="${CSS.escape(path)}"]`,
+                  );
+                  el?.scrollIntoView({ behavior: "smooth", block: "start" });
+                }
+              }}
+            />
+          )}
+          <div ref={diffScrollRef} style={{ flex: 1, minWidth: 0, minHeight: 0 }}>
+            {layout === "split" ? (
+              <SplitDiffBody
+                diff={loaded ? active : null}
+                emptyLabel={emptyLabel(running, filter)}
+                style={{ height: "100%" }}
+              />
+            ) : (
+              <DiffBody
+                diff={loaded ? active : null}
+                emptyLabel={emptyLabel(running, filter)}
+                style={{ height: "100%" }}
+              />
+            )}
+          </div>
+        </div>
 
         {/* commit footer — real git-write actions */}
         <div
@@ -565,6 +615,98 @@ export function SessionDetail({ session }: { session: string }) {
         <span>⌘A stage · ⌘⏎ commit · Esc back</span>
       </div>
     </main>
+  );
+}
+
+// File tree sidebar — lists changed files from the active diff with +/- counts.
+// Clicking a file scrolls the diff body to that file's header.
+function FileTree({
+  files,
+  selected,
+  onSelect,
+}: {
+  files: { path: string; added: number; removed: number }[];
+  selected: string | null;
+  onSelect: (path: string) => void;
+}) {
+  return (
+    <div
+      style={{
+        width: 240,
+        flexShrink: 0,
+        borderRight: "1px solid var(--bd-soft)",
+        background: "var(--bg-1)",
+        overflow: "auto",
+      }}
+    >
+      <div className="lbl" style={{ padding: "10px 12px 6px", fontSize: 10, color: "var(--fg-3)" }}>
+        Files · {files.length}
+      </div>
+      {files.map((f) => {
+        const name = f.path.split("/").pop() ?? f.path;
+        const dir = f.path.includes("/") ? f.path.slice(0, f.path.lastIndexOf("/")) : "";
+        const isActive = selected === f.path;
+        return (
+          <button
+            key={f.path}
+            type="button"
+            onClick={() => onSelect(f.path)}
+            title={f.path}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              width: "100%",
+              padding: "6px 12px",
+              background: isActive ? "var(--bg-3)" : "transparent",
+              border: "none",
+              borderLeft: isActive ? "2px solid var(--fg-0)" : "2px solid transparent",
+              cursor: "pointer",
+              textAlign: "left",
+            }}
+          >
+            <span style={{ display: "inline-flex", color: "var(--fg-3)", flexShrink: 0 }}>
+              {Ico.diff}
+            </span>
+            <div style={{ flex: 1, minWidth: 0, overflow: "hidden" }}>
+              <div
+                className="mono"
+                style={{
+                  fontSize: 11.5,
+                  color: isActive ? "var(--fg-0)" : "var(--fg-1)",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {name}
+              </div>
+              {dir && (
+                <div
+                  className="mono"
+                  style={{
+                    fontSize: 10,
+                    color: "var(--fg-3)",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {dir}
+                </div>
+              )}
+            </div>
+            <span
+              className="mono tnum"
+              style={{ fontSize: 10, flexShrink: 0, display: "inline-flex", gap: 4 }}
+            >
+              {f.added > 0 && <span style={{ color: "var(--live)" }}>+{f.added}</span>}
+              {f.removed > 0 && <span style={{ color: "var(--err)" }}>-{f.removed}</span>}
+            </span>
+          </button>
+        );
+      })}
+    </div>
   );
 }
 

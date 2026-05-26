@@ -368,7 +368,7 @@ export function Dashboard() {
                 }}
               >
                 {sessions.length === 0
-                  ? "No sessions running. Press ⌘N to start one."
+                  ? "No sessions running. Press ⌘N to start one, or open an existing workspace from the sidebar."
                   : "No sessions match this filter."}
               </div>
             ) : (

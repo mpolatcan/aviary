@@ -8,13 +8,15 @@
  */
 import { useEffect, useState } from "react";
 
-export type Theme = "dark" | "light";
+export type Theme = "dark" | "gray" | "light";
 
 const KEY = "codehub.theme";
 
 export function getStoredTheme(): Theme {
   try {
-    return localStorage.getItem(KEY) === "light" ? "light" : "dark";
+    const v = localStorage.getItem(KEY);
+    if (v === "light" || v === "gray") return v;
+    return "dark";
   } catch {
     return "dark";
   }
@@ -22,7 +24,7 @@ export function getStoredTheme(): Theme {
 
 export function applyTheme(theme: Theme): void {
   const el = document.documentElement;
-  el.classList.remove("dark", "light");
+  el.classList.remove("dark", "gray", "light");
   el.classList.add(theme);
 }
 
@@ -47,6 +49,6 @@ export function useTheme(): { theme: Theme; setTheme: (t: Theme) => void; toggle
   return {
     theme,
     setTheme: set,
-    toggle: () => set((t) => (t === "dark" ? "light" : "dark")),
+    toggle: () => set((t) => (t === "dark" ? "gray" : t === "gray" ? "light" : "dark")),
   };
 }

@@ -164,7 +164,7 @@ pub struct Settings {
     // — Notifications (consumed by the desktop-notification work) —
     #[serde(default = "default_true")]
     pub notify_await_input: bool,
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub notify_turn_finish: bool,
     #[serde(default)]
     pub play_sound: bool,

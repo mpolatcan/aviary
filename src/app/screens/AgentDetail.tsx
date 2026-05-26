@@ -197,7 +197,13 @@ export function AgentDetail({
       ) : loading ? (
         <Empty note="Reading Claude config…" />
       ) : err ? (
-        <Empty note={`Couldn't read config: ${err}`} />
+        <Empty
+          note={
+            err.includes("503") || err.includes("no running")
+              ? "Start a workspace container to view the live Claude config."
+              : `Couldn't read config: ${err}`
+          }
+        />
       ) : (
         <>
           {/* Account */}

@@ -119,6 +119,7 @@ function DiffRow({ row }: { row: Row }) {
     return (
       <div
         className="mono"
+        data-file={row.text}
         style={{
           padding: "8px 12px",
           fontWeight: 500,
@@ -267,6 +268,7 @@ function SplitDiffRow({ row }: { row: SplitRow }) {
     return (
       <div
         className="mono"
+        data-file={row.text}
         style={{
           padding: "8px 12px",
           fontWeight: 500,

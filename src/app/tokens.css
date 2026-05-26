@@ -101,9 +101,9 @@
   --bg-hover: #dedcd5;
   --bg-active: #d4d2ca;
 
-  --bd: #d6d4cc;
-  --bd-strong: #b8b6ac;
-  --bd-soft: #e9e7e0;
+  --bd: #c8c5bc;
+  --bd-strong: #a8a59c;
+  --bd-soft: #dddad2;
 
   --fg-0: #16181c;
   --fg-1: #43474f;
@@ -152,6 +152,73 @@
   --border: #d6d4cc;
   --input: #d6d4cc;
   --ring: oklch(0.52 0.2 295);
+}
+
+/* ── GRAY ───────────────────────────────────────────────────────────────── */
+.gray,
+.ch-theme-gray {
+  --bg-0: #1a1d22;
+  --bg-1: #21252b;
+  --bg-2: #2a2e36;
+  --bg-3: #353a44;
+  --bg-hover: #404653;
+  --bg-active: #4b515e;
+
+  --bd: #3b414c;
+  --bd-strong: #525864;
+  --bd-soft: #2c3038;
+
+  --fg-0: #ecedf0;
+  --fg-1: #b9bdc6;
+  --fg-2: #858a96;
+  --fg-3: #6a6f7a;
+  --fg-4: #4c5159;
+
+  --live: oklch(0.76 0.16 145);
+  --live-dim: oklch(0.76 0.16 145 / 0.18);
+  --wait: oklch(0.78 0.14 75);
+  --wait-dim: oklch(0.78 0.14 75 / 0.2);
+  --idle: oklch(0.72 0.06 240);
+  --idle-dim: oklch(0.72 0.06 240 / 0.18);
+  --err: oklch(0.68 0.17 25);
+  --err-dim: oklch(0.68 0.17 25 / 0.18);
+  --done: oklch(0.68 0.08 200);
+
+  --pri: oklch(0.7 0.17 295);
+  --pri-dim: oklch(0.7 0.17 295 / 0.18);
+
+  --spend-ok: var(--fg-0);
+  --spend-warn: oklch(0.78 0.14 75);
+  --spend-over: oklch(0.68 0.17 25);
+
+  --a-claude: oklch(0.72 0.14 35);
+  --a-codex: oklch(0.72 0.13 265);
+  --a-antigravity: oklch(0.76 0.1 205);
+  --a-shell: oklch(0.72 0.13 150);
+
+  --shadow-1: 0 1px 0 rgba(255, 255, 255, 0.025), 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-2: 0 2px 0 rgba(255, 255, 255, 0.02), 0 6px 16px rgba(0, 0, 0, 0.4);
+  --shadow-3: 0 4px 0 rgba(255, 255, 255, 0.015), 0 18px 60px rgba(0, 0, 0, 0.55);
+
+  /* shadcn token bridge (gray) */
+  --background: #21252b;
+  --foreground: #ecedf0;
+  --card: #2a2e36;
+  --card-foreground: #ecedf0;
+  --popover: #2a2e36;
+  --popover-foreground: #ecedf0;
+  --primary: oklch(0.7 0.17 295);
+  --primary-foreground: #1a1d22;
+  --secondary: #353a44;
+  --secondary-foreground: #ecedf0;
+  --muted: #353a44;
+  --muted-foreground: #858a96;
+  --accent: #353a44;
+  --accent-foreground: #ecedf0;
+  --destructive: oklch(0.68 0.17 25);
+  --border: #3b414c;
+  --input: #3b414c;
+  --ring: oklch(0.7 0.17 295);
 }
 
 /* ── Tailwind v4 theme bridge (font utilities) ────────────────────────────── */

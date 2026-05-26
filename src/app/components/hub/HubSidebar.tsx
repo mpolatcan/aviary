@@ -490,6 +490,7 @@ function SidebarRail() {
   const view = useStore((s) => s.view);
   const settingsSection = useStore((s) => s.settingsSection);
   const settingsActive = view === "settings" && settingsSection !== "integrations";
+  const runtimeState = useStore((s) => s.status?.state);
 
   return (
     <aside
@@ -531,6 +532,21 @@ function SidebarRail() {
         </RailIcon>
       ))}
       <div style={{ flex: 1 }} />
+      <div
+        title={runtimeState ?? "unknown"}
+        style={{
+          display: "flex",
+          justifyContent: "center",
+          padding: "6px 0",
+        }}
+      >
+        <StatusDot
+          status={
+            runtimeState === "running" ? "live" : runtimeState === "starting" ? "wait" : "off"
+          }
+          pulse={runtimeState === "running"}
+        />
+      </div>
       <RailIcon
         title="Settings"
         active={settingsActive}
