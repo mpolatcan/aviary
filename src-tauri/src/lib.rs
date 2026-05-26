@@ -1370,9 +1370,16 @@ pub fn run() {
                 }
             });
 
-            // Start the agent-event hook tail (§7). Streams the events dir inside
-            // the container and feeds the EventsTracker. Retries on disconnect.
-            events::start_event_tailer(docker, events, notify_config, app.handle().clone());
+            // Start the agent-event hook tail (§7). A reconciler fans a tail out
+            // to the shared runtime AND every live per-workspace container (each
+            // keeps its events in its own container-local /tmp/codehub/events),
+            // feeding the EventsTracker. Retries on disconnect.
+            events::start_event_tailer(
+                manager.clone(),
+                events,
+                notify_config,
+                app.handle().clone(),
+            );
 
             Ok(())
         })

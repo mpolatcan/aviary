@@ -20,6 +20,7 @@
 //! - The ring buffer cap keeps memory bounded regardless of run time.
 
 use crate::docker::DockerClient;
+use crate::lifecycle::ContainerState;
 use crate::types::{ActivityEvent, AgentEvent, PendingPrompt};
 use bollard::exec::{CreateExecOptions, StartExecOptions, StartExecResults};
 use futures_util::StreamExt;
@@ -32,6 +33,42 @@ use tauri::Emitter;
 // ── Error wrapper for the tail task ─────────────────────────────────────────
 // We avoid `anyhow` (not in Cargo.toml) by using a simple Box<dyn Error>.
 type TailError = Box<dyn std::error::Error + Send + Sync + 'static>;
+
+/// In-container tail driver. A plain `tail -F /tmp/codehub/events/*.jsonl` is a
+/// trap: the shell expands the glob ONCE at attach, so any session file created
+/// AFTER the tailer attaches is never followed. That's the COMMON case for a
+/// freshly-spawned per-workspace container (empty events dir → first session
+/// file appears after attach), so its very first events would be lost.
+///
+/// Instead, poll the dir and spawn a dedicated tail per `.jsonl` the moment it
+/// appears, tracking which files are already followed so each is tailed exactly
+/// once (no duplicate ingestion within a tailer's lifetime).
+///
+/// Each tail starts at line 1 (`-n +1`), NOT the default last-10. The poll has a
+/// up-to-1s discovery lag, and an agent can burst more than 10 lines into a fresh
+/// file in that window; a last-10 tail would silently drop the earliest events.
+/// `-n +1` emits the whole file on discovery, so nothing written before the poll
+/// noticed is lost. (Re-ingesting a full file is harmless: `ingest` is replay-safe
+/// — pending state converges and the activity ring is bounded — and the dedup set
+/// means it only re-replays if the OUTER loop re-attaches after a container
+/// stop/stream error, which is rare.)
+///
+/// `.keep` (the dir sentinel) never matches `*.jsonl`, so it's skipped. `trap
+/// 'kill 0'` reaps the child tails when the exec shell exits. dash-compatible (the
+/// runtime's `/bin/sh`): `case` glob membership, no-match glob guarded by `[ -e ]`.
+const TAIL_SCRIPT: &str = r#"cd /tmp/codehub/events 2>/dev/null || exit 0
+trap 'kill 0' EXIT
+tailed=""
+while :; do
+  for f in *.jsonl; do
+    [ -e "$f" ] || continue
+    case " $tailed " in
+      *" $f "*) ;;
+      *) tail -n +1 -F "$f" 2>/dev/null & tailed="$tailed $f" ;;
+    esac
+  done
+  sleep 1
+done"#;
 
 /// Maximum activity events retained per session in the ring buffer.
 const RING_CAPACITY: usize = 200;
@@ -243,13 +280,19 @@ impl EventsTracker {
 /// notification toggle the user just changed takes effect immediately. Only REAL
 /// hook events fire a notification — no synthetic timers.
 ///
-/// The function returns immediately — the tail runs in a background spawn on
-/// Tauri's managed runtime (the `setup` hook has no entered tokio runtime, so a
-/// bare `tokio::spawn` would abort the app — see the CLAUDE.md spawner gotcha).
-/// The dev bridge, which runs under `#[tokio::main]`, calls `event_tailer_loop`
-/// directly with `tokio::spawn` and does NOT fire OS notifications.
+/// The function returns immediately — the reconciler runs in a background spawn
+/// on Tauri's managed runtime (the `setup` hook has no entered tokio runtime, so
+/// a bare `tokio::spawn` would abort the app — see the CLAUDE.md spawner gotcha).
+/// The dev bridge, which runs under `#[tokio::main]`, calls
+/// [`reconcile_event_tailers_loop`] directly with `tokio::spawn` and does NOT
+/// fire OS notifications.
+///
+/// Events live in each container's own `/tmp/codehub/events/` (container-local —
+/// only `/config` is a shared mount), so the shared runtime tailer alone would
+/// miss every per-workspace container. The reconciler fans a tailer out to each
+/// live container instead (see [`reconcile_event_tailers_loop`]).
 pub fn start_event_tailer(
-    docker: Arc<DockerClient>,
+    manager: Arc<crate::manager::LifecycleManager>,
     tracker: Arc<EventsTracker>,
     config: Arc<crate::config::ConfigStore>,
     app: tauri::AppHandle,
@@ -261,12 +304,98 @@ pub fn start_event_tailer(
     // resolved permission prompts / turn finishes. In-app state still rebuilds
     // from the full replay — only the OS toast is suppressed for old lines.
     let started_at = now_ms();
-    tauri::async_runtime::spawn(event_tailer_loop(docker, tracker, move |event| {
-        let _ = app.emit("codehub://agent-event", event);
-        if event.at >= started_at {
-            maybe_notify(&app, &config, event);
+    tauri::async_runtime::spawn(reconcile_event_tailers_loop(
+        manager,
+        tracker,
+        move |event| {
+            let _ = app.emit("codehub://agent-event", event);
+            if event.at >= started_at {
+                maybe_notify(&app, &config, event);
+            }
+        },
+    ));
+}
+
+/// Interval between fleet reconciliations — how fast a newly-spawned per-workspace
+/// container's events start being tailed. Matches the 5s tail-retry cadence.
+const RECONCILE_INTERVAL: Duration = Duration::from_secs(5);
+
+/// Fan an [`event_tailer_loop`] out across EVERY live CodeHub container so hook
+/// events from per-workspace containers (`codehub-ws-<key>`) reach the same
+/// [`EventsTracker`] / sink as the shared runtime's. Each container keeps its
+/// events in its own container-local `/tmp/codehub/events/`, so one tailer on the
+/// shared runtime would only ever see shared-runtime sessions.
+///
+/// Reconciles every [`RECONCILE_INTERVAL`]: the target set is the shared runtime
+/// (always — it self-heals while down) plus every *running* workspace container
+/// (`list_workspace_containers`, which returns empty when the per-workspace flag
+/// is off — so this degrades to exactly the old single-tailer behaviour). New
+/// containers get a tailer spawned; vanished/stopped ones get theirs aborted.
+/// Tailers are keyed by container name and all share the cloned `on_event` sink.
+///
+/// The caller owns the OUTER spawn (Tauri's runtime vs `tokio` — see
+/// [`start_event_tailer`]); the per-container tailers spawned INSIDE run under
+/// whichever runtime is already entered by that outer task, so a bare
+/// `tokio::spawn` here is safe in both contexts.
+pub async fn reconcile_event_tailers_loop<F>(
+    manager: Arc<crate::manager::LifecycleManager>,
+    tracker: Arc<EventsTracker>,
+    on_event: F,
+) where
+    F: Fn(&AgentEvent) + Send + Sync + Clone + 'static,
+{
+    // container name → its running tailer task.
+    let mut active: HashMap<String, tokio::task::JoinHandle<()>> = HashMap::new();
+
+    loop {
+        // Build the target set: shared runtime first (always tailed — `run_tail`
+        // retries harmlessly while it is down), then each running workspace
+        // container resolved BY KEY so its dedicated docker client is used.
+        let shared = manager.default();
+        let mut targets: Vec<(String, Arc<DockerClient>)> = vec![(
+            shared.container_name.clone(),
+            Arc::new(shared.docker_client()),
+        )];
+        // A transient daemon error must NOT tear down every per-workspace tailer:
+        // an empty fleet would abort them all this cycle (churn) and drop their
+        // events until respawn. On error, keep the current `active` set untouched
+        // and retry next tick — the shared runtime tailer is unaffected either way.
+        let workspaces = match manager.list_workspace_containers().await {
+            Ok(list) => list,
+            Err(e) => {
+                tracing::debug!("fleet list failed ({e}); keeping current tailers");
+                tokio::time::sleep(RECONCILE_INTERVAL).await;
+                continue;
+            },
+        };
+        for wc in workspaces {
+            if wc.status.state == ContainerState::Running {
+                let lc = manager.workspace_container(&wc.key);
+                targets.push((wc.status.name.clone(), Arc::new(lc.docker_client())));
+            }
         }
-    }));
+
+        // Drop tailers whose container is gone/stopped (frees the bollard exec).
+        let wanted: std::collections::HashSet<&String> = targets.iter().map(|(n, _)| n).collect();
+        active.retain(|name, handle| {
+            let keep = wanted.contains(name);
+            if !keep {
+                handle.abort();
+            }
+            keep
+        });
+
+        // Spawn a tailer for any newly-seen container.
+        for (name, docker) in targets {
+            active.entry(name).or_insert_with(|| {
+                let tracker = tracker.clone();
+                let on_event = on_event.clone();
+                tokio::spawn(event_tailer_loop(docker, tracker, on_event))
+            });
+        }
+
+        tokio::time::sleep(RECONCILE_INTERVAL).await;
+    }
 }
 
 /// Current wall-clock in epoch milliseconds, matching the `at` field the hook
@@ -349,9 +478,10 @@ async fn run_tail<F: Fn(&AgentEvent)>(
     tracker: &EventsTracker,
     on_event: &F,
 ) -> Result<(), TailError> {
-    // Ensure the events dir exists before tailing so tail -F doesn't error on
-    // an absent glob. `mkdir -p` + a sentinel `.keep` file is idempotent.
-    // Best-effort: if this fails we still attempt the tail.
+    // Ensure the events dir exists so the tail script's `cd` succeeds on a
+    // brand-new container (the dir is created lazily by the hook on first event).
+    // `mkdir -p` + a sentinel `.keep` is idempotent; best-effort — if it fails we
+    // still attempt the tail (the script's `cd ... || exit 0` handles absence).
     let _ = docker
         .exec_capture_pub(vec![
             "sh",
@@ -367,14 +497,7 @@ async fn run_tail<F: Fn(&AgentEvent)>(
             CreateExecOptions {
                 attach_stdout: Some(true),
                 attach_stderr: Some(false), // suppress "no files match" noise
-                cmd: Some(vec![
-                    // Use sh -c so the glob expands inside the container, and
-                    // `-F` keeps watching new files that arrive after startup.
-                    "sh".into(),
-                    "-c".into(),
-                    "tail -F /tmp/codehub/events/.keep /tmp/codehub/events/*.jsonl 2>/dev/null"
-                        .into(),
-                ]),
+                cmd: Some(vec!["sh".into(), "-c".into(), TAIL_SCRIPT.into()]),
                 env: Some(vec!["TMUX_TMPDIR=/tmp/codehub".into()]),
                 ..Default::default()
             },

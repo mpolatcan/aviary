@@ -162,16 +162,17 @@ pub async fn serve() {
         });
     }
 
-    // Start the event tailer for the dev bridge (mirrors lib.rs setup). Reuses the
-    // shared tail in `events` — same attach/parse loop the Tauri app runs — with a
+    // Start the event tailer for the dev bridge (mirrors lib.rs setup). The
+    // reconciler fans a tail out across the shared runtime AND every live
+    // per-workspace container — same attach/parse loop the Tauri app runs — with a
     // WS-frame sink instead of a window emit. The WsEmitter handles pty output;
     // this handles hook events.
     {
         let tx_for_events = tx.clone();
-        // Runs under `#[tokio::main]`, so spawn the shared loop with tokio directly
-        // (the Tauri app uses tauri::async_runtime — see events::start_event_tailer).
-        tokio::spawn(crate::events::event_tailer_loop(
-            docker.clone(),
+        // Runs under `#[tokio::main]`, so spawn the loop with tokio directly (the
+        // Tauri app uses tauri::async_runtime — see events::start_event_tailer).
+        tokio::spawn(crate::events::reconcile_event_tailers_loop(
+            manager.clone(),
             events.clone(),
             move |event| {
                 if let Ok(frame) = serde_json::to_string(&serde_json::json!({
