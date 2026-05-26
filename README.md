@@ -77,7 +77,7 @@ sequenceDiagram
 
     UI->>UI: launcher — agent (claude/codex/antigravity) × mode (standard/auto/yolo)
     UI->>B: create_session(name, cli, mode, workspace)
-    Note right of B: resolve + ensure codehub-ws-&lt;key&gt;<br/>(shared runtime when flag off)
+    Note right of B: resolve + ensure<br/>codehub-ws-(key)<br/>(shared runtime when flag off)
     B->>T: docker exec — tmux new-session -d -s NAME CLI
     UI->>B: attach_session(name, cols, rows)
     B->>T: bollard exec tty=true — tmux attach -t NAME
