@@ -9,7 +9,9 @@
 
 use crate::config::ConfigStore;
 use crate::docker::{DockerClient, SessionInfo};
-use crate::lifecycle::{ContainerState, ContainerStatus, DockerInfo, Lifecycle, LifecycleError};
+use crate::lifecycle::{
+    ContainerState, ContainerStatus, DockerInfo, Lifecycle, LifecycleError, LifecycleParts,
+};
 use bollard::container::ListContainersOptions;
 use bollard::Docker;
 use serde::Serialize;
@@ -101,6 +103,7 @@ pub struct LifecycleManager {
     config_dir: PathBuf,
     default_workspace_dir: PathBuf,
     config: Arc<ConfigStore>,
+    vault: Option<Arc<crate::vault::Vault>>,
     cache: Mutex<HashMap<String, Arc<Lifecycle>>>,
 }
 
@@ -118,19 +121,25 @@ impl LifecycleManager {
             config_dir,
             default_workspace_dir,
             config,
+            vault: None,
             cache: Mutex::new(HashMap::new()),
         })
     }
 
+    pub fn with_vault(mut self, vault: Arc<crate::vault::Vault>) -> Self {
+        self.vault = Some(vault);
+        self
+    }
+
     /// Container name for a per-workspace key: `codehub-ws-<sanitized-key>`.
-    pub fn container_name_for(&self, key: &str) -> String {
+    fn container_name_for(&self, key: &str) -> String {
         format!("{WS_CONTAINER_PREFIX}{}", sanitize_key(key))
     }
 
     /// Resolve the lifecycle for a workspace `key`. Returns/caches a dedicated
     /// `codehub-ws-<key>` lifecycle. `workspace_dir` pins the `/workspace` bind
     /// when explicitly provided; `None` lets the lifecycle resolve it from config.
-    pub fn for_workspace(&self, key: &str, workspace_dir: Option<PathBuf>) -> Arc<Lifecycle> {
+    fn for_workspace(&self, key: &str, workspace_dir: Option<PathBuf>) -> Arc<Lifecycle> {
         self.build_workspace(key, workspace_dir)
     }
 
@@ -159,21 +168,6 @@ impl LifecycleManager {
     /// workspace. `workspace_dir` optionally pins the mount.
     pub fn resolve(&self, key: &str, workspace_dir: Option<PathBuf>) -> Arc<Lifecycle> {
         self.for_workspace(key, workspace_dir)
-    }
-
-    /// Resolve by optional key for IPC commands that still pass `Option<String>`.
-    /// `None` is a programming error (all sessions have a workspace key).
-    pub fn resolve_opt(&self, key: Option<&str>, workspace_dir: Option<PathBuf>) -> Arc<Lifecycle> {
-        self.for_workspace(
-            key.expect("workspace key required (shared runtime removed)"),
-            workspace_dir,
-        )
-    }
-
-    /// Resolve by optional key for inspection/lifecycle commands.
-    /// `None` is a programming error.
-    pub fn resolve_container(&self, key: Option<&str>) -> Arc<Lifecycle> {
-        self.workspace_container(key.expect("workspace key required (shared runtime removed)"))
     }
 
     /// Raw bollard `Docker` handle — for daemon-level operations (`docker_info`,
@@ -228,19 +222,30 @@ impl LifecycleManager {
                 return existing.clone();
             }
         }
-        let lifecycle = Arc::new(Lifecycle::from_parts(
-            self.docker.clone(),
-            container_name.clone(),
-            self.image.clone(),
-            self.config_dir.clone(),
-            self.default_workspace_dir.clone(),
-            self.config.clone(),
-            dir,
-            label,
+        let vault_env = self.build_vault_env();
+        let lifecycle = Arc::new(Lifecycle::from_parts(LifecycleParts {
+            docker: self.docker.clone(),
+            container_name: container_name.clone(),
+            image: self.image.clone(),
+            config_dir: self.config_dir.clone(),
+            default_workspace_dir: self.default_workspace_dir.clone(),
+            config: self.config.clone(),
+            workspace_dir_override: dir,
+            workspace_label: label,
             enforce_mount,
-        ));
+            vault_env,
+        }));
         cache.insert(container_name, lifecycle.clone());
         lifecycle
+    }
+
+    /// Vault-backed secrets are intentionally not injected at container-create
+    /// time. Reading them here would prompt macOS Keychain while merely opening a
+    /// workspace. Agent credentials are read just-in-time by `create_session`;
+    /// GitHub operations should do the same when they need the token.
+    fn build_vault_env(&self) -> Vec<String> {
+        let _vault_configured = self.vault.is_some();
+        Vec::new()
     }
 
     /// Enumerate every CodeHub-managed workspace container (label

@@ -160,6 +160,33 @@ pub struct ProcessInfo {
     pub command: String,
 }
 
+/// One environment variable from a running container. Auth vars are filtered
+/// out before returning to the frontend (no-secret-leaking contract).
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvEntry {
+    pub name: String,
+    pub value: String,
+}
+
+/// One git repository discovered under `/workspace` (by `.git` directory).
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct RepoInfo {
+    pub path: String,
+    pub branch: Option<String>,
+}
+
+/// A transcript search result.
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchHit {
+    pub session_id: String,
+    pub title: Option<String>,
+    pub snippet: String,
+    pub at: Option<String>,
+}
+
 /// One commit from `git log` on `/workspace`. `hash` is the full SHA (the UI
 /// shortens it); `relative` is git's human age ("2 hours ago"). Backs the
 /// Dashboard "Recent commits" card.
@@ -255,7 +282,7 @@ pub struct ClaudeUsage {
 /// prompt); `branch` is the recorded `gitBranch` (detached `HEAD` → `None`);
 /// `turns` counts distinct user messages; timestamps are the transcript's. No
 /// field is fabricated — a missing one is `None`/empty, never guessed.
-#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+#[derive(Debug, Serialize, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ClaudeSession {
     pub id: String,
@@ -266,6 +293,8 @@ pub struct ClaudeSession {
     pub turns: u32,
     pub model: Option<String>,
     pub version: Option<String>,
+    pub est_cost_usd: Option<f64>,
+    pub total_tokens: Option<u64>,
 }
 
 /// Live per-session token counts for one Claude conversation, read from its own
@@ -427,6 +456,13 @@ impl Cli {
         }
     }
 
+    pub fn executable(self) -> &'static str {
+        match self {
+            Cli::Claude => "/root/.local/bin/claude",
+            _ => self.binary(),
+        }
+    }
+
     pub fn parse(s: &str) -> Result<Self, DockerError> {
         match s.to_ascii_lowercase().as_str() {
             "claude" | "claude-code" => Ok(Cli::Claude),
@@ -454,7 +490,7 @@ impl Cli {
     /// CLI's docs — YOLO variants are safe here because the runtime container is
     /// the sandbox boundary. Antigravity is unverified, so it ignores `mode`.
     pub fn launch_argv(self, mode: LaunchMode) -> Vec<&'static str> {
-        let bin = self.binary();
+        let bin = self.executable();
         match (self, mode) {
             // Claude Code: `auto` uses the classifier to auto-approve safe tool calls
             // (incl. shell) while still blocking dangerous ones — a better Auto tier
@@ -534,11 +570,90 @@ pub fn is_env_name(s: &str) -> bool {
     chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
+pub const CONTAINER_PATH: &str =
+    "/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+pub const CLAUDE_CONFIG_DIR: &str = "/config/claude";
+pub const CODEX_CONFIG_DIR: &str = "/config/codex";
+pub const ANTIGRAVITY_CONFIG_DIR: &str = "/config/antigravity";
+
+/// Baseline env every CodeHub runtime container/pane needs. Keeping this in
+/// app code makes existing containers work even when they were created from an
+/// older runtime image that did not yet bake these env vars in.
+pub fn base_container_env() -> Vec<String> {
+    vec![
+        format!("PATH={CONTAINER_PATH}"),
+        "HOME=/root".to_string(),
+        "TMUX_TMPDIR=/tmp/codehub".to_string(),
+        "IS_SANDBOX=1".to_string(),
+        format!("CLAUDE_CONFIG_DIR={CLAUDE_CONFIG_DIR}"),
+        format!("CODEX_CONFIG_DIR={CODEX_CONFIG_DIR}"),
+        format!("ANTIGRAVITY_CONFIG_DIR={ANTIGRAVITY_CONFIG_DIR}"),
+    ]
+}
+
+pub fn push_tmux_env(cmd: &mut Vec<String>, assignment: impl Into<String>) {
+    cmd.push("-e".into());
+    cmd.push(assignment.into());
+}
+
+pub fn push_base_tmux_env(cmd: &mut Vec<String>) {
+    for env in base_container_env() {
+        push_tmux_env(cmd, env);
+    }
+}
+
 /// Single-quote a string for safe inclusion in a `sh -c` command. Any embedded
 /// single quote is closed, escaped, and reopened (`'\''`). Used to quote the CLI
 /// argv when it runs under the account-remap shell.
 fn shell_single_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+fn shell_join_quoted(argv: &[String]) -> String {
+    argv.iter()
+        .map(|a| shell_single_quote(a))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn account_launch_script(cli: Cli, canon: &str, src: &str, argv: &[String]) -> String {
+    let launch = shell_join_quoted(argv);
+    match cli {
+        Cli::Claude => {
+            let prefix = crate::auth::CLAUDE_AUTH_BUNDLE_PREFIX;
+            let profile_dir = shell_single_quote(&format!("/config/claude-profiles/{src}"));
+            let onboarding = crate::auth::claude_onboarding_patch_script("dir");
+            format!(
+                "if [ -n \"${{{src}:-}}\" ]; then case \"${{{src}}}\" in {prefix}*) dir={profile_dir}; mkdir -p \"$dir\"; chmod 700 \"$dir\"; if [ -f /config/claude/settings.json ] && [ ! -f \"$dir/settings.json\" ]; then cp /config/claude/settings.json \"$dir/settings.json\"; fi; payload=\"${{{src}#{prefix}}}\"; printf '%s' \"$payload\" | base64 -d | tar --no-same-owner -xzf - -C \"$dir\"; {onboarding} export CLAUDE_CONFIG_DIR=\"$dir\"; unset {src} payload ;; *) export {canon}=\"${{{src}}}\"; unset {src} ;; esac; fi; exec {launch}"
+            )
+        },
+        Cli::Codex => format!(
+            "if [ -n \"${{{src}:-}}\" ]; then case \"${{{src}}}\" in \\{{*|\\[*) mkdir -p \"$HOME/.codex\"; umask 077; printf '%s' \"${{{src}}}\" > \"$HOME/.codex/auth.json\"; unset {src} ;; *) export {canon}=\"${{{src}}}\"; unset {src} ;; esac; fi; exec {launch}"
+        ),
+        Cli::Antigravity => format!(
+            "if [ -n \"${{{src}:-}}\" ]; then case \"${{{src}}}\" in \\{{*|\\[*) mkdir -p \"$HOME/.config/agy\"; umask 077; printf '%s' \"${{{src}}}\" > \"$HOME/.config/agy/credentials.json\"; unset {src} ;; *) export {canon}=\"${{{src}}}\"; unset {src} ;; esac; fi; exec {launch}"
+        ),
+        _ => format!("export {canon}=\"${{{src}}}\"; exec {launch}"),
+    }
+}
+
+fn claude_profile_dir_for_env(src: &str) -> String {
+    format!("/config/claude-profiles/{src}")
+}
+
+pub struct TmuxSessionRequest<'a> {
+    pub name: &'a str,
+    pub cli: Cli,
+    pub mode: LaunchMode,
+    pub alias: &'a str,
+    pub resume: Option<&'a str>,
+    pub session_id: Option<&'a str>,
+    /// Name of the source credential env var, never the credential value.
+    pub account_var: Option<&'a str>,
+    /// Non-secret pane env entries, such as a profile-specific config dir.
+    pub session_env: &'a [String],
+    /// Secret `KEY=value` entries used only for this Docker exec.
+    pub account_env: &'a [String],
 }
 
 #[derive(Clone)]
@@ -548,11 +663,6 @@ pub struct DockerClient {
 }
 
 impl DockerClient {
-    pub fn new(container: String) -> Result<Self, Box<dyn std::error::Error>> {
-        let docker = Docker::connect_with_local_defaults()?;
-        Ok(Self { container, docker })
-    }
-
     pub fn from_docker(docker: Docker, container: String) -> Self {
         Self { container, docker }
     }
@@ -650,6 +760,83 @@ impl DockerClient {
         }
     }
 
+    /// Like [`exec_capture_env`] but calls `on_line` for each line of stdout as
+    /// it arrives, enabling real-time parsing of URLs / device codes from
+    /// interactive CLI login flows. Also accumulates the full output and returns
+    /// it. Aborts after `timeout`.
+    pub async fn exec_stream_lines<F>(
+        &self,
+        cmd: Vec<&str>,
+        timeout: std::time::Duration,
+        mut on_line: F,
+    ) -> Result<String, DockerError>
+    where
+        F: FnMut(&str),
+    {
+        let exec = self
+            .docker
+            .create_exec::<String>(
+                &self.container,
+                CreateExecOptions {
+                    attach_stdout: Some(true),
+                    attach_stderr: Some(true),
+                    cmd: Some(cmd.into_iter().map(String::from).collect()),
+                    env: Some(vec!["TMUX_TMPDIR=/tmp/codehub".into()]),
+                    ..Default::default()
+                },
+            )
+            .await?;
+
+        let started = self
+            .docker
+            .start_exec(
+                &exec.id,
+                Some(StartExecOptions {
+                    detach: false,
+                    ..Default::default()
+                }),
+            )
+            .await?;
+
+        if let StartExecResults::Attached { mut output, .. } = started {
+            let mut buf = String::new();
+            let mut line_buf = String::new();
+            let deadline = tokio::time::Instant::now() + timeout;
+
+            loop {
+                let chunk = tokio::time::timeout_at(deadline, output.next()).await;
+                match chunk {
+                    Err(_) => break,   // timeout
+                    Ok(None) => break, // stream ended
+                    Ok(Some(Err(e))) => return Err(e.into()),
+                    Ok(Some(Ok(log))) => {
+                        let text = match log {
+                            bollard::container::LogOutput::StdOut { message }
+                            | bollard::container::LogOutput::StdErr { message }
+                            | bollard::container::LogOutput::Console { message } => {
+                                String::from_utf8_lossy(&message).to_string()
+                            },
+                            _ => continue,
+                        };
+                        buf.push_str(&text);
+                        line_buf.push_str(&text);
+                        while let Some(pos) = line_buf.find('\n') {
+                            let line = line_buf[..pos].trim_end_matches('\r').to_string();
+                            on_line(&line);
+                            line_buf = line_buf[pos + 1..].to_string();
+                        }
+                    },
+                }
+            }
+            if !line_buf.is_empty() {
+                on_line(line_buf.trim_end());
+            }
+            Ok(buf)
+        } else {
+            Ok(String::new())
+        }
+    }
+
     /// Probe each CLI's `--version` inside the container. Best-effort: a stopped
     /// container or a failing/absent binary yields `version: None` for that CLI
     /// rather than an error, so the caller always gets a full map.
@@ -662,7 +849,7 @@ impl DockerClient {
             if !running {
                 return None;
             }
-            self.exec_capture(vec![cli.binary(), "--version"])
+            self.exec_capture(vec![cli.executable(), "--version"])
                 .await
                 .ok()
                 .map(|s| s.lines().next().unwrap_or_default().trim().to_string())
@@ -708,21 +895,21 @@ impl DockerClient {
         Ok(sessions)
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub async fn create_tmux_session(
         &self,
-        name: &str,
-        cli: Cli,
-        mode: LaunchMode,
-        alias: &str,
-        resume: Option<&str>,
-        session_id: Option<&str>,
-        // NAME of the host env var holding the chosen account's credential, when
-        // the spawn picked a non-default account profile. Never a value. When it
-        // differs from the CLI's canonical var, the session shell remaps the
-        // canonical var to it BY NAME (see below) so no secret hits the argv.
-        account_var: Option<&str>,
+        request: TmuxSessionRequest<'_>,
     ) -> Result<(), DockerError> {
+        let TmuxSessionRequest {
+            name,
+            cli,
+            mode,
+            alias,
+            resume,
+            session_id,
+            account_var,
+            session_env,
+            account_env,
+        } = request;
         // `-e IS_SANDBOX=1` marks the pane env as a recognized sandbox so Claude's
         // YOLO mode (--dangerously-skip-permissions) runs as root inside the
         // container instead of refusing. Pane-scoped, so it does not depend on the
@@ -741,13 +928,17 @@ impl DockerClient {
         cmd.push(name.to_string());
         cmd.push("-n".into());
         cmd.push(window.to_string());
-        cmd.push("-e".into());
-        cmd.push("IS_SANDBOX=1".into());
+        push_base_tmux_env(&mut cmd);
         // CODEHUB_SESSION is the session name (tmux key) exported per-pane so
         // the codehub-hook append script can route events to the right JSONL
         // file (§7.6). Verified to reach the hook process in the Phase-0 spike.
-        cmd.push("-e".into());
-        cmd.push(format!("CODEHUB_SESSION={name}"));
+        push_tmux_env(&mut cmd, format!("CODEHUB_SESSION={name}"));
+        for env in session_env {
+            push_tmux_env(&mut cmd, env.clone());
+        }
+        if let Some(src) = account_var.filter(|src| is_env_name(src)) {
+            push_tmux_env(&mut cmd, src.to_string());
+        }
 
         // Build the CLI argv (binary + mode flags + resume/session-id) as owned
         // strings so it can either run directly or be wrapped in a remap shell.
@@ -775,30 +966,75 @@ impl DockerClient {
 
         // Account remap: when a non-default account was chosen, run the CLI under
         // a login shell that exports the canonical credential var FROM the
-        // profile's host var, referenced by NAME (`${SRC}`). The source var was
-        // forwarded into the container at create-time (lifecycle::auth_env_with),
-        // so the shell expands it in-container — the secret value never appears in
-        // this `docker exec` argv, the tmux command, or `docker top`. Only applies
-        // when the names actually differ and the source is a safe identifier.
+        // profile's host/vault var, referenced by NAME (`${SRC}`). The source var
+        // is copied into the tmux pane by name with `-e SRC`, so the secret value
+        // never appears in this command argv or `docker top`. Only applies when
+        // the names actually differ and the source is a safe identifier.
         match (account_var, cli.canonical_auth_var()) {
             (Some(src), Some(canon)) if src != canon && is_env_name(src) => {
-                let inner = format!(
-                    "export {canon}=\"${{{src}}}\"; exec {}",
-                    argv.iter()
-                        .map(|a| shell_single_quote(a))
-                        .collect::<Vec<_>>()
-                        .join(" ")
-                );
+                let inner = account_launch_script(cli, canon, src, &argv);
                 cmd.push("sh".into());
-                cmd.push("-lc".into());
+                cmd.push("-c".into());
                 cmd.push(inner);
             },
             _ => cmd.extend(argv),
         }
 
-        self.exec_capture(cmd.iter().map(String::as_str).collect())
+        self.exec_capture_env(cmd.iter().map(String::as_str).collect(), account_env)
             .await?;
         Ok(())
+    }
+
+    /// Restore a Claude vault bundle into its profile directory before tmux starts.
+    ///
+    /// Tmux server environment is process-global and initialized from the first
+    /// client that creates the server. Passing a new vault env by name to a later
+    /// `tmux new-session` is therefore not reliable for multiple accounts inside
+    /// one workspace container. This pre-materializes the non-secret profile
+    /// directory through Docker's structured exec env, then the tmux pane only
+    /// needs `CLAUDE_CONFIG_DIR=/config/claude-profiles/<profile>`.
+    pub async fn restore_claude_bundle_from_env(
+        &self,
+        src: &str,
+        account_env: &[String],
+    ) -> Result<String, DockerError> {
+        if !is_env_name(src) {
+            return Err(DockerError::Command(format!(
+                "invalid Claude profile env name: {src}"
+            )));
+        }
+        let dir = claude_profile_dir_for_env(src);
+        let prefix = crate::auth::CLAUDE_AUTH_BUNDLE_PREFIX;
+        let onboarding = crate::auth::claude_onboarding_patch_script("dir");
+        let script = format!(
+            r#"set -eu
+dir={dir}
+secret="${{{src}:-}}"
+if [ -z "$secret" ]; then
+  echo "missing Claude vault bundle env {src}" >&2
+  exit 1
+fi
+case "$secret" in
+  {prefix}*) payload="${{secret#{prefix}}}" ;;
+  *) echo "selected Claude vault entry is not a config bundle" >&2; exit 1 ;;
+esac
+mkdir -p "$dir"
+chmod 700 "$dir"
+if [ -f /config/claude/settings.json ] && [ ! -f "$dir/settings.json" ]; then
+  cp /config/claude/settings.json "$dir/settings.json"
+fi
+printf '%s' "$payload" | base64 -d | tar --no-same-owner -xzf - -C "$dir"
+{onboarding}
+unset secret payload {src}
+"#,
+            dir = shell_single_quote(&dir),
+            src = src,
+            prefix = prefix,
+            onboarding = onboarding,
+        );
+        self.exec_capture_env(vec!["sh", "-c", &script], account_env)
+            .await?;
+        Ok(dir)
     }
 
     pub async fn kill_tmux_session(&self, name: &str) -> Result<(), DockerError> {
@@ -1554,7 +1790,7 @@ rm -f /tmp/codehub-pr.json"#,
         self.exec_capture(vec![
             "sh",
             "-c",
-            "find /config/claude/projects -type f -name '*.jsonl' -exec cat {} + 2>/dev/null || true",
+            "find /config/claude/projects /config/claude-profiles/*/projects -type f -name '*.jsonl' -exec cat {} + 2>/dev/null || true",
         ])
         .await
     }
@@ -1586,11 +1822,13 @@ rm -f /tmp/codehub-pr.json"#,
             return Ok(None);
         }
         self.require_running().await?;
-        // `id` is validated to `[0-9A-Za-z-]` so it carries no path or shell
-        // metacharacters; passed as a plain `cat` argv (no shell). A missing file
-        // just makes `cat` write an error to stderr, which the JSONL parser skips.
-        let path = format!("/config/claude/projects/-workspace/{id}.jsonl");
-        let raw = self.exec_capture(vec!["cat", &path]).await?;
+        // `id` is validated to `[0-9A-Za-z-]`, so it is safe to interpolate into
+        // this fixed `find` expression. Account-backed Claude sessions may use a
+        // per-profile config dir under `/config/claude-profiles`.
+        let script = format!(
+            "find /config/claude/projects /config/claude-profiles/*/projects -path '*/projects/-workspace/{id}.jsonl' -exec cat {{}} + 2>/dev/null || true"
+        );
+        let raw = self.exec_capture(vec!["sh", "-c", &script]).await?;
         let u = parse_claude_usage(&raw);
         // turns == 0 means no usable response yet → report nothing (em-dash).
         // edits is read from the same assistant lines, so reporting it only
@@ -1838,6 +2076,296 @@ rm -f /tmp/codehub-pr.json"#,
             ])
             .await?;
         Ok(extract_codex_rate_limits(&raw))
+    }
+
+    /// List environment variables in the container, filtering out auth secrets.
+    pub async fn container_env(&self) -> Result<Vec<EnvEntry>, DockerError> {
+        self.require_running().await?;
+        let raw = self.exec_capture(vec!["env"]).await?;
+        let secret_vars: std::collections::HashSet<&str> = [
+            "CLAUDE_CODE_OAUTH_TOKEN",
+            "ANTHROPIC_API_KEY",
+            "OPENAI_API_KEY",
+            "GOOGLE_API_KEY",
+            "GEMINI_API_KEY",
+            "GITHUB_TOKEN",
+        ]
+        .into_iter()
+        .collect();
+        Ok(raw
+            .lines()
+            .filter_map(|line| {
+                let (name, value) = line.split_once('=')?;
+                if secret_vars.contains(name) || name.starts_with("CODEHUB_VAULT_") {
+                    None
+                } else {
+                    Some(EnvEntry {
+                        name: name.to_string(),
+                        value: value.to_string(),
+                    })
+                }
+            })
+            .collect())
+    }
+
+    /// Discover git repos under `/workspace` (max depth 2).
+    pub async fn container_repos(&self) -> Result<Vec<RepoInfo>, DockerError> {
+        self.require_running().await?;
+        let raw = self
+            .exec_capture(vec![
+                "find",
+                "/workspace",
+                "-maxdepth",
+                "2",
+                "-name",
+                ".git",
+                "-type",
+                "d",
+            ])
+            .await?;
+        let mut repos = Vec::new();
+        for line in raw.lines() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            let repo_path = line.strip_suffix("/.git").unwrap_or(line);
+            let branch = self
+                .exec_capture(vec!["git", "-C", repo_path, "branch", "--show-current"])
+                .await
+                .ok()
+                .and_then(|b| {
+                    let b = b.trim().to_string();
+                    if b.is_empty() {
+                        None
+                    } else {
+                        Some(b)
+                    }
+                });
+            repos.push(RepoInfo {
+                path: repo_path.to_string(),
+                branch,
+            });
+        }
+        Ok(repos)
+    }
+
+    /// Clone a git repo by URL into `/workspace/<repo-name>`.
+    pub async fn git_clone(&self, url: &str) -> Result<String, DockerError> {
+        self.require_running().await?;
+        if url.is_empty()
+            || !(url.starts_with("https://")
+                || url.starts_with("http://")
+                || url.starts_with("git@")
+                || url.starts_with("ssh://"))
+        {
+            return Err(DockerError::Command(
+                "invalid git URL: must start with https://, http://, git@, or ssh://".into(),
+            ));
+        }
+        let output = self
+            .exec_capture(vec!["git", "-C", "/workspace", "clone", url])
+            .await?;
+        let cloned_dir = url
+            .rsplit('/')
+            .next()
+            .unwrap_or("repo")
+            .strip_suffix(".git")
+            .unwrap_or(url.rsplit('/').next().unwrap_or("repo"));
+        let path = format!("/workspace/{cloned_dir}");
+        if output.contains("fatal:") {
+            Err(DockerError::Command(output))
+        } else {
+            Ok(path)
+        }
+    }
+
+    /// Runtime tool versions (node, tmux, git) from inside the container.
+    pub async fn runtime_versions(&self) -> Result<crate::lifecycle::RuntimeVersions, DockerError> {
+        self.require_running().await?;
+        let (node, tmux, git) = tokio::join!(
+            self.exec_capture(vec!["node", "--version"]),
+            self.exec_capture(vec!["tmux", "-V"]),
+            self.exec_capture(vec!["git", "--version"]),
+        );
+        let clean = |r: Result<String, DockerError>| {
+            r.ok().and_then(|s| {
+                let s = s.trim().to_string();
+                if s.is_empty() || s.contains("not found") {
+                    None
+                } else {
+                    Some(s)
+                }
+            })
+        };
+        Ok(crate::lifecycle::RuntimeVersions {
+            node: clean(node),
+            tmux: clean(tmux),
+            git: clean(git),
+        })
+    }
+
+    /// Search transcripts for a query string. Returns matching session ids + snippets.
+    pub async fn search_transcripts(
+        &self,
+        query: &str,
+        limit: u32,
+    ) -> Result<Vec<SearchHit>, DockerError> {
+        self.require_running().await?;
+        if query.is_empty() {
+            return Ok(Vec::new());
+        }
+        let safe_query = shell_single_quote(query);
+        let cmd = format!(
+            "grep -r -i -l {} /root/.claude/projects/ --include='*.jsonl' 2>/dev/null | head -{}",
+            safe_query, limit
+        );
+        let raw = self.exec_capture(vec!["sh", "-c", &cmd]).await?;
+        let mut hits = Vec::new();
+        for path in raw.lines() {
+            let path = path.trim();
+            if path.is_empty() {
+                continue;
+            }
+            let session_id = path
+                .rsplit('/')
+                .next()
+                .unwrap_or(path)
+                .strip_suffix(".jsonl")
+                .unwrap_or(path)
+                .to_string();
+            let snippet_cmd = format!(
+                "grep -i -m1 {} {} 2>/dev/null | head -c 200",
+                safe_query,
+                shell_single_quote(path)
+            );
+            let snippet = self
+                .exec_capture(vec!["sh", "-c", &snippet_cmd])
+                .await
+                .unwrap_or_default()
+                .trim()
+                .to_string();
+            hits.push(SearchHit {
+                session_id,
+                title: None,
+                snippet,
+                at: None,
+            });
+        }
+        Ok(hits)
+    }
+
+    /// Stage a single file by path.
+    pub async fn git_stage_file(&self, path: &str) -> Result<(), DockerError> {
+        let safe = workspace_path(path)?;
+        self.require_running().await?;
+        let out = self
+            .exec_capture(vec!["git", "-C", "/workspace", "add", "--", &safe])
+            .await?;
+        let out = out.trim();
+        if out.is_empty() {
+            Ok(())
+        } else {
+            Err(DockerError::Command(out.to_string()))
+        }
+    }
+
+    /// Unstage a single file.
+    pub async fn git_unstage_file(&self, path: &str) -> Result<(), DockerError> {
+        let safe = workspace_path(path)?;
+        self.require_running().await?;
+        let out = self
+            .exec_capture(vec![
+                "git",
+                "-C",
+                "/workspace",
+                "reset",
+                "HEAD",
+                "--",
+                &safe,
+            ])
+            .await?;
+        // reset prints the unstaged path — not an error.
+        let _ = out;
+        Ok(())
+    }
+
+    /// Apply a patch to the staging area (per-hunk staging).
+    pub async fn git_stage_hunk(&self, patch: &str) -> Result<(), DockerError> {
+        self.require_running().await?;
+        let tmp = "/tmp/codehub-stage-hunk.patch";
+        let write_cmd = format!(
+            "cat > {} << 'CODEHUB_PATCH_EOF'\n{}\nCODEHUB_PATCH_EOF",
+            tmp, patch
+        );
+        self.exec_capture(vec!["sh", "-c", &write_cmd]).await?;
+        let out = self
+            .exec_capture(vec!["git", "-C", "/workspace", "apply", "--cached", tmp])
+            .await?;
+        let _ = self.exec_capture(vec!["rm", "-f", tmp]).await;
+        let out = out.trim();
+        if out.is_empty() || !out.contains("error") {
+            Ok(())
+        } else {
+            Err(DockerError::Command(out.to_string()))
+        }
+    }
+
+    /// Set Claude Code's active model in the container's settings.
+    pub async fn set_claude_model(&self, model: &str) -> Result<(), DockerError> {
+        self.require_running().await?;
+        let cmd = format!(
+            r#"f=/root/.claude/settings.json; [ -f "$f" ] && contents=$(cat "$f") || contents='{{}}'; echo "$contents" | jq --arg m '{}' '.model = $m' > "$f""#,
+            shell_single_quote(model)
+        );
+        self.exec_capture(vec!["sh", "-c", &cmd]).await?;
+        Ok(())
+    }
+
+    /// Set Claude Code's default permission mode.
+    pub async fn set_permission_mode(&self, mode: &str) -> Result<(), DockerError> {
+        self.require_running().await?;
+        let cmd = format!(
+            r#"f=/root/.claude/settings.json; [ -f "$f" ] && contents=$(cat "$f") || contents='{{}}'; echo "$contents" | jq --arg m '{}' '.permissions.defaultMode = $m' > "$f""#,
+            shell_single_quote(mode)
+        );
+        self.exec_capture(vec!["sh", "-c", &cmd]).await?;
+        Ok(())
+    }
+
+    /// Set Claude Code's permission rules for a bucket (allow/ask/deny).
+    pub async fn set_permission_rules(
+        &self,
+        bucket: &str,
+        rules: &[String],
+    ) -> Result<(), DockerError> {
+        self.require_running().await?;
+        if !["allow", "ask", "deny"].contains(&bucket) {
+            return Err(DockerError::Command(format!(
+                "invalid permission bucket: {bucket}"
+            )));
+        }
+        let json_arr = serde_json::to_string(rules).unwrap_or_else(|_| "[]".into());
+        let cmd = format!(
+            r#"f=/root/.claude/settings.json; [ -f "$f" ] && contents=$(cat "$f") || contents='{{}}'; echo "$contents" | jq --argjson r '{}' '.permissions.{} = $r' > "$f""#,
+            shell_single_quote(&json_arr),
+            bucket
+        );
+        self.exec_capture(vec!["sh", "-c", &cmd]).await?;
+        Ok(())
+    }
+
+    /// Toggle an MCP server's enabled state in Claude Code config.
+    pub async fn toggle_mcp_server(&self, name: &str, enabled: bool) -> Result<(), DockerError> {
+        self.require_running().await?;
+        let disabled_val = if enabled { "false" } else { "true" };
+        let cmd = format!(
+            r#"f=/root/.claude/settings.json; [ -f "$f" ] && contents=$(cat "$f") || contents='{{}}'; echo "$contents" | jq --arg n '{}' --argjson d {} '.mcpServers[$n].disabled = $d' > "$f""#,
+            shell_single_quote(name),
+            disabled_val
+        );
+        self.exec_capture(vec!["sh", "-c", &cmd]).await?;
+        Ok(())
     }
 }
 
@@ -2536,6 +3064,8 @@ struct SessionAcc {
     /// Distinct user-message uuids — a resumed transcript replays earlier user
     /// turns, so we dedupe by uuid to keep `turns` factual.
     turn_uuids: std::collections::HashSet<String>,
+    /// Accumulated token totals for per-session cost estimation.
+    totals: TokenTotals,
 }
 
 /// Claude Code injects its own wrapper text into the user role for slash
@@ -2663,6 +3193,22 @@ fn parse_claude_sessions(raw: &str) -> Vec<ClaudeSession> {
                 {
                     entry.model = Some(m.to_string());
                 }
+                if let Some(u) = v.get("message").and_then(|m| m.get("usage")) {
+                    let inp = u.get("input_tokens").and_then(|n| n.as_u64()).unwrap_or(0);
+                    let out = u.get("output_tokens").and_then(|n| n.as_u64()).unwrap_or(0);
+                    let cr = u
+                        .get("cache_read_input_tokens")
+                        .and_then(|n| n.as_u64())
+                        .unwrap_or(0);
+                    let cw = u
+                        .get("cache_creation_input_tokens")
+                        .and_then(|n| n.as_u64())
+                        .unwrap_or(0);
+                    entry.totals.input += inp;
+                    entry.totals.output += out;
+                    entry.totals.cache_read += cr;
+                    entry.totals.cache_creation += cw;
+                }
             },
             _ => {},
         }
@@ -2678,6 +3224,13 @@ fn parse_claude_sessions(raw: &str) -> Vec<ClaudeSession> {
                 .or_else(|| a.first_prompt.map(|p| clip_title(&p)))
                 .unwrap_or_else(|| "Untitled session".to_string());
             let last_active = a.last_active.clone().unwrap_or_default();
+            let total_tok =
+                a.totals.input + a.totals.output + a.totals.cache_read + a.totals.cache_creation;
+            let est_cost = a
+                .model
+                .as_deref()
+                .and_then(model_rate)
+                .map(|r| estimate_cost(&a.totals, r));
             ClaudeSession {
                 id,
                 title,
@@ -2687,6 +3240,8 @@ fn parse_claude_sessions(raw: &str) -> Vec<ClaudeSession> {
                 turns: a.turn_uuids.len() as u32,
                 model: a.model,
                 version: a.version,
+                est_cost_usd: est_cost,
+                total_tokens: if total_tok > 0 { Some(total_tok) } else { None },
             }
         })
         .collect();
@@ -2807,6 +3362,22 @@ fn codex_acc_common(acc: &mut CodexSessionAcc, v: &serde_json::Value) {
                 .filter(|s| !s.is_empty())
             {
                 acc.title = Some(clip_title(t));
+            }
+        },
+        Some("token_count") => {
+            let tok =
+                |obj: &serde_json::Value, k: &str| obj.get(k).and_then(|n| n.as_u64()).unwrap_or(0);
+            if let Some(total) = v
+                .get("payload")
+                .and_then(|p| p.get("info"))
+                .and_then(|i| i.get("total_token_usage"))
+            {
+                acc.cumulative = crate::types::CodexTokenTotals {
+                    input: tok(total, "input"),
+                    cached_input: tok(total, "cached_input"),
+                    output: tok(total, "output"),
+                    reasoning_output: tok(total, "reasoning_output"),
+                };
             }
         },
         _ => {},
@@ -3015,15 +3586,28 @@ fn parse_codex_sessions(raw: &str) -> Vec<crate::types::CodexSession> {
 
     let mut sessions: Vec<crate::types::CodexSession> = accs
         .into_values()
-        .map(|a| crate::types::CodexSession {
-            id: a.session_id,
-            title: a.title.unwrap_or_else(|| "Untitled session".to_string()),
-            branch: a.branch,
-            started: a.started.unwrap_or_default(),
-            last_active: a.last_active.clone().unwrap_or_default(),
-            turns: a.turns,
-            model: a.model,
-            version: a.version,
+        .map(|a| {
+            let total_tok = a.cumulative.input
+                + a.cumulative.cached_input
+                + a.cumulative.output
+                + a.cumulative.reasoning_output;
+            let est_cost = a
+                .model
+                .as_deref()
+                .and_then(codex_model_rate)
+                .map(|r| codex_estimate_cost(&a.cumulative, r));
+            crate::types::CodexSession {
+                id: a.session_id,
+                title: a.title.unwrap_or_else(|| "Untitled session".to_string()),
+                branch: a.branch,
+                started: a.started.unwrap_or_default(),
+                last_active: a.last_active.clone().unwrap_or_default(),
+                turns: a.turns,
+                model: a.model,
+                version: a.version,
+                est_cost_usd: est_cost,
+                total_tokens: if total_tok > 0 { Some(total_tok) } else { None },
+            }
         })
         .collect();
 
@@ -3387,11 +3971,11 @@ pub struct AttachHandles {
 #[cfg(test)]
 mod tests {
     use super::{
-        clip_title, commit_success_line, count_session_edits, is_env_name, is_session_id,
-        is_synthetic_prompt, is_version_like, latest_context_used, parse_agent_config,
-        parse_claude_integrations, parse_claude_sessions, parse_claude_usage, parse_find,
-        parse_frontmatter, parse_git_log, parse_git_status, parse_tools_field, parse_top,
-        workspace_path, Cli,
+        account_launch_script, clip_title, commit_success_line, count_session_edits, is_env_name,
+        is_session_id, is_synthetic_prompt, is_version_like, latest_context_used,
+        parse_agent_config, parse_claude_integrations, parse_claude_sessions, parse_claude_usage,
+        parse_find, parse_frontmatter, parse_git_log, parse_git_status, parse_tools_field,
+        parse_top, workspace_path, Cli,
     };
 
     #[test]
@@ -3430,6 +4014,41 @@ mod tests {
         // no digits → not a version
         assert!(!is_version_like("command not found"));
         assert!(!is_version_like(""));
+    }
+
+    #[test]
+    fn codex_vault_launch_script_restores_oauth_json_or_exports_key() {
+        let argv = vec!["codex".to_string(), "--yolo".to_string()];
+        let script =
+            account_launch_script(Cli::Codex, "OPENAI_API_KEY", "CODEHUB_VAULT_profile", &argv);
+
+        assert!(script.contains("$HOME/.codex/auth.json"));
+        assert!(script.contains("export OPENAI_API_KEY=\"${CODEHUB_VAULT_profile}\""));
+        assert!(script.contains("unset CODEHUB_VAULT_profile"));
+        assert!(script.contains("exec 'codex' '--yolo'"));
+    }
+
+    #[test]
+    fn claude_vault_launch_script_restores_auth_bundle_to_profile_dir() {
+        let argv = vec![
+            "/root/.local/bin/claude".to_string(),
+            "--session-id".to_string(),
+            "abc".to_string(),
+        ];
+        let script = account_launch_script(
+            Cli::Claude,
+            "CLAUDE_CODE_OAUTH_TOKEN",
+            "CODEHUB_VAULT_profile",
+            &argv,
+        );
+
+        assert!(script.contains(crate::auth::CLAUDE_AUTH_BUNDLE_PREFIX));
+        assert!(script.contains("/config/claude-profiles/CODEHUB_VAULT_profile"));
+        assert!(script.contains("hasCompletedOnboarding = true"));
+        assert!(script.contains("hasTrustDialogAccepted: true"));
+        assert!(script.contains("export CLAUDE_CONFIG_DIR=\"$dir\""));
+        assert!(script.contains("unset CODEHUB_VAULT_profile payload"));
+        assert!(script.contains("exec '/root/.local/bin/claude' '--session-id' 'abc'"));
     }
 
     #[test]

@@ -1,12 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { groupKey, splitKey, useLauncher } from "../../lib/launcher";
 import { activeWorkspace, useStore } from "../../lib/store";
-import {
-  MAX_GROUP_PANES,
-  type SplitDir,
-  activeGroup,
-  leavesList,
-} from "../../lib/tree";
+import { MAX_GROUP_PANES, type SplitDir, activeGroup, leavesList } from "../../lib/tree";
 import { Ico } from "./icons";
 
 // THE primary spawn CTA for the Hub ActionBar — one button replacing the old
@@ -162,10 +157,7 @@ function SpawnPlacementMenu({
         onClick={() => onSplit("col")}
       />
       {groupFull && (
-        <div
-          className="mono"
-          style={{ padding: "5px 8px", fontSize: 10.5, color: "var(--fg-3)" }}
-        >
+        <div className="mono" style={{ padding: "5px 8px", fontSize: 10.5, color: "var(--fg-3)" }}>
           Active group is full ({MAX_GROUP_PANES}/{MAX_GROUP_PANES}).
         </div>
       )}

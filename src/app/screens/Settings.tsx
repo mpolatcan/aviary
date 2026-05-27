@@ -37,6 +37,7 @@ import {
   type AgentVersion,
   type AppInfo,
   type AppSettings,
+  type AuthProgress,
   type Cli,
   type DockerInfo,
   type GitStatus,
@@ -44,11 +45,14 @@ import {
   type MountInfo,
   type RuntimeHealth,
   ipc,
+  onAuthProgress,
 } from "@/app/lib/ipc";
 import { activeWorkspace, useStore } from "@/app/lib/store";
 import { type Theme, useTheme } from "@/app/lib/theme";
 import { Button } from "@/app/ui/button";
-import { type CSSProperties, type ReactNode, useEffect, useState } from "react";
+import { type CSSProperties, type ReactNode, useEffect, useRef, useState } from "react";
+import { ApiKeyDialog } from "../components/ApiKeyDialog";
+import { LoginTerminalDialog } from "../components/LoginTerminalDialog";
 import { AgentDetail } from "./AgentDetail";
 import { IntegrationsPane } from "./Integrations";
 
@@ -294,6 +298,8 @@ function AgentsPane({
         <RefreshVersionsButton />
       </div>
 
+      <VaultAuthSection />
+
       <AccountsSection />
 
       <SectionHead label="Defaults for new sessions" />
@@ -360,13 +366,354 @@ function AgentsPane({
   );
 }
 
-// Accounts — label-only profiles (Tier-3). Each maps an agent to a host env var
-// NAME (e.g. CLAUDE_TOKEN_WORK); the credential value is never stored or read,
-// only its presence is probed. At spawn, the chosen profile remaps the CLI's
-// canonical credential var onto its var by NAME (see BACKEND_PLAN.md). A newly
-// added var only reaches running containers after a runtime recreate.
-function AccountsSection() {
+// Vault-backed credential management: "Sign in" (container-mediated login)
+// or "Add key" (paste) per built-in agent. Stored in OS keychain, never on disk.
+function VaultAuthSection() {
   const profiles = useStore((s) => s.accountProfiles);
+  const loadAccountProfiles = useStore((s) => s.loadAccountProfiles);
+  const removeAccountProfile = useStore((s) => s.removeAccountProfile);
+  const [keyDialog, setKeyDialog] = useState<string | null>(null);
+  const [profileLabel, setProfileLabel] = useState("");
+  const [loginBusy, setLoginBusy] = useState<string | null>(null);
+  const [loginError, setLoginError] = useState<string | null>(null);
+  const [loginProgress, setLoginProgress] = useState<AuthProgress | null>(null);
+  // Active terminal dialog: set when a login session is ready.
+  const [terminalDialog, setTerminalDialog] = useState<{
+    provider: string;
+    profileId: string;
+    sessionName: string;
+    workspace: string;
+  } | null>(null);
+  // Profile id to clean up if login is cancelled.
+  const pendingProfileId = useRef<string | null>(null);
+
+  const vaultProfiles = profiles.filter((p) => p.source === "vault");
+  const defaultLoginLabel = (provider: string) =>
+    provider === "github"
+      ? "GitHub"
+      : provider === "codex"
+        ? "Codex"
+        : provider === "antigravity"
+          ? "Antigravity"
+          : "Claude";
+
+  useEffect(() => {
+    let unsub: (() => void) | null = null;
+    onAuthProgress((p) => {
+      setLoginProgress(p);
+      if (p.stage === "success") {
+        setLoginBusy(null);
+        setLoginError(null);
+        setProfileLabel("");
+        void loadAccountProfiles();
+        setTimeout(() => setLoginProgress(null), 3000);
+      } else if (p.stage === "error") {
+        setLoginBusy(null);
+        setLoginError(p.message ?? "Login failed");
+      }
+    }).then((u) => {
+      unsub = u;
+    });
+    return () => unsub?.();
+  }, [loadAccountProfiles]);
+
+  const startLogin = async (provider: string, agent: string) => {
+    setLoginBusy(provider);
+    setLoginError(null);
+    setLoginProgress(null);
+    let createdId: string | null = null;
+    try {
+      const label = profileLabel.trim() || defaultLoginLabel(provider);
+      const existingIds = new Set(profiles.map((p) => p.id));
+      const list = await ipc.addAccountProfile(agent, label, undefined, "vault");
+      useStore.setState({ accountProfiles: list });
+      const created = list.find((p) => !existingIds.has(p.id));
+      if (!created) throw new Error("profile creation failed");
+      createdId = created.id;
+
+      const result = await ipc.vaultInitiateOauth(provider, created.id);
+
+      if (result?.sessionName && result?.workspace) {
+        // Open the inline terminal dialog. Dialog handles attach + capture.
+        pendingProfileId.current = created.id;
+        setTerminalDialog({
+          provider,
+          profileId: created.id,
+          sessionName: result.sessionName,
+          workspace: result.workspace,
+        });
+        setLoginBusy(null);
+      }
+      // GitHub: device flow runs in background, auth-progress events carry status.
+    } catch (e) {
+      const msg = String(e).replace(/^Error:\s*/, "");
+      setLoginError(msg);
+      setLoginBusy(null);
+      if (createdId) {
+        void useStore.getState().removeAccountProfile(createdId);
+      }
+    }
+  };
+
+  const handleDialogDone = (result: "captured" | "cancelled") => {
+    const pendingId = pendingProfileId.current;
+    setTerminalDialog(null);
+    pendingProfileId.current = null;
+    if (result === "captured") {
+      setProfileLabel("");
+      void loadAccountProfiles();
+    } else if (pendingId) {
+      void (async () => {
+        try {
+          if (await ipc.vaultHasKey(pendingId)) {
+            await loadAccountProfiles();
+          } else {
+            await useStore.getState().removeAccountProfile(pendingId);
+          }
+        } catch {
+          await useStore.getState().removeAccountProfile(pendingId);
+        }
+      })();
+    }
+  };
+
+  return (
+    <>
+      <SectionHead label="Credential vault" />
+      <p style={{ margin: "0 0 12px", fontSize: 11.5, color: "var(--fg-2)", lineHeight: 1.5 }}>
+        Store credentials in your OS keychain so they persist across sessions without exporting env
+        vars. Each workspace picks which account to use at creation time.
+      </p>
+      <p style={{ margin: "0 0 12px", fontSize: 11, color: "var(--fg-3)", lineHeight: 1.45 }}>
+        Codex device sign-in requires ChatGPT Settings &gt; Security &gt; Enable device code
+        authorization for Codex. If your workspace manages this setting, an admin must enable it.
+      </p>
+
+      <div style={{ marginBottom: 10 }}>
+        <Field label="Profile name">
+          <input
+            value={profileLabel}
+            onChange={(e) => setProfileLabel(e.target.value)}
+            placeholder="Work"
+            disabled={loginBusy != null}
+            spellCheck={false}
+            style={{ ...inputStyle, minWidth: 240 }}
+          />
+        </Field>
+      </div>
+
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={loginBusy != null}
+          onClick={() => startLogin("claude", "claude")}
+        >
+          {loginBusy === "claude" ? "Signing in..." : "Sign in with Claude"}
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={loginBusy != null}
+          onClick={() => startLogin("codex", "codex")}
+        >
+          {loginBusy === "codex" ? "Signing in..." : "Sign in with Codex"}
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={loginBusy != null}
+          onClick={() => startLogin("antigravity", "antigravity")}
+        >
+          {loginBusy === "antigravity" ? "Signing in..." : "Sign in with Antigravity"}
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={loginBusy != null}
+          onClick={() => startLogin("github", "github")}
+        >
+          {loginBusy === "github" ? "Signing in..." : "Sign in with GitHub"}
+        </Button>
+      </div>
+
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+        <Button variant="ghost" size="sm" onClick={() => setKeyDialog("codex")}>
+          Paste OpenAI key
+        </Button>
+        <Button variant="ghost" size="sm" onClick={() => setKeyDialog("antigravity")}>
+          Paste Google key
+        </Button>
+        <Button variant="ghost" size="sm" onClick={() => setKeyDialog("github")}>
+          Paste GitHub PAT
+        </Button>
+        <Button variant="ghost" size="sm" onClick={() => setKeyDialog("claude")}>
+          Paste Claude token
+        </Button>
+      </div>
+
+      {loginProgress && loginProgress.stage !== "success" && (
+        <div
+          className="ch-card mono"
+          style={{
+            padding: "10px 14px",
+            marginBottom: 10,
+            fontSize: 11.5,
+            color: loginProgress.stage === "error" ? "var(--err)" : "var(--fg-1)",
+            display: "flex",
+            flexDirection: "column",
+            gap: 6,
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            {loginProgress.stage === "starting" && (
+              <span style={{ color: "var(--fg-2)" }}>Starting...</span>
+            )}
+            {loginProgress.stage === "url" && (
+              <span>Browser opened — authenticate to continue</span>
+            )}
+            {loginProgress.stage === "device_code" && <span>Enter code in your browser:</span>}
+            {loginProgress.stage === "waiting" && (
+              <span style={{ color: "var(--fg-2)" }}>Waiting for authentication...</span>
+            )}
+            {loginProgress.stage === "error" && <span>{loginProgress.message}</span>}
+          </div>
+          {loginProgress.userCode && (
+            <div
+              style={{
+                padding: "6px 12px",
+                background: "var(--bg-0)",
+                border: "1px solid var(--bd)",
+                borderRadius: 6,
+                fontSize: 18,
+                fontWeight: 700,
+                letterSpacing: "0.15em",
+                color: "var(--fg-0)",
+                textAlign: "center",
+              }}
+            >
+              {loginProgress.userCode}
+            </div>
+          )}
+          {loginProgress.url && loginProgress.stage !== "error" && (
+            <div style={{ fontSize: 10.5, color: "var(--fg-3)" }}>{loginProgress.url}</div>
+          )}
+          {loginProgress.message && loginProgress.stage !== "error" && (
+            <div style={{ fontSize: 10.5, color: "var(--fg-2)" }}>{loginProgress.message}</div>
+          )}
+        </div>
+      )}
+
+      {loginProgress?.stage === "success" && (
+        <div
+          className="mono"
+          style={{
+            marginBottom: 10,
+            padding: "8px 12px",
+            borderRadius: 6,
+            background: "color-mix(in oklab, var(--live) 8%, var(--bg-2))",
+            border: "1px solid color-mix(in oklab, var(--live) 30%, var(--bd))",
+            fontSize: 11.5,
+            color: "var(--live)",
+          }}
+        >
+          {loginProgress.message ?? "Signed in successfully"}
+        </div>
+      )}
+
+      {loginError && !loginProgress && (
+        <div
+          className="mono"
+          style={{
+            marginBottom: 10,
+            padding: "8px 12px",
+            borderRadius: 6,
+            background: "color-mix(in oklab, var(--err) 8%, var(--bg-2))",
+            border: "1px solid color-mix(in oklab, var(--err) 30%, var(--bd))",
+            fontSize: 11.5,
+            color: "var(--err)",
+          }}
+        >
+          {loginError}
+        </div>
+      )}
+
+      {vaultProfiles.length > 0 && (
+        <div className="ch-card" style={{ padding: 0, marginBottom: 12 }}>
+          {vaultProfiles.map((p, i) => (
+            <div
+              key={p.id}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 12,
+                padding: "10px 14px",
+                borderBottom: i === vaultProfiles.length - 1 ? "none" : "1px solid var(--bd-soft)",
+              }}
+            >
+              <span
+                style={{
+                  width: 7,
+                  height: 7,
+                  borderRadius: "50%",
+                  background: p.present ? "var(--live)" : "var(--err)",
+                  flexShrink: 0,
+                }}
+                title={p.present ? "stored in keychain" : "not in keychain"}
+              />
+              <span style={{ fontSize: 12.5, fontWeight: 500, color: "var(--fg-0)" }}>
+                {p.label}
+              </span>
+              <Tag>{p.agent}</Tag>
+              <span className="mono" style={{ fontSize: 11, color: "var(--fg-2)" }}>
+                keychain
+              </span>
+              {!p.present && (
+                <span className="mono" style={{ fontSize: 10.5, color: "var(--err)" }}>
+                  missing from keychain
+                </span>
+              )}
+              <span style={{ flex: 1 }} />
+              <Button
+                variant="outline"
+                size="xs"
+                onClick={() => void removeAccountProfile(p.id)}
+                aria-label={`Remove ${p.label}`}
+              >
+                Remove
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {keyDialog && (
+        <ApiKeyDialog
+          agent={keyDialog}
+          onClose={() => setKeyDialog(null)}
+          onSaved={() => void loadAccountProfiles()}
+        />
+      )}
+
+      {terminalDialog && (
+        <LoginTerminalDialog
+          provider={terminalDialog.provider}
+          profileId={terminalDialog.profileId}
+          sessionName={terminalDialog.sessionName}
+          workspace={terminalDialog.workspace}
+          onDone={handleDialogDone}
+        />
+      )}
+    </>
+  );
+}
+
+// Accounts — env-backed label-only profiles (legacy Tier-3). Each maps an agent
+// to a host env var NAME. The credential value is never stored or read, only
+// its presence is probed. Vault-backed profiles are managed above.
+function AccountsSection() {
+  const allProfiles = useStore((s) => s.accountProfiles);
+  const profiles = allProfiles.filter((p) => p.source !== "vault");
   const loadAccountProfiles = useStore((s) => s.loadAccountProfiles);
   const addAccountProfile = useStore((s) => s.addAccountProfile);
   const removeAccountProfile = useStore((s) => s.removeAccountProfile);
@@ -427,18 +774,18 @@ function AccountsSection() {
                   background: p.present ? "var(--live)" : "var(--err)",
                   flexShrink: 0,
                 }}
-                title={p.present ? "host variable present" : "host variable missing"}
+                title={p.present ? "credential available" : "credential missing"}
               />
               <span style={{ fontSize: 12.5, fontWeight: 500, color: "var(--fg-0)" }}>
                 {p.label}
               </span>
               <Tag>{p.agent}</Tag>
               <span className="mono" style={{ fontSize: 11, color: "var(--fg-2)" }}>
-                {p.varName}
+                {p.source === "vault" ? "keychain" : p.varName}
               </span>
               {!p.present && (
                 <span className="mono" style={{ fontSize: 10.5, color: "var(--err)" }}>
-                  not set on host
+                  {p.source === "vault" ? "not in keychain" : "not set on host"}
                 </span>
               )}
               <span style={{ flex: 1 }} />
@@ -1014,9 +1361,9 @@ function PlatformPane({ appInfo }: { appInfo: AppInfo | null }) {
               lineHeight: 1.5,
             }}
           >
-            CodeHub ships desktop-first; web support is on the roadmap. This page maps every
-            feature to where it works — so you and your team know what to expect per build. It is a
-            static reference, not live status.
+            CodeHub ships desktop-first; web support is on the roadmap. This page maps every feature
+            to where it works — so you and your team know what to expect per build. It is a static
+            reference, not live status.
           </p>
         </div>
         <span style={{ flex: 1 }} />
@@ -1388,7 +1735,12 @@ function WorkspaceChanger() {
               outline: "none",
             }}
           />
-          <Button variant="outline" size="sm" disabled={!manualPath.trim()} onClick={submitManualPath}>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={!manualPath.trim()}
+            onClick={submitManualPath}
+          >
             Use path
           </Button>
         </div>
@@ -1604,12 +1956,12 @@ export function LiveActivityPreview({ variant = "panel" }: { variant?: "panel" |
         }}
       >
         <span style={{ fontWeight: 600, marginRight: 18 }}>CodeHub</span>
-          <span style={{ marginRight: 14 }}>Session</span>
-          <span style={{ marginRight: 14 }}>Agent</span>
-          <span style={{ marginRight: 14 }}>View</span>
-          {screen && <span style={{ marginRight: 14 }}>Help</span>}
-          <span style={{ flex: 1 }} />
-          <MenuBarActivity />
+        <span style={{ marginRight: 14 }}>Session</span>
+        <span style={{ marginRight: 14 }}>Agent</span>
+        <span style={{ marginRight: 14 }}>View</span>
+        {screen && <span style={{ marginRight: 14 }}>Help</span>}
+        <span style={{ flex: 1 }} />
+        <MenuBarActivity />
         <span className="mono" style={{ fontSize: 11 }}>
           21:36
         </span>
@@ -1870,10 +2222,7 @@ function IslandStateCard({
           ? "var(--err)"
           : "var(--fg-2)";
   return (
-    <div
-      className="ch-card"
-      style={{ padding: 0, overflow: "hidden", background: "var(--bg-2)" }}
-    >
+    <div className="ch-card" style={{ padding: 0, overflow: "hidden", background: "var(--bg-2)" }}>
       <div
         style={{
           minHeight: 92,
@@ -1902,7 +2251,9 @@ function IslandStateCard({
   );
 }
 
-function LiveIsland({ state }: { state: "idle" | "live" | "wait" | "done" | "err" | "split" | "multi" }) {
+function LiveIsland({
+  state,
+}: { state: "idle" | "live" | "wait" | "done" | "err" | "split" | "multi" }) {
   const base: CSSProperties = {
     background: "#000",
     color: "rgba(255,255,255,0.95)",
@@ -2010,9 +2361,7 @@ function LiveIsland({ state }: { state: "idle" | "live" | "wait" | "done" | "err
         <AgentGlyph agent="claude" size={13} color="oklch(0.78 0.13 35)" />
         <span style={{ display: "flex", flexDirection: "column", lineHeight: 1.2, flex: 1 }}>
           <span style={{ fontSize: 12.5, fontWeight: 500 }}>Claude failed</span>
-          <span style={{ fontSize: 11, color: "rgba(255,255,255,0.58)" }}>
-            ENOENT /tmp/snap-3
-          </span>
+          <span style={{ fontSize: 11, color: "rgba(255,255,255,0.58)" }}>ENOENT /tmp/snap-3</span>
         </span>
         <IslandButton tone="white">Open</IslandButton>
       </div>
@@ -2217,8 +2566,8 @@ function ExpandedIslandPreview() {
           Bash <span style={{ color: "rgba(255,255,255,0.55)" }}>pnpm test src/auth</span>
         </div>
         <div>
-          <span style={{ color: "oklch(0.80 0.17 145)" }}>✓</span>{" "}
-          verifier.spec.ts <span style={{ color: "rgba(255,255,255,0.45)" }}>(4 tests)</span>
+          <span style={{ color: "oklch(0.80 0.17 145)" }}>✓</span> verifier.spec.ts{" "}
+          <span style={{ color: "rgba(255,255,255,0.45)" }}>(4 tests)</span>
         </div>
         <div style={{ color: "rgba(255,255,255,0.56)" }}>Running final typecheck…</div>
       </div>

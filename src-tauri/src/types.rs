@@ -108,6 +108,8 @@ pub struct CodexSession {
     pub turns: u64,
     pub model: Option<String>,
     pub version: Option<String>,
+    pub est_cost_usd: Option<f64>,
+    pub total_tokens: Option<u64>,
 }
 
 /// Live per-session Codex tally from its rollout file.
@@ -155,6 +157,16 @@ pub struct GithubRepo {
     pub default_branch: Option<String>,
     pub open_prs: Option<u64>,
     pub private: bool,
+}
+
+/// Rolling token + cost usage for a time window (Dashboard 24h strip).
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct RollingUsage {
+    pub tokens_in: u64,
+    pub tokens_out: u64,
+    pub est_cost_usd: f64,
+    pub window_hours: u32,
 }
 
 /// App update check (Settings → About). `available` null when up to date.

@@ -95,7 +95,8 @@ export function useKeyboard() {
         if (idx === -1) return;
         e.preventDefault();
         const dir = e.key === "[" ? -1 : 1;
-        const next = store.workspaces[(idx + dir + store.workspaces.length) % store.workspaces.length];
+        const next =
+          store.workspaces[(idx + dir + store.workspaces.length) % store.workspaces.length];
         store.switchWorkspace(next.id);
         return;
       }
@@ -125,9 +126,7 @@ export function useKeyboard() {
             if (!ws) return;
             const count = workspaceLeaves(ws).length;
             const suffix =
-              count > 0
-                ? ` This ends ${count} session${count === 1 ? "" : "s"} in the tab.`
-                : "";
+              count > 0 ? ` This ends ${count} session${count === 1 ? "" : "s"} in the tab.` : "";
             if (window.confirm(`Close ${workspaceTitle(ws)}?${suffix}`)) {
               void store.closeWorkspace(ws.id);
             }

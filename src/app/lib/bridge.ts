@@ -60,6 +60,8 @@ async function httpInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
       return jget("/agent-versions") as Promise<T>;
     case "container_stats":
       return jget(`/container-stats${wsq}`) as Promise<T>;
+    case "container_stats_history":
+      return jget(`/container-stats-history${wsq}`) as Promise<T>;
     case "list_workspace_containers":
       return jget("/workspace-containers") as Promise<T>;
     case "remove_workspace_container":
@@ -91,10 +93,25 @@ async function httpInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
       ) as Promise<T>;
     case "app_info":
       return jget("/app-info") as Promise<T>;
+    case "host_stats":
+      return jget("/host-stats") as Promise<T>;
+    case "runtime_versions":
+      return jget(`/runtime-versions${wsq}`) as Promise<T>;
     case "get_config":
       return jget("/config") as Promise<T>;
     case "set_config":
       return jsend("PUT", "/config", args.config) as Promise<T>;
+    case "add_prompt_template":
+      return jsend("POST", "/prompt-templates", {
+        name: args.name,
+        prompt: args.prompt,
+        cli: args.cli,
+      }) as Promise<T>;
+    case "remove_prompt_template":
+      return jsend(
+        "DELETE",
+        `/prompt-templates?id=${encodeURIComponent(String(args.id))}`,
+      ) as Promise<T>;
     // Tier-2 workspace picker. The native folder dialog can't run in a browser,
     // so pick_directory degrades to null (the UI offers a typed path instead).
     case "pick_directory":
@@ -105,7 +122,7 @@ async function httpInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
       return jget(`/workspace-info${wsq}`) as Promise<T>;
     case "recreate_runtime":
       return jsend("POST", `/recreate-runtime${wsq}`) as Promise<T>;
-    // Tier-3 label-only account profiles.
+    // Account profiles (env-backed or vault-backed).
     case "list_account_profiles":
       return jget("/account-profiles") as Promise<T>;
     case "add_account_profile":
@@ -113,12 +130,21 @@ async function httpInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
         agent: args.agent,
         label: args.label,
         var_name: args.varName,
+        source: args.source,
       }) as Promise<T>;
     case "remove_account_profile":
       return jsend(
         "DELETE",
         `/account-profiles/${encodeURIComponent(String(args.id))}`,
       ) as Promise<T>;
+    // Vault: OS-keychain ops — Tauri-only, degrade to no-op in browser mode.
+    case "vault_store_key":
+    case "vault_delete_key":
+    case "vault_initiate_oauth":
+    case "vault_complete_login":
+      return undefined as T;
+    case "vault_has_key":
+      return false as T;
     case "container_git_diff_all":
       return jget(`/container-git-diff-all${wsq}`) as Promise<T>;
     case "container_git_diff_staged":
@@ -127,6 +153,43 @@ async function httpInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
       return jget(`/container-git-diff-unstaged${wsq}`) as Promise<T>;
     case "container_git_stage_all":
       return jsend("POST", `/container-git-stage-all${wsq}`) as Promise<T>;
+    case "container_git_stage_file":
+      return jsend("POST", "/container-git-stage-file", {
+        path: args.path,
+        workspace: args.workspace,
+      }) as Promise<T>;
+    case "container_git_unstage_file":
+      return jsend("POST", "/container-git-unstage-file", {
+        path: args.path,
+        workspace: args.workspace,
+      }) as Promise<T>;
+    case "container_git_stage_hunk":
+      return jsend("POST", "/container-git-stage-hunk", {
+        patch: args.patch,
+        workspace: args.workspace,
+      }) as Promise<T>;
+    case "set_agent_model":
+      return jsend("POST", "/set-agent-model", {
+        model: args.model,
+        workspace: args.workspace,
+      }) as Promise<T>;
+    case "set_permission_mode":
+      return jsend("POST", "/set-permission-mode", {
+        mode: args.mode,
+        workspace: args.workspace,
+      }) as Promise<T>;
+    case "set_permission_rules":
+      return jsend("POST", "/set-permission-rules", {
+        bucket: args.bucket,
+        rules: args.rules,
+        workspace: args.workspace,
+      }) as Promise<T>;
+    case "toggle_mcp_server":
+      return jsend("POST", "/toggle-mcp-server", {
+        name: args.name,
+        enabled: args.enabled,
+        workspace: args.workspace,
+      }) as Promise<T>;
     case "container_git_commit":
       return jsend("POST", `/container-git-commit${wsq}`, { message: args.message }) as Promise<T>;
     case "container_git_open_pr":
@@ -136,6 +199,21 @@ async function httpInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
       }) as Promise<T>;
     case "container_top":
       return jget(`/container-top${wsq}`) as Promise<T>;
+    case "container_env":
+      return jget(`/container-env${wsq}`) as Promise<T>;
+    case "container_repos":
+      return jget(`/container-repos${wsq}`) as Promise<T>;
+    case "container_git_clone":
+      return jsend("POST", "/container-git-clone", {
+        url: args.url,
+        workspace: args.workspace,
+      }) as Promise<T>;
+    case "stop_all_agents":
+      return jsend("POST", `/stop-all-agents${wsq}`) as Promise<T>;
+    case "rolling_usage": {
+      const h = args.hours ? `?hours=${args.hours}` : "";
+      return jget(`/rolling-usage${h}`) as Promise<T>;
+    }
     case "container_git_log":
       return jget(`/container-git-log?limit=${args.limit ?? 12}${wsAmp}`) as Promise<T>;
     case "session_activity":
@@ -166,6 +244,32 @@ async function httpInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
       return jget("/github-repos") as Promise<T>;
     case "check_update":
       return jget("/check-update") as Promise<T>;
+    case "list_providers":
+      return jget("/providers") as Promise<T>;
+    case "add_provider":
+      return jsend("POST", "/providers", {
+        name: args.name,
+        kind: args.kind,
+        endpoint: args.endpoint,
+        api_key_var: args.apiKeyVar,
+        models: args.models,
+      }) as Promise<T>;
+    case "remove_provider":
+      return jsend("DELETE", `/providers?id=${encodeURIComponent(String(args.id))}`) as Promise<T>;
+    case "update_provider":
+      return jsend("POST", "/providers/update", {
+        id: args.id,
+        name: args.name,
+        endpoint: args.endpoint,
+        enabled: args.enabled,
+        models: args.models,
+      }) as Promise<T>;
+    case "search_transcripts": {
+      const params = new URLSearchParams({ query: String(args.query) });
+      if (args.limit) params.set("limit", String(args.limit));
+      if (args.workspace) params.set("workspace", String(args.workspace));
+      return jget(`/search-transcripts?${params}`) as Promise<T>;
+    }
     case "claude_usage":
       return jget("/claude-usage") as Promise<T>;
     case "claude_sessions":

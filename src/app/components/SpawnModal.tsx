@@ -83,7 +83,8 @@ export function SpawnModal() {
       void addPaneToGroup(active.id, groupId, cli, mode, prompt, account);
     } else {
       // Default (and historic) behaviour: a brand-new workspace tab.
-      void newPlate(cli, mode, undefined, prompt, account, {
+      const resume = cli === "claude" ? ctx?.resume : undefined;
+      void newPlate(cli, mode, resume, prompt, account, {
         title: ctx?.workspaceTitle,
         dir: ctx?.workspaceDir,
         savedWorkspaceId: ctx?.savedWorkspaceId,

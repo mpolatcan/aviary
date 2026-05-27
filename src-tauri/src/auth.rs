@@ -1,0 +1,450 @@
+//! Container-mediated agent login flows.
+//!
+//! Each agent CLI has its own interactive login. CodeHub creates a temporary
+//! container, runs the login command as a visible tmux session (the user sees
+//! the terminal and interacts with it), then reads the resulting credential
+//! file from the container and stores it in the vault.
+
+use crate::docker::DockerClient;
+use crate::vault::Vault;
+use std::sync::Arc;
+use tauri::Emitter;
+
+pub const CLAUDE_AUTH_BUNDLE_PREFIX: &str = "CODEHUB_CLAUDE_AUTH_TGZ_V1:";
+
+#[derive(Debug, serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthProgress {
+    pub profile_id: String,
+    pub provider: String,
+    pub stage: String,
+    pub url: Option<String>,
+    pub user_code: Option<String>,
+    pub message: Option<String>,
+}
+
+fn emit_progress(app: &tauri::AppHandle, progress: &AuthProgress) {
+    let _ = app.emit("codehub://auth-progress", progress);
+}
+
+/// Login command + credential file path per agent.
+pub fn login_spec(provider: &str) -> Option<(Vec<&'static str>, &'static str)> {
+    match provider {
+        "claude" => Some((
+            vec!["/root/.local/bin/claude", "auth", "login", "--claudeai"],
+            "__claude_config_bundle__",
+        )),
+        "codex" => Some((
+            vec!["codex", "login", "--device-auth"],
+            "/root/.codex/auth.json",
+        )),
+        "antigravity" => Some((
+            vec!["agy", "auth", "login"],
+            "/root/.config/agy/credentials.json",
+        )),
+        _ => None,
+    }
+}
+
+pub fn login_capture_path(session_name: &str) -> String {
+    format!(
+        "/tmp/codehub/auth-{}.log",
+        safe_session_fragment(session_name)
+    )
+}
+
+pub fn claude_login_config_dir(session_name: &str) -> String {
+    format!(
+        "/tmp/codehub/claude-auth-{}",
+        safe_session_fragment(session_name)
+    )
+}
+
+pub fn claude_onboarding_patch_script(dir_var: &str) -> String {
+    let dir_ref = format!("${dir_var}");
+    let template = r#"f="__DIR_REF__/.claude.json"
+if [ -f "$f" ] && command -v jq >/dev/null 2>&1; then
+  tmp="$f.tmp.$$"
+  jq '
+    .hasCompletedOnboarding = true
+    | .hasCompletedProjectOnboarding = true
+    | .theme = (.theme // "dark")
+    | .onboardingShown = true
+    | .projects = (.projects // {})
+    | .projects["/workspace"] = ((.projects["/workspace"] // {}) + {
+        allowedTools: (.projects["/workspace"].allowedTools // []),
+        mcpContextUris: (.projects["/workspace"].mcpContextUris // []),
+        mcpServers: (.projects["/workspace"].mcpServers // {}),
+        enabledMcpjsonServers: (.projects["/workspace"].enabledMcpjsonServers // []),
+        disabledMcpjsonServers: (.projects["/workspace"].disabledMcpjsonServers // []),
+        hasTrustDialogAccepted: true,
+        projectOnboardingSeenCount: 1,
+        hasClaudeMdExternalIncludesApproved: (.projects["/workspace"].hasClaudeMdExternalIncludesApproved // false),
+        hasClaudeMdExternalIncludesWarningShown: (.projects["/workspace"].hasClaudeMdExternalIncludesWarningShown // false),
+        hasUnseenTeamArtifacts: (.projects["/workspace"].hasUnseenTeamArtifacts // false)
+      })
+  ' "$f" > "$tmp" && mv "$tmp" "$f" || rm -f "$tmp"
+fi
+"#;
+    template.replace("__DIR_REF__", &dir_ref)
+}
+
+fn safe_session_fragment(session_name: &str) -> String {
+    let safe: String = session_name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    safe
+}
+
+/// After the login session exits, read the credential from the container.
+/// Claude interactive login stores OAuth state under its config dir, so capture
+/// a small tar bundle of that state. Codex/Antigravity write credential files.
+pub async fn capture_credential(
+    docker: &Arc<DockerClient>,
+    provider: &str,
+    session_name: Option<&str>,
+) -> Result<Option<String>, String> {
+    let (_, cred_path) = login_spec(provider).ok_or("unknown provider")?;
+    if cred_path == "__claude_config_bundle__" {
+        let session_name = session_name
+            .ok_or_else(|| "missing login session name for Claude credential".to_string())?;
+        return capture_claude_bundle(docker, session_name).await;
+    }
+    if cred_path == "__stdout__" {
+        let session_name = session_name
+            .ok_or_else(|| "missing login session name for stdout credential".to_string())?;
+        let log_path = login_capture_path(session_name);
+        let read_script = format!("[ -s {log_path} ] && cat {log_path} || true");
+        let content = docker
+            .exec_capture_pub(vec!["sh", "-c", &read_script])
+            .await
+            .map_err(|e| e.to_string())?;
+        return Ok(extract_claude_token(&content));
+    }
+    let read_script = format!("[ -s {cred_path} ] && cat {cred_path} || true");
+    let content = docker
+        .exec_capture_pub(vec!["sh", "-c", &read_script])
+        .await
+        .map_err(|e| e.to_string())?;
+    let trimmed = content.trim();
+    if trimmed.is_empty() || trimmed.starts_with("cat: ") {
+        Ok(None)
+    } else {
+        Ok(Some(trimmed.to_string()))
+    }
+}
+
+pub async fn login_failure_message(
+    docker: &Arc<DockerClient>,
+    provider: &str,
+    session_name: Option<&str>,
+) -> Option<String> {
+    let session_name = session_name?;
+    let log_path = login_capture_path(session_name);
+    let script = format!("[ -s {log_path} ] && tail -80 {log_path} || true");
+    let output: String = docker
+        .exec_capture_pub(vec!["sh", "-c", &script])
+        .await
+        .ok()?;
+    let clean = strip_ansi(&output);
+    if provider == "codex"
+        && clean
+            .to_ascii_lowercase()
+            .contains("enable device code authorization")
+    {
+        return Some(
+            "Codex device auth is disabled for this ChatGPT account or workspace. Enable it in ChatGPT Settings > Security, then run Codex sign-in again."
+                .into(),
+        );
+    }
+    let last = clean
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .rev()
+        .take(4)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if last.is_empty() {
+        None
+    } else {
+        Some(format!(
+            "No credential found after login. Last output: {last}"
+        ))
+    }
+}
+
+async fn capture_claude_bundle(
+    docker: &Arc<DockerClient>,
+    session_name: &str,
+) -> Result<Option<String>, String> {
+    let dir = claude_login_config_dir(session_name);
+    let script = format!(
+        r#"set -eu
+dir={dir}
+PATH="/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+if [ ! -d "$dir" ]; then
+  exit 0
+fi
+if ! CLAUDE_CONFIG_DIR="$dir" PATH="$PATH" claude auth status --json 2>/dev/null | jq -e '.loggedIn == true' >/dev/null 2>&1; then
+  exit 0
+fi
+{onboarding}
+tmp="$(mktemp)"
+cleanup() {{ rm -f "$tmp"; }}
+trap cleanup EXIT
+(
+  cd "$dir"
+  tar -czf "$tmp" \
+    --exclude='./projects' \
+    --exclude='./sessions' \
+    --exclude='./debug' \
+    --exclude='./cache' \
+    --exclude='./backups' \
+    --exclude='./logs' \
+    --exclude='./statsig' \
+    --exclude='./shell-snapshots' \
+    .
+)
+printf %s {prefix}
+base64 "$tmp" | tr -d '\n'
+"#,
+        dir = shell_single_quote(&dir),
+        onboarding = claude_onboarding_patch_script("dir"),
+        prefix = shell_single_quote(CLAUDE_AUTH_BUNDLE_PREFIX),
+    );
+    let content = docker
+        .exec_capture_pub(vec!["sh", "-c", &script])
+        .await
+        .map_err(|e| e.to_string())?;
+    let trimmed = content.trim();
+    if trimmed.starts_with(CLAUDE_AUTH_BUNDLE_PREFIX) {
+        Ok(Some(trimmed.to_string()))
+    } else {
+        Ok(None)
+    }
+}
+
+fn extract_claude_token(output: &str) -> Option<String> {
+    let output = strip_ansi(output);
+    for line in output.lines().rev() {
+        if let Some(pos) = line.find("CLAUDE_CODE_OAUTH_TOKEN") {
+            let rest = &line[pos + "CLAUDE_CODE_OAUTH_TOKEN".len()..];
+            if let Some(token) = first_claude_token(rest) {
+                return Some(token);
+            }
+        }
+        if let Some(token) = first_claude_token(line) {
+            return Some(token);
+        }
+    }
+    None
+}
+
+fn first_claude_token(s: &str) -> Option<String> {
+    s.split_whitespace().find_map(|part| {
+        let token = part.trim_matches(|c: char| {
+            matches!(
+                c,
+                '"' | '\'' | '`' | ',' | ';' | ')' | ']' | '}' | '(' | '[' | '{' | '=' | ':'
+            )
+        });
+        if token.starts_with("sk-ant-") && token.len() > "sk-ant-".len() {
+            Some(token.to_string())
+        } else {
+            None
+        }
+    })
+}
+
+fn strip_ansi(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '\u{1b}' {
+            out.push(c);
+            continue;
+        }
+        if chars.peek() == Some(&'[') {
+            let _ = chars.next();
+            for next in chars.by_ref() {
+                if next.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+        }
+    }
+    out
+}
+
+fn shell_single_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+/// Store a captured credential in the vault and emit success.
+pub fn store_credential(
+    vault: &Arc<Vault>,
+    profile_id: &str,
+    provider: &str,
+    credential: &str,
+    app: &tauri::AppHandle,
+) -> Result<(), String> {
+    vault
+        .store(profile_id, credential)
+        .map_err(|e| e.to_string())?;
+    emit_progress(
+        app,
+        &AuthProgress {
+            profile_id: profile_id.to_string(),
+            provider: provider.to_string(),
+            stage: "success".into(),
+            url: None,
+            user_code: None,
+            message: Some(format!(
+                "{} credentials stored in keychain",
+                provider_label(provider)
+            )),
+        },
+    );
+    Ok(())
+}
+
+fn provider_label(provider: &str) -> &str {
+    match provider {
+        "claude" => "Claude",
+        "codex" => "Codex",
+        "antigravity" => "Antigravity",
+        "github" => "GitHub",
+        _ => provider,
+    }
+}
+
+// ── GitHub: device flow (no container needed) ───────────────────────────────
+
+pub async fn github_login(
+    vault: &Arc<Vault>,
+    profile_id: &str,
+    app: &tauri::AppHandle,
+) -> Result<(), String> {
+    let pid = profile_id.to_string();
+
+    let client_id = std::env::var("CODEHUB_GITHUB_CLIENT_ID").unwrap_or_default();
+    if client_id.is_empty() {
+        emit_progress(
+            app,
+            &AuthProgress {
+                profile_id: pid.clone(),
+                provider: "github".into(),
+                stage: "error".into(),
+                url: None,
+                user_code: None,
+                message: Some(
+                    "CODEHUB_GITHUB_CLIENT_ID not set. Use 'Paste GitHub PAT' instead.".into(),
+                ),
+            },
+        );
+        return Err("CODEHUB_GITHUB_CLIENT_ID not set".into());
+    }
+
+    emit_progress(
+        app,
+        &AuthProgress {
+            profile_id: pid.clone(),
+            provider: "github".into(),
+            stage: "starting".into(),
+            url: None,
+            user_code: None,
+            message: Some("Requesting GitHub device code...".into()),
+        },
+    );
+
+    let (device_code, user_code, verification_uri, interval) =
+        crate::vault::github_request_device_code(&client_id)
+            .await
+            .map_err(|e| e.to_string())?;
+
+    let _ = open::that(&verification_uri);
+
+    emit_progress(
+        app,
+        &AuthProgress {
+            profile_id: pid.clone(),
+            provider: "github".into(),
+            stage: "device_code".into(),
+            url: Some(verification_uri.clone()),
+            user_code: Some(user_code.clone()),
+            message: Some(format!("Enter code {} at {}", user_code, verification_uri)),
+        },
+    );
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(900);
+    let token = crate::vault::github_poll_token(&client_id, &device_code, interval, deadline)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    store_credential(vault, &pid, "github", &token, app)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn claude_token_extraction_handles_export_lines() {
+        let output = "\u{1b}[32mComplete.\u{1b}[0m\n\
+            export CLAUDE_CODE_OAUTH_TOKEN='sk-ant-test_123';\n";
+
+        assert_eq!(
+            extract_claude_token(output).as_deref(),
+            Some("sk-ant-test_123")
+        );
+    }
+
+    #[test]
+    fn claude_token_extraction_prefers_last_token() {
+        let output = "old token sk-ant-old\n\
+            paste this command:\n\
+            CLAUDE_CODE_OAUTH_TOKEN=sk-ant-new_456\n";
+
+        assert_eq!(
+            extract_claude_token(output).as_deref(),
+            Some("sk-ant-new_456")
+        );
+    }
+
+    #[test]
+    fn login_capture_path_sanitizes_session_names() {
+        assert_eq!(
+            login_capture_path("login:claude/abc"),
+            "/tmp/codehub/auth-login_claude_abc.log"
+        );
+    }
+
+    #[test]
+    fn claude_config_dir_sanitizes_session_names() {
+        assert_eq!(
+            claude_login_config_dir("login:claude/abc"),
+            "/tmp/codehub/claude-auth-login_claude_abc"
+        );
+    }
+
+    #[test]
+    fn claude_onboarding_patch_targets_selected_config_dir() {
+        let script = claude_onboarding_patch_script("dir");
+
+        assert!(script.contains("f=\"$dir/.claude.json\""));
+        assert!(script.contains("hasCompletedOnboarding = true"));
+        assert!(script.contains("hasTrustDialogAccepted: true"));
+        assert!(script.contains("projectOnboardingSeenCount: 1"));
+    }
+}

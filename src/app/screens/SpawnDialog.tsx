@@ -2,15 +2,14 @@
  * SpawnDialog — "New agent session" modal. Ported from design/screens/spawn-dialog.jsx.
  *
  * Real surfaces: agent selection (CLIS catalog), permission mode, an
- * `initialPrompt` textarea, the Tier-3 account picker (label-only profiles +
- * host-env presence), and the Tier-2 repository picker (the real /workspace
+ * `initialPrompt` textarea, the account picker (host env + keychain profiles),
+ * and the Tier-2 repository picker (the real /workspace
  * mount + native folder change + MRU recents + a "restart runtime to apply"
  * affordance). Sessions run in the active workspace container; sizing remains
  * Tier-3. Cost estimate stays omitted (no usage capture).
  *
- * Copy note: the design said "secrets stay in the keychain". CodeHub forwards
- * keys from the host environment instead (see BACKEND_PLAN.md), so that wording
- * is corrected throughout. Account profiles store an env var NAME, never a value.
+ * Account profiles either point at an env var NAME or at a keychain-backed vault
+ * profile id. Secret values never cross the frontend boundary.
  *
  * The form pieces (agent/account cards, the /workspace picker, the container
  * panel) live in `components/spawn-form` so the new-workspace wizard reuses the
@@ -26,12 +25,18 @@ import {
   RepositoryPicker,
   SharedRuntimePanel,
 } from "@/app/components/spawn-form";
+import {
+  AUTO_ACCOUNT,
+  HOST_ACCOUNT,
+  accountProfileSubtitle,
+  agentAccountState,
+} from "@/app/lib/accounts";
 import { CLIS, MODE_BY_ID, modesFor } from "@/app/lib/catalog";
-import type { AgentCli, Cli, Mode } from "@/app/lib/ipc";
+import type { Cli, Mode } from "@/app/lib/ipc";
 import { useStore } from "@/app/lib/store";
 import { MAX_GROUP_PANES } from "@/app/lib/tree";
 import { Button } from "@/app/ui/button";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 /** A group of the active workspace the agent can be spawned into (design Group row). */
 export interface GroupChoice {
@@ -94,8 +99,9 @@ export function SpawnDialog({
   const [agent, setAgentRaw] = useState<Cli>(defaultCli);
   const [mode, setMode] = useState<Mode>("standard");
   const [prompt, setPrompt] = useState("");
-  // Selected account-profile id; undefined → the default host-env credential.
-  const [account, setAccount] = useState<string | undefined>(undefined);
+  // Selected account-profile id. AUTO prefers host auth when present, otherwise
+  // the newest stored profile for the selected agent.
+  const [accountChoice, setAccountChoice] = useState<string>(AUTO_ACCOUNT);
   // Spawn target: "" → a new workspace tab (default, preserves the historic
   // surface behaviour); a group id → into that group of the active workspace;
   // NEW_GROUP → a fresh group in the active workspace.
@@ -104,18 +110,22 @@ export function SpawnDialog({
 
   const keyStatus = useStore((s) => s.keyStatus);
   const accountProfiles = useStore((s) => s.accountProfiles);
+  const loadAccountProfiles = useStore((s) => s.loadAccountProfiles);
 
   // Switching agent clamps the mode to what that agent supports (e.g.
   // Antigravity → Standard only) and resets the account (profiles are per-agent).
   const setAgent = (next: Cli) => {
     setAgentRaw(next);
     if (!modesFor(next).includes(mode)) setMode("standard");
-    setAccount(undefined);
+    setAccountChoice(AUTO_ACCOUNT);
   };
   const modes = modesFor(agent);
-  // Account profiles for the selected agent (the default host-env is implicit).
-  const agentAccounts = accountProfiles.filter((p) => p.agent === agent);
-  const defaultKey = agent === "shell" ? null : (keyStatus?.[agent as AgentCli] ?? null);
+  const { agentAccounts, defaultKey, effectiveAccountChoice, selectedAccount } =
+    agentAccountState(agent, accountProfiles, keyStatus, accountChoice);
+
+  useEffect(() => {
+    void loadAccountProfiles();
+  }, [loadAccountProfiles]);
 
   return (
     <div
@@ -227,22 +237,24 @@ export function SpawnDialog({
                       : "default credential"
                 }
                 present={defaultKey?.present ?? true}
-                selected={account === undefined}
-                onSelect={() => setAccount(undefined)}
+                selected={effectiveAccountChoice === HOST_ACCOUNT}
+                onSelect={() => setAccountChoice(HOST_ACCOUNT)}
               />
               {agentAccounts.map((p) => (
                 <AccountCard
                   key={p.id}
                   title={p.label}
-                  sub={`${p.varName} · ${p.present ? "present" : "missing"}`}
+                  sub={accountProfileSubtitle(p)}
                   present={p.present}
-                  selected={account === p.id}
-                  onSelect={() => setAccount(p.id)}
+                  disabled={!p.present}
+                  selected={effectiveAccountChoice === p.id}
+                  onSelect={() => setAccountChoice(p.id)}
                 />
               ))}
             </div>
             <div className="mono" style={{ fontSize: 10.5, color: "var(--fg-3)", marginTop: 6 }}>
-              Accounts map to host env vars (names, never values). Manage them in Settings → Agents.
+              Accounts use host env vars or keychain-backed profiles. Manage them in Settings →
+              Agents.
             </div>
           </FormRow>
 
@@ -365,7 +377,7 @@ export function SpawnDialog({
           <Button
             size="sm"
             style={{ padding: "6px 14px" }}
-            onClick={() => onLaunch?.(agent, mode, prompt, account, target || undefined)}
+            onClick={() => onLaunch?.(agent, mode, prompt, selectedAccount, target || undefined)}
           >
             Add agent
             <span className="kbd" style={{ marginLeft: 6 }}>

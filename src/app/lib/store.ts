@@ -229,7 +229,12 @@ interface CodeHubState {
   // Tier-3 account profiles (label-only).
   loadAccountProfiles: () => Promise<void>;
   // Add a profile. Throws (string) on validation failure so the UI shows it.
-  addAccountProfile: (agent: AgentCli, label: string, varName: string) => Promise<void>;
+  addAccountProfile: (
+    agent: string,
+    label: string,
+    varName?: string,
+    source?: "env" | "vault",
+  ) => Promise<void>;
   removeAccountProfile: (id: string) => Promise<void>;
 
   // Phase-0 completion contract load actions (best-effort, mirror the existing
@@ -897,6 +902,10 @@ export const useStore = create<CodeHubState>((set, get) => {
         set({ config });
         registry.setFontSize(config.terminalFontSize);
         applyDensity(config.density);
+        if (config.companion) {
+          const { useCompanionPrefs } = await import("./overlay");
+          useCompanionPrefs.getState().hydrate(config.companion);
+        }
       } catch (e) {
         console.warn("get_config failed", e);
       }
@@ -1014,8 +1023,8 @@ export const useStore = create<CodeHubState>((set, get) => {
 
     // Add throws the backend's validation message (a string) so the dialog can
     // surface it inline; on success the returned list (with presence) replaces ours.
-    addAccountProfile: async (agent, label, varName) => {
-      const list = await ipc.addAccountProfile(agent, label, varName);
+    addAccountProfile: async (agent, label, varName, source) => {
+      const list = await ipc.addAccountProfile(agent, label, varName, source);
       set({ accountProfiles: list });
     },
 

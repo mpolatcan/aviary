@@ -312,7 +312,9 @@ export function Usage() {
                       : "No Codex turns recorded yet. Usage appears once an agent responds."
                   }
                   source="rollout files"
-                  rateNote={rates === null ? "No rate-limit data on disk yet." : rateHeadlineSub(rates)}
+                  rateNote={
+                    rates === null ? "No rate-limit data on disk yet." : rateHeadlineSub(rates)
+                  }
                   onNew={() => openLaunch("newtab")}
                 />
               ))}
@@ -864,7 +866,12 @@ function EmptyAgentCard({
         >
           New {AGENT_META[agent].name}
         </Button>
-        <Button size="sm" variant="ghost" style={{ width: "100%", justifyContent: "center" }} disabled>
+        <Button
+          size="sm"
+          variant="ghost"
+          style={{ width: "100%", justifyContent: "center" }}
+          disabled
+        >
           Export CSV
         </Button>
         <span style={{ flex: 1 }} />

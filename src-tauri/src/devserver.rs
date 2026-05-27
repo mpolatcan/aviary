@@ -13,7 +13,7 @@
 //! built only via `cargo run --bin codehub-devserver --features devserver`.
 
 use crate::config::{ConfigStore, Settings};
-use crate::docker::{Cli, DockerClient, LaunchMode};
+use crate::docker::{Cli, DockerClient, LaunchMode, TmuxSessionRequest};
 use crate::events::EventsTracker;
 use crate::manager::LifecycleManager;
 use crate::pty::{PaneEmitter, PtyRegistry};
@@ -40,6 +40,7 @@ struct AppState {
     registry: Arc<PtyRegistry>,
     config: Arc<ConfigStore>,
     events: Arc<EventsTracker>,
+    stats_history: Arc<crate::stats_history::StatsHistory>,
     tx: broadcast::Sender<String>,
 }
 
@@ -82,6 +83,36 @@ impl PaneEmitter for WsEmitter {
 type ApiError = (StatusCode, String);
 fn err(e: impl ToString) -> ApiError {
     (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+}
+
+const WORKSPACE_REQUIRED: &str = "workspace required";
+const NO_RUNNING_WORKSPACE_CONTAINER: &str = "no running workspace container";
+
+fn bad_request(message: impl Into<String>) -> ApiError {
+    (StatusCode::BAD_REQUEST, message.into())
+}
+
+fn workspace_required(workspace: Option<String>) -> Result<String, ApiError> {
+    workspace.ok_or_else(|| bad_request(WORKSPACE_REQUIRED))
+}
+
+async fn running_workspace_docker(st: &AppState) -> Result<Arc<DockerClient>, ApiError> {
+    st.manager.any_running_docker().await.ok_or_else(|| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            NO_RUNNING_WORKSPACE_CONTAINER.into(),
+        )
+    })
+}
+
+async fn docker_for_optional_workspace(
+    st: &AppState,
+    workspace: Option<String>,
+) -> Result<Arc<DockerClient>, ApiError> {
+    match workspace {
+        Some(ws) => Ok(docker_container_for(st, &ws)),
+        None => running_workspace_docker(st).await,
+    }
 }
 
 pub async fn serve() {
@@ -156,11 +187,13 @@ pub async fn serve() {
         ));
     }
 
+    let stats_hist = Arc::new(crate::stats_history::StatsHistory::new());
     let state = AppState {
         manager: manager.clone(),
         registry,
         config,
         events,
+        stats_history: stats_hist,
         tx: tx.clone(),
     };
 
@@ -171,7 +204,13 @@ pub async fn serve() {
         .route("/container-restart", post(container_restart))
         .route("/docker-info", get(docker_info))
         .route("/app-info", get(app_info))
+        .route("/host-stats", get(host_stats))
+        .route("/runtime-versions", get(runtime_versions))
         .route("/config", get(get_config).put(set_config))
+        .route(
+            "/prompt-templates",
+            post(add_prompt_template).delete(remove_prompt_template),
+        )
         .route("/pick-directory", post(pick_directory))
         .route("/workspace-dir", put(set_workspace_dir))
         .route("/workspace-info", get(workspace_info))
@@ -188,6 +227,7 @@ pub async fn serve() {
         .route("/agent-key-status", get(agent_key_status))
         .route("/agent-versions", get(agent_versions))
         .route("/container-stats", get(container_stats))
+        .route("/container-stats-history", get(container_stats_history))
         .route("/container-logs", get(container_logs))
         .route("/container-mounts", get(container_mounts))
         .route("/container-image", get(container_image))
@@ -203,9 +243,24 @@ pub async fn serve() {
             get(container_git_diff_unstaged),
         )
         .route("/container-git-stage-all", post(container_git_stage_all))
+        .route("/container-git-stage-file", post(container_git_stage_file))
+        .route(
+            "/container-git-unstage-file",
+            post(container_git_unstage_file),
+        )
+        .route("/container-git-stage-hunk", post(container_git_stage_hunk))
         .route("/container-git-commit", post(container_git_commit))
         .route("/container-git-open-pr", post(container_git_open_pr))
+        .route("/set-agent-model", post(set_agent_model))
+        .route("/set-permission-mode", post(set_permission_mode))
+        .route("/set-permission-rules", post(set_permission_rules))
+        .route("/toggle-mcp-server", post(toggle_mcp_server))
         .route("/container-top", get(container_top))
+        .route("/container-env", get(container_env))
+        .route("/container-repos", get(container_repos))
+        .route("/container-git-clone", post(container_git_clone))
+        .route("/stop-all-agents", post(stop_all_agents))
+        .route("/rolling-usage", get(rolling_usage))
         .route("/claude-usage", get(claude_usage))
         .route("/claude-sessions", get(claude_sessions))
         .route("/claude-session-usage", get(claude_session_usage))
@@ -213,7 +268,7 @@ pub async fn serve() {
         .route("/claude-agent-config", get(claude_agent_config))
         .route("/container-git-log", get(container_git_log))
         .route("/session-activity", get(session_activity))
-        // Phase-0 completion contract (stub handlers; mirror lib.rs).
+        // Phase-0 completion contract: live handlers mirroring lib.rs.
         .route("/pending-prompts", get(pending_prompts))
         .route("/respond-prompt", post(respond_prompt))
         .route("/session-activity-history", get(session_activity_history))
@@ -224,6 +279,14 @@ pub async fn serve() {
         .route("/github-status", get(github_status))
         .route("/github-repos", get(github_repos))
         .route("/check-update", get(check_update))
+        .route("/search-transcripts", get(search_transcripts))
+        .route(
+            "/providers",
+            get(list_providers)
+                .post(add_provider)
+                .delete(remove_provider),
+        )
+        .route("/providers/update", post(update_provider))
         .route("/sessions", get(list_sessions).post(create_session))
         .route("/sessions/:name", delete(kill_session))
         .route("/sessions/:name/rename", post(rename_session))
@@ -231,6 +294,11 @@ pub async fn serve() {
         .route("/panes/:id/write", post(write))
         .route("/panes/:id/resize", post(resize))
         .route("/panes/:id", delete(detach))
+        // Vault: Tauri-only (OS keychain). Stub 501 for browser dev bridge.
+        .route("/vault-store-key", post(vault_not_supported))
+        .route("/vault-delete-key", post(vault_not_supported))
+        .route("/vault-has-key", get(vault_has_key_not_supported))
+        .route("/vault-initiate-oauth", post(vault_not_supported))
         .route("/events", get(ws_events))
         .with_state(state);
 
@@ -243,9 +311,7 @@ async fn status(
     State(st): State<AppState>,
     Query(q): Query<WorkspaceQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let ws = q
-        .workspace
-        .ok_or((StatusCode::BAD_REQUEST, "workspace required".into()))?;
+    let ws = workspace_required(q.workspace)?;
     Ok(Json(lifecycle_for(&st, &ws).status().await))
 }
 
@@ -261,9 +327,7 @@ async fn container_start(
     State(st): State<AppState>,
     Query(q): Query<WorkspaceQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let ws = q
-        .workspace
-        .ok_or((StatusCode::BAD_REQUEST, "workspace required".into()))?;
+    let ws = workspace_required(q.workspace)?;
     let lc = lifecycle_for(&st, &ws);
     lc.start().await.map_err(err)?;
     let status = lc.status().await;
@@ -275,9 +339,7 @@ async fn container_stop(
     State(st): State<AppState>,
     Query(q): Query<WorkspaceQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let ws = q
-        .workspace
-        .ok_or((StatusCode::BAD_REQUEST, "workspace required".into()))?;
+    let ws = workspace_required(q.workspace)?;
     let lc = lifecycle_for(&st, &ws);
     lc.stop().await.map_err(err)?;
     let status = lc.status().await;
@@ -289,9 +351,7 @@ async fn container_restart(
     State(st): State<AppState>,
     Query(q): Query<WorkspaceQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let ws = q
-        .workspace
-        .ok_or((StatusCode::BAD_REQUEST, "workspace required".into()))?;
+    let ws = workspace_required(q.workspace)?;
     let lc = lifecycle_for(&st, &ws);
     lc.restart().await.map_err(err)?;
     let status = lc.status().await;
@@ -307,6 +367,18 @@ async fn app_info() -> impl IntoResponse {
     Json(crate::lifecycle::app_info())
 }
 
+async fn host_stats() -> impl IntoResponse {
+    Json(crate::lifecycle::host_stats())
+}
+
+async fn runtime_versions(
+    State(st): State<AppState>,
+    Query(q): Query<WorkspaceQuery>,
+) -> Result<impl IntoResponse, ApiError> {
+    let docker = docker_for_optional_workspace(&st, q.workspace).await?;
+    docker.runtime_versions().await.map(Json).map_err(err)
+}
+
 async fn get_config(State(st): State<AppState>) -> impl IntoResponse {
     Json(st.config.get())
 }
@@ -315,15 +387,53 @@ async fn set_config(
     State(st): State<AppState>,
     Json(body): Json<Settings>,
 ) -> Result<impl IntoResponse, ApiError> {
+    let current = st.config.get();
     st.config
-        .set(body)
+        .set(crate::preserve_backend_owned_settings(body, &current))
         .map(Json)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))
 }
 
-// Tier-2 / Tier-3 — workspace picker + account profiles. Mirror the lib.rs
-// commands one-for-one. The native folder picker can't run in a browser, so
-// pick_directory degrades to null (the UI falls back to a typed path).
+#[derive(Deserialize)]
+struct PromptTemplateBody {
+    name: String,
+    prompt: String,
+    cli: Option<String>,
+}
+
+async fn add_prompt_template(
+    State(st): State<AppState>,
+    Json(body): Json<PromptTemplateBody>,
+) -> Result<impl IntoResponse, ApiError> {
+    let mut settings = st.config.get();
+    settings
+        .prompt_templates
+        .push(crate::config::PromptTemplate {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: body.name,
+            prompt: body.prompt,
+            cli: body.cli,
+        });
+    let saved = st.config.set(settings).map_err(err)?;
+    Ok(Json(saved.prompt_templates))
+}
+
+#[derive(Deserialize)]
+struct PromptTemplateDeleteQuery {
+    id: String,
+}
+
+async fn remove_prompt_template(
+    State(st): State<AppState>,
+    Query(q): Query<PromptTemplateDeleteQuery>,
+) -> Result<impl IntoResponse, ApiError> {
+    let mut settings = st.config.get();
+    settings.prompt_templates.retain(|t| t.id != q.id);
+    let saved = st.config.set(settings).map_err(err)?;
+    Ok(Json(saved.prompt_templates))
+}
+
+// Tier-2 / Tier-3 — workspace picker + account profiles.
 async fn pick_directory() -> impl IntoResponse {
     Json(None::<String>)
 }
@@ -372,9 +482,7 @@ async fn recreate_runtime(
     State(st): State<AppState>,
     Query(q): Query<WorkspaceQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let ws = q
-        .workspace
-        .ok_or((StatusCode::BAD_REQUEST, "workspace required".into()))?;
+    let ws = workspace_required(q.workspace)?;
     let lc = lifecycle_for(&st, &ws);
     lc.recreate().await.map_err(err)?;
     let status = lc.status().await;
@@ -383,24 +491,34 @@ async fn recreate_runtime(
 }
 
 async fn list_account_profiles(State(st): State<AppState>) -> impl IntoResponse {
-    Json(crate::profile_statuses(st.config.get().account_profiles))
+    // Dev bridge has no vault access — pass None (vault-backed profiles show present=false).
+    Json(crate::profile_statuses(
+        st.config.get().account_profiles,
+        None,
+    ))
 }
 
 #[derive(Deserialize)]
 struct AddProfileBody {
     agent: String,
     label: String,
-    var_name: String,
+    var_name: Option<String>,
+    source: Option<String>,
 }
 
 async fn add_account_profile(
     State(st): State<AppState>,
     Json(body): Json<AddProfileBody>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let profile = crate::build_account_profile(&body.agent, &body.label, &body.var_name)
-        .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    let profile = if body.source.as_deref() == Some("vault") {
+        crate::build_vault_profile(&body.agent, &body.label)
+            .map_err(|e| (StatusCode::BAD_REQUEST, e))?
+    } else {
+        crate::build_account_profile(&body.agent, &body.label, &body.var_name.unwrap_or_default())
+            .map_err(|e| (StatusCode::BAD_REQUEST, e))?
+    };
     let next = st.config.add_account_profile(profile).map_err(err)?;
-    Ok(Json(crate::profile_statuses(next.account_profiles)))
+    Ok(Json(crate::profile_statuses(next.account_profiles, None)))
 }
 
 async fn remove_account_profile(
@@ -408,7 +526,7 @@ async fn remove_account_profile(
     Path(id): Path<String>,
 ) -> Result<impl IntoResponse, ApiError> {
     let next = st.config.remove_account_profile(&id).map_err(err)?;
-    Ok(Json(crate::profile_statuses(next.account_profiles)))
+    Ok(Json(crate::profile_statuses(next.account_profiles, None)))
 }
 
 async fn agent_key_status() -> impl IntoResponse {
@@ -416,10 +534,7 @@ async fn agent_key_status() -> impl IntoResponse {
 }
 
 async fn agent_versions(State(st): State<AppState>) -> Result<impl IntoResponse, ApiError> {
-    let docker = st.manager.any_running_docker().await.ok_or((
-        StatusCode::SERVICE_UNAVAILABLE,
-        "no running workspace container".into(),
-    ))?;
+    let docker = running_workspace_docker(&st).await?;
     Ok(Json(docker.agent_versions().await))
 }
 
@@ -427,14 +542,20 @@ async fn container_stats(
     State(st): State<AppState>,
     Query(q): Query<WorkspaceQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let ws = q
-        .workspace
-        .ok_or((StatusCode::BAD_REQUEST, "workspace required".into()))?;
+    let ws = workspace_required(q.workspace)?;
     docker_container_for(&st, &ws)
         .stats()
         .await
         .map(Json)
         .map_err(err)
+}
+
+async fn container_stats_history(
+    State(st): State<AppState>,
+    Query(q): Query<WorkspaceQuery>,
+) -> Result<impl IntoResponse, ApiError> {
+    let ws = workspace_required(q.workspace)?;
+    Ok(Json(st.stats_history.history(&ws)))
 }
 
 async fn list_workspace_containers(
@@ -451,9 +572,7 @@ async fn remove_workspace_container(
     State(st): State<AppState>,
     Query(q): Query<WorkspaceQuery>,
 ) -> Result<StatusCode, ApiError> {
-    let key = q
-        .workspace
-        .ok_or((StatusCode::BAD_REQUEST, "workspace required".into()))?;
+    let key = workspace_required(q.workspace)?;
     st.manager.remove_workspace(&key).await.map_err(err)?;
     // No codehub://lifecycle broadcast — that event tracks the shared runtime;
     // the fleet poll reflects the removal (mirrors lib.rs remove_workspace_container).
@@ -470,9 +589,7 @@ async fn container_logs(
     State(st): State<AppState>,
     Query(q): Query<LogsQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let ws = q
-        .workspace
-        .ok_or((StatusCode::BAD_REQUEST, "workspace required".into()))?;
+    let ws = workspace_required(q.workspace)?;
     docker_container_for(&st, &ws)
         .logs(q.tail.unwrap_or(200))
         .await
@@ -484,9 +601,7 @@ async fn container_mounts(
     State(st): State<AppState>,
     Query(q): Query<WorkspaceQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let ws = q
-        .workspace
-        .ok_or((StatusCode::BAD_REQUEST, "workspace required".into()))?;
+    let ws = workspace_required(q.workspace)?;
     docker_container_for(&st, &ws)
         .mounts()
         .await
@@ -498,13 +613,7 @@ async fn container_image(
     State(st): State<AppState>,
     Query(q): Query<WorkspaceQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let docker = match q.workspace {
-        Some(ws) => docker_container_for(&st, &ws),
-        None => st.manager.any_running_docker().await.ok_or((
-            StatusCode::SERVICE_UNAVAILABLE,
-            "no running workspace container".into(),
-        ))?,
-    };
+    let docker = docker_for_optional_workspace(&st, q.workspace).await?;
     docker.image_info().await.map(Json).map_err(err)
 }
 
@@ -512,13 +621,7 @@ async fn container_health(
     State(st): State<AppState>,
     Query(q): Query<WorkspaceQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let docker = match q.workspace {
-        Some(ws) => docker_container_for(&st, &ws),
-        None => st.manager.any_running_docker().await.ok_or((
-            StatusCode::SERVICE_UNAVAILABLE,
-            "no running workspace container".into(),
-        ))?,
-    };
+    let docker = docker_for_optional_workspace(&st, q.workspace).await?;
     docker.health().await.map(Json).map_err(err)
 }
 
@@ -534,9 +637,7 @@ async fn container_list_dir(
     State(st): State<AppState>,
     Query(q): Query<PathQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let ws = q
-        .workspace
-        .ok_or((StatusCode::BAD_REQUEST, "workspace required".into()))?;
+    let ws = workspace_required(q.workspace)?;
     docker_container_for(&st, &ws)
         .list_dir(&q.path.unwrap_or_default())
         .await
@@ -548,9 +649,7 @@ async fn container_read_file(
     State(st): State<AppState>,
     Query(q): Query<PathQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let ws = q
-        .workspace
-        .ok_or((StatusCode::BAD_REQUEST, "workspace required".into()))?;
+    let ws = workspace_required(q.workspace)?;
     docker_container_for(&st, &ws)
         .read_file(&q.path.unwrap_or_default())
         .await
@@ -562,9 +661,7 @@ async fn container_git_status(
     State(st): State<AppState>,
     Query(q): Query<WorkspaceQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let ws = q
-        .workspace
-        .ok_or((StatusCode::BAD_REQUEST, "workspace required".into()))?;
+    let ws = workspace_required(q.workspace)?;
     docker_container_for(&st, &ws)
         .git_status()
         .await
@@ -582,9 +679,7 @@ async fn container_git_diff(
     State(st): State<AppState>,
     Query(q): Query<DiffQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let ws = q
-        .workspace
-        .ok_or((StatusCode::BAD_REQUEST, "workspace required".into()))?;
+    let ws = workspace_required(q.workspace)?;
     docker_container_for(&st, &ws)
         .git_diff(&q.path)
         .await
@@ -596,9 +691,7 @@ async fn container_git_diff_all(
     State(st): State<AppState>,
     Query(q): Query<WorkspaceQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let ws = q
-        .workspace
-        .ok_or((StatusCode::BAD_REQUEST, "workspace required".into()))?;
+    let ws = workspace_required(q.workspace)?;
     docker_container_for(&st, &ws)
         .git_diff_all()
         .await
@@ -610,9 +703,7 @@ async fn container_git_diff_staged(
     State(st): State<AppState>,
     Query(q): Query<WorkspaceQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let ws = q
-        .workspace
-        .ok_or((StatusCode::BAD_REQUEST, "workspace required".into()))?;
+    let ws = workspace_required(q.workspace)?;
     docker_container_for(&st, &ws)
         .git_diff_staged()
         .await
@@ -624,9 +715,7 @@ async fn container_git_diff_unstaged(
     State(st): State<AppState>,
     Query(q): Query<WorkspaceQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let ws = q
-        .workspace
-        .ok_or((StatusCode::BAD_REQUEST, "workspace required".into()))?;
+    let ws = workspace_required(q.workspace)?;
     docker_container_for(&st, &ws)
         .git_diff_unstaged()
         .await
@@ -638,9 +727,7 @@ async fn container_git_stage_all(
     State(st): State<AppState>,
     Query(q): Query<WorkspaceQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let ws = q
-        .workspace
-        .ok_or((StatusCode::BAD_REQUEST, "workspace required".into()))?;
+    let ws = workspace_required(q.workspace)?;
     docker_container_for(&st, &ws)
         .git_stage_all()
         .await
@@ -658,9 +745,7 @@ async fn container_git_commit(
     Query(q): Query<WorkspaceQuery>,
     Json(body): Json<CommitBody>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let ws = q
-        .workspace
-        .ok_or((StatusCode::BAD_REQUEST, "workspace required".into()))?;
+    let ws = workspace_required(q.workspace)?;
     docker_container_for(&st, &ws)
         .git_commit(&body.message)
         .await
@@ -679,9 +764,7 @@ async fn container_git_open_pr(
     Query(q): Query<WorkspaceQuery>,
     Json(body): Json<OpenPrBody>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let ws = q
-        .workspace
-        .ok_or((StatusCode::BAD_REQUEST, "workspace required".into()))?;
+    let ws = workspace_required(q.workspace)?;
     docker_container_for(&st, &ws)
         .git_open_pr(&body.title, &body.body)
         .await
@@ -689,13 +772,124 @@ async fn container_git_open_pr(
         .map_err(err)
 }
 
+#[derive(Deserialize)]
+struct PathWorkspaceBody {
+    path: String,
+    workspace: String,
+}
+
+async fn container_git_stage_file(
+    State(st): State<AppState>,
+    Json(body): Json<PathWorkspaceBody>,
+) -> Result<StatusCode, ApiError> {
+    docker_container_for(&st, &body.workspace)
+        .git_stage_file(&body.path)
+        .await
+        .map_err(err)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn container_git_unstage_file(
+    State(st): State<AppState>,
+    Json(body): Json<PathWorkspaceBody>,
+) -> Result<StatusCode, ApiError> {
+    docker_container_for(&st, &body.workspace)
+        .git_unstage_file(&body.path)
+        .await
+        .map_err(err)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+struct StageHunkBody {
+    patch: String,
+    workspace: String,
+}
+
+async fn container_git_stage_hunk(
+    State(st): State<AppState>,
+    Json(body): Json<StageHunkBody>,
+) -> Result<StatusCode, ApiError> {
+    docker_container_for(&st, &body.workspace)
+        .git_stage_hunk(&body.patch)
+        .await
+        .map_err(err)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+struct ModelBody {
+    model: String,
+    workspace: String,
+}
+
+async fn set_agent_model(
+    State(st): State<AppState>,
+    Json(body): Json<ModelBody>,
+) -> Result<impl IntoResponse, ApiError> {
+    let docker = docker_container_for(&st, &body.workspace);
+    docker.set_claude_model(&body.model).await.map_err(err)?;
+    docker.claude_agent_config().await.map(Json).map_err(err)
+}
+
+#[derive(Deserialize)]
+struct PermModeBody {
+    mode: String,
+    workspace: String,
+}
+
+async fn set_permission_mode(
+    State(st): State<AppState>,
+    Json(body): Json<PermModeBody>,
+) -> Result<impl IntoResponse, ApiError> {
+    let docker = docker_container_for(&st, &body.workspace);
+    docker.set_permission_mode(&body.mode).await.map_err(err)?;
+    docker.claude_agent_config().await.map(Json).map_err(err)
+}
+
+#[derive(Deserialize)]
+struct PermRulesBody {
+    bucket: String,
+    rules: Vec<String>,
+    workspace: String,
+}
+
+async fn set_permission_rules(
+    State(st): State<AppState>,
+    Json(body): Json<PermRulesBody>,
+) -> Result<impl IntoResponse, ApiError> {
+    let docker = docker_container_for(&st, &body.workspace);
+    docker
+        .set_permission_rules(&body.bucket, &body.rules)
+        .await
+        .map_err(err)?;
+    docker.claude_agent_config().await.map(Json).map_err(err)
+}
+
+#[derive(Deserialize)]
+struct ToggleMcpBody {
+    name: String,
+    enabled: bool,
+    workspace: String,
+}
+
+async fn toggle_mcp_server(
+    State(st): State<AppState>,
+    Json(body): Json<ToggleMcpBody>,
+) -> Result<impl IntoResponse, ApiError> {
+    let docker = docker_container_for(&st, &body.workspace);
+    docker
+        .toggle_mcp_server(&body.name, body.enabled)
+        .await
+        .map_err(err)?;
+    docker.claude_integrations().await.map(Json).map_err(err)
+}
+
 async fn container_top(
     State(st): State<AppState>,
     Query(q): Query<WorkspaceQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let ws = q
-        .workspace
-        .ok_or((StatusCode::BAD_REQUEST, "workspace required".into()))?;
+    let ws = workspace_required(q.workspace)?;
     docker_container_for(&st, &ws)
         .top()
         .await
@@ -703,35 +897,123 @@ async fn container_top(
         .map_err(err)
 }
 
+async fn container_env(
+    State(st): State<AppState>,
+    Query(q): Query<WorkspaceQuery>,
+) -> Result<impl IntoResponse, ApiError> {
+    let ws = workspace_required(q.workspace)?;
+    docker_container_for(&st, &ws)
+        .container_env()
+        .await
+        .map(Json)
+        .map_err(err)
+}
+
+async fn container_repos(
+    State(st): State<AppState>,
+    Query(q): Query<WorkspaceQuery>,
+) -> Result<impl IntoResponse, ApiError> {
+    let ws = workspace_required(q.workspace)?;
+    docker_container_for(&st, &ws)
+        .container_repos()
+        .await
+        .map(Json)
+        .map_err(err)
+}
+
+#[derive(Deserialize)]
+struct GitCloneBody {
+    url: String,
+    workspace: String,
+}
+
+async fn container_git_clone(
+    State(st): State<AppState>,
+    Json(body): Json<GitCloneBody>,
+) -> Result<impl IntoResponse, ApiError> {
+    let lifecycle = st.manager.resolve(&body.workspace, None);
+    lifecycle.ensure_runtime().await.map_err(err)?;
+    lifecycle
+        .docker_client()
+        .git_clone(&body.url)
+        .await
+        .map(Json)
+        .map_err(err)
+}
+
+async fn stop_all_agents(
+    State(st): State<AppState>,
+    Query(q): Query<WorkspaceQuery>,
+) -> Result<impl IntoResponse, ApiError> {
+    let ws = workspace_required(q.workspace)?;
+    let docker = docker_for(&st, &ws);
+    let sessions = docker.list_tmux_sessions().await.map_err(err)?;
+    for s in sessions {
+        st.registry.detach_by_session(&s.name).await;
+        st.events.remove_session(&s.name);
+        let _ = docker.kill_tmux_session(&s.name).await;
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+struct RollingUsageQuery {
+    hours: Option<u32>,
+}
+
+async fn rolling_usage(
+    State(st): State<AppState>,
+    Query(q): Query<RollingUsageQuery>,
+) -> Result<impl IntoResponse, ApiError> {
+    let window_hours = q.hours.unwrap_or(24);
+    let docker = running_workspace_docker(&st).await?;
+    let cutoff_date = crate::utc_date_minus_hours(window_hours);
+    let mut tokens_in: u64 = 0;
+    let mut tokens_out: u64 = 0;
+    let mut est_cost_usd: f64 = 0.0;
+    if let Ok(claude) = docker.claude_usage().await {
+        for d in &claude.by_day {
+            if d.date >= cutoff_date {
+                tokens_in += d.totals.input + d.totals.cache_read;
+                tokens_out += d.totals.output;
+                est_cost_usd += d.est_cost_usd;
+            }
+        }
+    }
+    if let Ok(codex) = docker.codex_usage().await {
+        for d in &codex.by_day {
+            if d.date >= cutoff_date {
+                tokens_in += d.totals.input + d.totals.cached_input;
+                tokens_out += d.totals.output + d.totals.reasoning_output;
+                est_cost_usd += d.est_cost_usd;
+            }
+        }
+    }
+    Ok(Json(crate::types::RollingUsage {
+        tokens_in,
+        tokens_out,
+        est_cost_usd,
+        window_hours,
+    }))
+}
+
 async fn claude_usage(State(st): State<AppState>) -> Result<impl IntoResponse, ApiError> {
-    let docker = st.manager.any_running_docker().await.ok_or((
-        StatusCode::SERVICE_UNAVAILABLE,
-        "no running workspace container".into(),
-    ))?;
+    let docker = running_workspace_docker(&st).await?;
     docker.claude_usage().await.map(Json).map_err(err)
 }
 
 async fn claude_sessions(State(st): State<AppState>) -> Result<impl IntoResponse, ApiError> {
-    let docker = st.manager.any_running_docker().await.ok_or((
-        StatusCode::SERVICE_UNAVAILABLE,
-        "no running workspace container".into(),
-    ))?;
+    let docker = running_workspace_docker(&st).await?;
     docker.claude_sessions().await.map(Json).map_err(err)
 }
 
 async fn claude_integrations(State(st): State<AppState>) -> Result<impl IntoResponse, ApiError> {
-    let docker = st.manager.any_running_docker().await.ok_or((
-        StatusCode::SERVICE_UNAVAILABLE,
-        "no running workspace container".into(),
-    ))?;
+    let docker = running_workspace_docker(&st).await?;
     docker.claude_integrations().await.map(Json).map_err(err)
 }
 
 async fn claude_agent_config(State(st): State<AppState>) -> Result<impl IntoResponse, ApiError> {
-    let docker = st.manager.any_running_docker().await.ok_or((
-        StatusCode::SERVICE_UNAVAILABLE,
-        "no running workspace container".into(),
-    ))?;
+    let docker = running_workspace_docker(&st).await?;
     docker.claude_agent_config().await.map(Json).map_err(err)
 }
 
@@ -744,10 +1026,7 @@ async fn claude_session_usage(
     State(st): State<AppState>,
     Query(q): Query<SessionUsageQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let docker = st.manager.any_running_docker().await.ok_or((
-        StatusCode::SERVICE_UNAVAILABLE,
-        "no running workspace container".into(),
-    ))?;
+    let docker = running_workspace_docker(&st).await?;
     docker
         .claude_session_usage(&q.id)
         .await
@@ -765,9 +1044,7 @@ async fn container_git_log(
     State(st): State<AppState>,
     Query(q): Query<LogQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let ws = q
-        .workspace
-        .ok_or((StatusCode::BAD_REQUEST, "workspace required".into()))?;
+    let ws = workspace_required(q.workspace)?;
     docker_container_for(&st, &ws)
         .git_log(q.limit.unwrap_or(12))
         .await
@@ -796,6 +1073,7 @@ struct CreateBody {
     /// Per-workspace-container target (required) + first-create mount dir.
     workspace: String,
     workspace_dir: Option<String>,
+    task_description: Option<String>,
 }
 
 async fn create_session(
@@ -809,14 +1087,16 @@ async fn create_session(
         .map(LaunchMode::parse)
         .unwrap_or_default();
     let alias = body.alias.unwrap_or_default();
-    // Resolve the chosen account profile to its env var NAME (never a value).
     let account_var = body.account.as_deref().and_then(|id| {
         st.config
             .get()
             .account_profiles
             .into_iter()
             .find(|p| p.id == id)
-            .map(|p| p.var_name)
+            .map(|p| match &p.credential {
+                crate::config::CredentialSource::Env { var_name } => var_name.clone(),
+                crate::config::CredentialSource::Vault => crate::config::vault_env_name(&p.id),
+            })
     });
     // Resolve the target container; lazily ensure the per-workspace container
     // (mirrors lib.rs — every session belongs to a workspace).
@@ -825,25 +1105,42 @@ async fn create_session(
         body.workspace_dir.map(std::path::PathBuf::from),
     );
     lifecycle.ensure_runtime().await.map_err(err)?;
-    lifecycle
-        .docker_client()
-        .create_tmux_session(
-            &body.name,
+    let docker = lifecycle.docker_client();
+    docker
+        .create_tmux_session(TmuxSessionRequest {
+            name: &body.name,
             cli,
             mode,
-            &alias,
-            body.resume.as_deref(),
-            body.session_id.as_deref(),
-            account_var.as_deref(),
-        )
+            alias: &alias,
+            resume: body.resume.as_deref(),
+            session_id: body.session_id.as_deref(),
+            account_var: account_var.as_deref(),
+            session_env: &[],
+            account_env: &[],
+        })
         .await
         .map_err(err)?;
-    // Mirror lib.rs: record agent identity (+ Claude transcript id) for the
-    // activity snapshot.
     let claude_id = body.resume.as_deref().or(body.session_id.as_deref());
-    st.registry
-        .activity()
-        .register(&body.name, cli.binary(), &alias, claude_id);
+    let git_branch = docker
+        .exec_capture_pub(vec!["git", "-C", "/workspace", "branch", "--show-current"])
+        .await
+        .ok()
+        .and_then(|b: String| {
+            let b = b.trim().to_string();
+            if b.is_empty() {
+                None
+            } else {
+                Some(b)
+            }
+        });
+    st.registry.activity().register(
+        &body.name,
+        cli.binary(),
+        &alias,
+        claude_id,
+        git_branch.as_deref(),
+        body.task_description.as_deref(),
+    );
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -858,9 +1155,7 @@ async fn kill_session(
     Path(name): Path<String>,
     Query(q): Query<WorkspaceQuery>,
 ) -> Result<StatusCode, ApiError> {
-    let ws = q
-        .workspace
-        .ok_or((StatusCode::BAD_REQUEST, "workspace required".into()))?;
+    let ws = workspace_required(q.workspace)?;
     // Same ordering as lib.rs: drop pane bookkeeping before killing tmux.
     st.registry.detach_by_session(&name).await;
     st.events.remove_session(&name);
@@ -882,9 +1177,7 @@ async fn rename_session(
     Path(name): Path<String>,
     Json(body): Json<RenameBody>,
 ) -> Result<StatusCode, ApiError> {
-    let ws = body
-        .workspace
-        .ok_or((StatusCode::BAD_REQUEST, "workspace required".into()))?;
+    let ws = workspace_required(body.workspace)?;
     docker_for(&st, &ws)
         .rename_tmux_window(&name, &body.alias)
         .await
@@ -904,9 +1197,7 @@ async fn attach(
     State(st): State<AppState>,
     Json(body): Json<AttachBody>,
 ) -> Result<Json<String>, ApiError> {
-    let ws = body
-        .workspace
-        .ok_or((StatusCode::BAD_REQUEST, "workspace required".into()))?;
+    let ws = workspace_required(body.workspace)?;
     let emitter = Arc::new(WsEmitter { tx: st.tx.clone() });
     let docker = docker_for(&st, &ws);
     st.registry
@@ -1019,18 +1310,12 @@ async fn session_activity_history(
 }
 
 async fn codex_usage(State(st): State<AppState>) -> Result<impl IntoResponse, ApiError> {
-    let docker = st.manager.any_running_docker().await.ok_or((
-        StatusCode::SERVICE_UNAVAILABLE,
-        "no running workspace container".into(),
-    ))?;
+    let docker = running_workspace_docker(&st).await?;
     docker.codex_usage().await.map(Json).map_err(err)
 }
 
 async fn codex_sessions(State(st): State<AppState>) -> Result<impl IntoResponse, ApiError> {
-    let docker = st.manager.any_running_docker().await.ok_or((
-        StatusCode::SERVICE_UNAVAILABLE,
-        "no running workspace container".into(),
-    ))?;
+    let docker = running_workspace_docker(&st).await?;
     docker.codex_sessions().await.map(Json).map_err(err)
 }
 
@@ -1043,10 +1328,7 @@ async fn codex_session_usage(
     State(st): State<AppState>,
     Query(q): Query<CodexSessionUsageQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let docker = st.manager.any_running_docker().await.ok_or((
-        StatusCode::SERVICE_UNAVAILABLE,
-        "no running workspace container".into(),
-    ))?;
+    let docker = running_workspace_docker(&st).await?;
     docker
         .codex_session_usage(&q.id)
         .await
@@ -1055,26 +1337,17 @@ async fn codex_session_usage(
 }
 
 async fn codex_rate_limits(State(st): State<AppState>) -> Result<impl IntoResponse, ApiError> {
-    let docker = st.manager.any_running_docker().await.ok_or((
-        StatusCode::SERVICE_UNAVAILABLE,
-        "no running workspace container".into(),
-    ))?;
+    let docker = running_workspace_docker(&st).await?;
     docker.codex_rate_limits().await.map(Json).map_err(err)
 }
 
 async fn github_status(State(st): State<AppState>) -> Result<impl IntoResponse, ApiError> {
-    let docker = st.manager.any_running_docker().await.ok_or((
-        StatusCode::SERVICE_UNAVAILABLE,
-        "no running workspace container".into(),
-    ))?;
+    let docker = running_workspace_docker(&st).await?;
     docker.github_status().await.map(Json).map_err(err)
 }
 
 async fn github_repos(State(st): State<AppState>) -> Result<impl IntoResponse, ApiError> {
-    let docker = st.manager.any_running_docker().await.ok_or((
-        StatusCode::SERVICE_UNAVAILABLE,
-        "no running workspace container".into(),
-    ))?;
+    let docker = running_workspace_docker(&st).await?;
     docker.github_repos().await.map(Json).map_err(err)
 }
 
@@ -1084,6 +1357,111 @@ async fn check_update() -> impl IntoResponse {
         available: None,
         notes: None,
     })
+}
+
+#[derive(Deserialize)]
+struct SearchQuery {
+    query: String,
+    limit: Option<u32>,
+    workspace: Option<String>,
+}
+
+async fn search_transcripts(
+    State(st): State<AppState>,
+    Query(q): Query<SearchQuery>,
+) -> Result<impl IntoResponse, ApiError> {
+    let docker = docker_for_optional_workspace(&st, q.workspace).await?;
+    docker
+        .search_transcripts(&q.query, q.limit.unwrap_or(20))
+        .await
+        .map(Json)
+        .map_err(err)
+}
+
+async fn list_providers(State(st): State<AppState>) -> impl IntoResponse {
+    Json(st.config.get().providers)
+}
+
+#[derive(Deserialize)]
+struct AddProviderBody {
+    name: String,
+    kind: String,
+    endpoint: Option<String>,
+    api_key_var: Option<String>,
+    models: Option<Vec<String>>,
+}
+
+async fn add_provider(
+    State(st): State<AppState>,
+    Json(body): Json<AddProviderBody>,
+) -> Result<impl IntoResponse, ApiError> {
+    let mut settings = st.config.get();
+    settings.providers.push(crate::config::ModelProvider {
+        id: uuid::Uuid::new_v4().to_string(),
+        name: body.name,
+        kind: body.kind,
+        endpoint: body.endpoint,
+        api_key_var: body.api_key_var,
+        models: body.models.unwrap_or_default(),
+        enabled: true,
+    });
+    let saved = st.config.set(settings).map_err(err)?;
+    Ok(Json(saved.providers))
+}
+
+#[derive(Deserialize)]
+struct RemoveProviderQuery {
+    id: String,
+}
+
+async fn remove_provider(
+    State(st): State<AppState>,
+    Query(q): Query<RemoveProviderQuery>,
+) -> Result<impl IntoResponse, ApiError> {
+    let mut settings = st.config.get();
+    settings.providers.retain(|p| p.id != q.id);
+    let saved = st.config.set(settings).map_err(err)?;
+    Ok(Json(saved.providers))
+}
+
+#[derive(Deserialize)]
+struct UpdateProviderBody {
+    id: String,
+    name: Option<String>,
+    endpoint: Option<String>,
+    enabled: Option<bool>,
+    models: Option<Vec<String>>,
+}
+
+async fn update_provider(
+    State(st): State<AppState>,
+    Json(body): Json<UpdateProviderBody>,
+) -> Result<impl IntoResponse, ApiError> {
+    let mut settings = st.config.get();
+    if let Some(p) = settings.providers.iter_mut().find(|p| p.id == body.id) {
+        if let Some(n) = body.name {
+            p.name = n;
+        }
+        if let Some(e) = body.endpoint {
+            p.endpoint = Some(e);
+        }
+        if let Some(en) = body.enabled {
+            p.enabled = en;
+        }
+        if let Some(m) = body.models {
+            p.models = m;
+        }
+    }
+    let saved = st.config.set(settings).map_err(err)?;
+    Ok(Json(saved.providers))
+}
+
+async fn vault_not_supported() -> StatusCode {
+    StatusCode::NOT_IMPLEMENTED
+}
+
+async fn vault_has_key_not_supported() -> Json<bool> {
+    Json(false)
 }
 
 async fn ws_events(ws: WebSocketUpgrade, State(st): State<AppState>) -> impl IntoResponse {

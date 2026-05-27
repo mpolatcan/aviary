@@ -1,5 +1,5 @@
 use crate::activity::ActivityTracker;
-use crate::docker::{DockerClient, DockerError, SessionInfo as _SessionInfo};
+use crate::docker::{DockerClient, DockerError};
 use futures_util::StreamExt;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -216,7 +216,3 @@ impl PtyRegistry {
         self.activity.remove(session);
     }
 }
-
-// Re-export to keep lib.rs simple
-#[allow(dead_code)]
-fn _ensure_session_info_export(_: _SessionInfo) {}

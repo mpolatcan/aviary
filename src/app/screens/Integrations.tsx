@@ -24,12 +24,14 @@
  * Claude-only for the agent-config surface: Codex stores auth in a sqlite db and
  * Antigravity has no readable connection config, so neither is surfaced.
  */
+import { ApiKeyDialog } from "@/app/components/ApiKeyDialog";
 import { AgentGlyph } from "@/app/components/primitives/AgentGlyph";
 import { StatusDot } from "@/app/components/primitives/StatusDot";
 import { Tag } from "@/app/components/primitives/Tag";
 import { Ico } from "@/app/components/primitives/icons";
 import { type ClaudeIntegrations, type GithubRepo, type GithubStatus, ipc } from "@/app/lib/ipc";
 import { useStore } from "@/app/lib/store";
+import { Button } from "@/app/ui/button";
 import { useEffect, useState } from "react";
 
 // Rendered as a Settings sub-pane (Settings.tsx → NAV_GROUPS "integrations"),
@@ -320,36 +322,118 @@ function GitHubCard({
           <GitHubCapabilityStrip status={status} />
         </>
       ) : (
-        // Not connected → instructional. Names the env var; never a secret box.
-        <div style={{ padding: "16px 18px" }}>
-          <p style={{ margin: "0 0 10px", fontSize: 12.5, color: "var(--fg-1)", lineHeight: 1.6 }}>
-            CodeHub authenticates GitHub through a host environment variable — the same model as the
-            agent API keys. It never stores or reads the token value, only whether the variable is
-            present.
-          </p>
-          <div
-            className="mono"
-            style={{
-              padding: "10px 12px",
-              background: "var(--bg-0)",
-              border: "1px solid var(--bd)",
-              borderRadius: 6,
-              fontSize: 11.5,
-              color: "var(--fg-1)",
-              marginBottom: 8,
-            }}
-          >
-            export {varName}=ghp_your_token_here
-          </div>
-          <p
-            className="mono"
-            style={{ margin: 0, fontSize: 11, color: "var(--fg-3)", lineHeight: 1.6 }}
-          >
-            Export it in the shell you launch CodeHub from, then relaunch. A fine-grained PAT with
-            contents + pull-requests + issues access lets agents clone, push, and open PRs. Create
-            one at github.com/settings/tokens.
-          </p>
+        <GitHubNotConnected varName={varName} />
+      )}
+    </div>
+  );
+}
+
+function GitHubNotConnected({ varName }: { varName: string }) {
+  const loadGithubStatus = useStore((s) => s.loadGithubStatus);
+  const loadAccountProfiles = useStore((s) => s.loadAccountProfiles);
+  const [patDialog, setPatDialog] = useState(false);
+  const [oauthBusy, setOauthBusy] = useState(false);
+  const [oauthError, setOauthError] = useState<string | null>(null);
+
+  const startGithubOAuth = async () => {
+    setOauthBusy(true);
+    setOauthError(null);
+    let createdId: string | null = null;
+    try {
+      const existingIds = new Set(useStore.getState().accountProfiles.map((p) => p.id));
+      const list = await ipc.addAccountProfile("github", "GitHub", undefined, "vault");
+      useStore.setState({ accountProfiles: list });
+      const created = list.find((p) => !existingIds.has(p.id));
+      if (!created) throw new Error("profile creation failed");
+      createdId = created.id;
+      await ipc.vaultInitiateOauth("github", created.id);
+    } catch (e) {
+      const msg = String(e).replace(/^Error:\s*/, "");
+      setOauthError(msg);
+      if (createdId) {
+        void useStore.getState().removeAccountProfile(createdId);
+      }
+    } finally {
+      setOauthBusy(false);
+    }
+  };
+
+  return (
+    <div style={{ padding: "16px 18px" }}>
+      <p style={{ margin: "0 0 14px", fontSize: 12.5, color: "var(--fg-1)", lineHeight: 1.6 }}>
+        Connect GitHub so agents can clone, push, and open PRs. Choose one method:
+      </p>
+
+      <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={oauthBusy}
+          onClick={() => void startGithubOAuth()}
+        >
+          {oauthBusy ? "Opening browser..." : "Sign in with GitHub"}
+        </Button>
+        <Button variant="outline" size="sm" onClick={() => setPatDialog(true)}>
+          Paste a PAT
+        </Button>
+      </div>
+
+      {oauthError && (
+        <div
+          className="mono"
+          style={{
+            marginBottom: 10,
+            padding: "8px 12px",
+            borderRadius: 6,
+            background: "color-mix(in oklab, var(--err) 8%, var(--bg-2))",
+            border: "1px solid color-mix(in oklab, var(--err) 30%, var(--bd))",
+            fontSize: 11.5,
+            color: "var(--err)",
+          }}
+        >
+          {oauthError}
         </div>
+      )}
+
+      <div
+        style={{
+          padding: "12px 14px",
+          background: "var(--bg-1)",
+          border: "1px solid var(--bd-soft)",
+          borderRadius: 8,
+          marginBottom: 8,
+        }}
+      >
+        <div className="lbl" style={{ marginBottom: 6, fontSize: 10 }}>
+          or use an environment variable
+        </div>
+        <div
+          className="mono"
+          style={{
+            padding: "6px 10px",
+            background: "var(--bg-0)",
+            border: "1px solid var(--bd)",
+            borderRadius: 5,
+            fontSize: 11,
+            color: "var(--fg-1)",
+          }}
+        >
+          export {varName}=ghp_your_token_here
+        </div>
+        <p className="mono" style={{ margin: "8px 0 0", fontSize: 10, color: "var(--fg-3)" }}>
+          Export it in your shell before launching CodeHub. Fine-grained PAT with repo + PR access.
+        </p>
+      </div>
+
+      {patDialog && (
+        <ApiKeyDialog
+          agent="github"
+          onClose={() => setPatDialog(false)}
+          onSaved={() => {
+            void loadGithubStatus();
+            void loadAccountProfiles();
+          }}
+        />
       )}
     </div>
   );
@@ -393,9 +477,7 @@ function GitHubCapabilityStrip({ status }: { status: GithubStatus | null }) {
 
 function Capability({ label, ok }: { label: string; ok: boolean }) {
   return (
-    <span style={{ color: ok ? "var(--fg-1)" : "var(--fg-3)", whiteSpace: "nowrap" }}>
-      {label}
-    </span>
+    <span style={{ color: ok ? "var(--fg-1)" : "var(--fg-3)", whiteSpace: "nowrap" }}>{label}</span>
   );
 }
 

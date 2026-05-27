@@ -9,6 +9,7 @@
 //! fall back to the default.
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
@@ -27,60 +28,218 @@ fn default_hub_layout() -> String {
 fn default_true() -> bool {
     true
 }
-
-/// A named account a session can launch under. **Label-only — no secret is ever
-/// stored here.** `var_name` is the NAME of a host environment variable that
-/// holds that account's credential (e.g. `CLAUDE_CODE_OAUTH_TOKEN` for the
-/// default, or `CLAUDE_TOKEN_WORK` for a second login the user exports). The
-/// value lives only in the host environment; CodeHub forwards it into the
-/// container at create-time and remaps the CLI's canonical var by NAME per
-/// session (see `docker::DockerClient::create_tmux_session`), so the secret never
-/// reaches a command line, log, or `docker top`. This honors the env-only
-/// credential decision recorded in BACKEND_PLAN.md.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct AccountProfile {
-    /// Stable opaque id (generated on add); used to select the profile at spawn.
-    pub id: String,
-    /// Which agent this account is for: "claude" | "codex" | "antigravity".
-    pub agent: String,
-    /// Human label shown in the spawn dialog (e.g. "Work", "Personal").
-    pub label: String,
-    /// NAME of the host env var holding the credential. Never the value.
-    pub var_name: String,
+fn default_character() -> String {
+    "glyph".into()
+}
+fn default_companion_size() -> String {
+    "M".into()
 }
 
-/// An account profile plus whether its host env var is currently present.
-/// Presence-only (`std::env::var(..).is_ok()`) — the value is NEVER read,
-/// returned, or logged, exactly like `lifecycle::agent_key_status`.
+/// Where an account profile's credential lives.
+///
+/// - `Env`: credential comes from a host environment variable by NAME (the
+///   legacy model — CodeHub never stores the value, only forwards it).
+/// - `Vault`: credential stored in the OS keychain, keyed by the profile's id.
+///   CodeHub reads it from the vault at container-create time and injects it as
+///   an env var.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "source", rename_all = "camelCase")]
+pub enum CredentialSource {
+    /// Credential from a host env var (NAME only, never value).
+    #[serde(rename = "env")]
+    Env {
+        #[serde(rename = "varName")]
+        var_name: String,
+    },
+    /// Credential stored in the OS keychain vault.
+    #[serde(rename = "vault")]
+    Vault,
+}
+
+/// A named account a session can launch under. Supports two credential models:
+///
+/// 1. **Env-backed** (legacy): `var_name` is the NAME of a host env var.
+///    CodeHub forwards the value into the container but never stores it.
+/// 2. **Vault-backed** (new): the secret lives in the OS keychain, keyed by
+///    the profile id. CodeHub reads it at container-create time.
+///
+/// The `credential` field is a tagged union that serializes as `{ "source":
+/// "env", "varName": "..." }` or `{ "source": "vault" }`, flattened into the
+/// profile object.
+///
+/// **Backward compat**: old settings.json files have `{ "varName": "..." }`
+/// without a `source` field. The custom `Deserialize` impl below handles this
+/// by treating profiles with `varName` but no `source` as `Env`.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountProfile {
+    pub id: String,
+    /// "claude" | "codex" | "antigravity" | "github".
+    pub agent: String,
+    pub label: String,
+    #[serde(flatten)]
+    pub credential: CredentialSource,
+}
+
+impl AccountProfile {
+    pub fn var_name(&self) -> Option<&str> {
+        match &self.credential {
+            CredentialSource::Env { var_name } => Some(var_name),
+            CredentialSource::Vault => None,
+        }
+    }
+
+    pub fn is_vault(&self) -> bool {
+        matches!(self.credential, CredentialSource::Vault)
+    }
+}
+
+/// Shell-safe env var used to carry one vault-backed profile into a tmux pane.
+/// Profile ids are UUIDs with hyphens, so they cannot be used verbatim in
+/// `${VAR}` expansions.
+pub fn vault_env_name(profile_id: &str) -> String {
+    let mut out = String::from("CODEHUB_VAULT_");
+    for c in profile_id.chars() {
+        if c.is_ascii_alphanumeric() {
+            out.push(c.to_ascii_uppercase());
+        } else {
+            out.push('_');
+        }
+    }
+    if out == "CODEHUB_VAULT_" {
+        out.push_str("PROFILE");
+    }
+    out
+}
+
+/// Custom deserializer for backward compatibility. Old format:
+/// `{ "id": "...", "agent": "...", "label": "...", "varName": "..." }`
+/// New format adds `"source": "env"` or `"source": "vault"`.
+/// If `source` is absent but `varName` is present → `Env`.
+impl<'de> Deserialize<'de> for AccountProfile {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let v = serde_json::Value::deserialize(d)?;
+        let obj = v
+            .as_object()
+            .ok_or_else(|| serde::de::Error::custom("expected object"))?;
+
+        let id = obj
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let agent = obj
+            .get("agent")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let label = obj
+            .get("label")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        let credential = match obj.get("source").and_then(|v| v.as_str()) {
+            Some("vault") => CredentialSource::Vault,
+            Some("env") | None => {
+                let var_name = obj
+                    .get("varName")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                CredentialSource::Env { var_name }
+            },
+            Some(other) => {
+                return Err(serde::de::Error::custom(format!("unknown source: {other}")));
+            },
+        };
+
+        Ok(AccountProfile {
+            id,
+            agent,
+            label,
+            credential,
+        })
+    }
+}
+
+/// An account profile plus live presence status.
+/// For env-backed: whether the host env var is present.
+/// For vault-backed: whether the keychain entry exists.
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct AccountProfileStatus {
     pub id: String,
     pub agent: String,
     pub label: String,
-    /// NAME of the host env var holding the credential. Never the value.
-    pub var_name: String,
-    /// Whether that env var is present on the host right now.
+    /// "env" | "vault".
+    pub source: String,
+    /// NAME of the host env var (env-backed only; null for vault).
+    pub var_name: Option<String>,
+    /// Whether the credential is available right now.
     pub present: bool,
 }
 
-/// Map stored profiles to their live presence status. Presence probe only —
-/// `is_ok()` never binds the secret value.
-pub fn profile_statuses(profiles: Vec<AccountProfile>) -> Vec<AccountProfileStatus> {
+/// Map stored profiles to their live presence status.
+/// For env-backed: presence-probes the host env var (value never bound).
+/// For vault-backed: checks keychain metadata without reading the secret, so
+/// missing profiles can be shown accurately without prompting for access.
+pub fn profile_statuses(
+    profiles: Vec<AccountProfile>,
+    vault: Option<&crate::vault::Vault>,
+) -> Vec<AccountProfileStatus> {
     profiles
         .into_iter()
         .map(|p| {
-            let present = std::env::var(&p.var_name).is_ok();
+            let (source, var_name, present) = match &p.credential {
+                CredentialSource::Env { var_name } => {
+                    let present = std::env::var(var_name).is_ok();
+                    ("env".to_string(), Some(var_name.clone()), present)
+                },
+                CredentialSource::Vault => {
+                    let present = vault.map(|v| v.exists(&p.id)).unwrap_or(false);
+                    ("vault".to_string(), None, present)
+                },
+            };
             AccountProfileStatus {
                 id: p.id,
                 agent: p.agent,
                 label: p.label,
-                var_name: p.var_name,
+                source,
+                var_name,
                 present,
             }
         })
         .collect()
+}
+
+/// Container resource limits preset.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ContainerSizing {
+    /// Human label: "xs" | "s" | "m" | "l".
+    #[serde(default = "default_sizing_label")]
+    pub label: String,
+    /// Fractional vCPU count (e.g. 1.0, 2.0, 4.0).
+    #[serde(default)]
+    pub cpu_count: Option<f64>,
+    /// Memory cap in MiB (e.g. 2048, 4096, 8192).
+    #[serde(default)]
+    pub memory_mb: Option<u64>,
+}
+
+fn default_sizing_label() -> String {
+    "m".into()
+}
+
+impl Default for ContainerSizing {
+    fn default() -> Self {
+        Self {
+            label: "m".into(),
+            cpu_count: Some(2.0),
+            memory_mb: Some(4096),
+        }
+    }
 }
 
 /// A user-saved workspace shown on the Welcome launcher: a named pointer to a
@@ -101,6 +260,9 @@ pub struct SavedWorkspace {
     /// Epoch-ms of the last time it was opened (`None` = not opened since saved).
     #[serde(default)]
     pub last_opened: Option<i64>,
+    /// Per-workspace container resource limits override.
+    #[serde(default)]
+    pub sizing: Option<ContainerSizing>,
 }
 
 /// All persisted preferences. Serialized to the frontend (and the dev bridge) as
@@ -168,6 +330,100 @@ pub struct Settings {
     pub notify_turn_finish: bool,
     #[serde(default)]
     pub play_sound: bool,
+
+    // — Container sizing —
+    #[serde(default)]
+    pub default_sizing: ContainerSizing,
+
+    // — Agent behaviour —
+    #[serde(default)]
+    pub auto_approve_safe: bool,
+    #[serde(default)]
+    pub approve_writes: bool,
+    #[serde(default)]
+    pub cost_budget_per_turn: Option<f64>,
+    #[serde(default)]
+    pub context_budget: Option<u64>,
+    /// Per-agent default model override, keyed by CLI id ("claude", "codex").
+    #[serde(default)]
+    pub default_model_per_agent: HashMap<String, String>,
+
+    // — Updates —
+    #[serde(default = "default_true")]
+    pub auto_update: bool,
+
+    // — Lifecycle —
+    #[serde(default)]
+    pub idle_timeout_minutes: Option<u64>,
+
+    // — Per-session notification mute list —
+    #[serde(default)]
+    pub muted_sessions: Vec<String>,
+
+    // — Model providers —
+    #[serde(default)]
+    pub providers: Vec<ModelProvider>,
+
+    // — Prompt templates —
+    #[serde(default)]
+    pub prompt_templates: Vec<PromptTemplate>,
+
+    // — Companion avatar preferences —
+    #[serde(default)]
+    pub companion: CompanionPrefs,
+}
+
+/// A saved prompt template for the spawn dialog.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PromptTemplate {
+    pub id: String,
+    pub name: String,
+    pub prompt: String,
+    pub cli: Option<String>,
+}
+
+/// A registered model provider (Agent Settings screen).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelProvider {
+    pub id: String,
+    pub name: String,
+    /// "openai-compatible" | "bedrock" | "vertex" | "ollama".
+    pub kind: String,
+    pub endpoint: Option<String>,
+    /// Env var NAME for auth (no secret stored).
+    pub api_key_var: Option<String>,
+    pub models: Vec<String>,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+/// Preferences for the always-on-top companion avatar window. Persisted to disk
+/// via the main `Settings` object so they survive across sessions.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompanionPrefs {
+    #[serde(default = "default_true")]
+    pub show: bool,
+    #[serde(default)]
+    pub hide_when_focused: bool,
+    #[serde(default)]
+    pub click_through: bool,
+    #[serde(default)]
+    pub snap_to_edges: bool,
+    #[serde(default = "default_true")]
+    pub bubble_on_hover: bool,
+    #[serde(default = "default_character")]
+    pub character: String,
+    #[serde(default = "default_companion_size")]
+    pub size: String,
+}
+
+impl Default for CompanionPrefs {
+    fn default() -> Self {
+        serde_json::from_str("{}").expect("empty object yields defaults")
+    }
 }
 
 impl Default for Settings {

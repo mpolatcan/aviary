@@ -117,17 +117,20 @@ export function AccountCard({
   sub,
   present,
   selected,
+  disabled,
   onSelect,
 }: {
   title: string;
   sub: string;
   present: boolean;
   selected?: boolean;
+  disabled?: boolean;
   onSelect?: () => void;
 }) {
   return (
     <button
       type="button"
+      disabled={disabled}
       onClick={onSelect}
       style={{
         textAlign: "left",
@@ -135,12 +138,13 @@ export function AccountCard({
         background: selected ? "var(--bg-3)" : "var(--bg-1)",
         border: `1px solid ${selected ? "var(--fg-2)" : "var(--bd)"}`,
         borderRadius: 8,
-        cursor: "pointer",
+        cursor: disabled ? "not-allowed" : "pointer",
         display: "flex",
         flexDirection: "column",
         gap: 3,
         minHeight: 52,
         justifyContent: "center",
+        opacity: disabled ? 0.62 : 1,
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>

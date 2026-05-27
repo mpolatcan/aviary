@@ -1,5 +1,5 @@
 use crate::config::ConfigStore;
-use crate::docker::DockerClient;
+use crate::docker::{self, DockerClient};
 use bollard::container::{
     Config, CreateContainerOptions, InspectContainerOptions, ListContainersOptions,
     RemoveContainerOptions, StartContainerOptions, StopContainerOptions,
@@ -40,6 +40,19 @@ pub struct ContainerStatus {
     pub id: Option<String>,
     pub image: String,
     pub name: String,
+}
+
+pub struct LifecycleParts {
+    pub docker: Docker,
+    pub container_name: String,
+    pub image: String,
+    pub config_dir: PathBuf,
+    pub default_workspace_dir: PathBuf,
+    pub config: Arc<ConfigStore>,
+    pub workspace_dir_override: Option<PathBuf>,
+    pub workspace_label: Option<String>,
+    pub enforce_mount: bool,
+    pub vault_env: Vec<String>,
 }
 
 // Host auth env vars each CLI can authenticate from, in priority order. Keys are
@@ -148,6 +161,8 @@ pub struct AppInfo {
     pub arch: String,
     /// OS family, e.g. "unix", "windows".
     pub family: String,
+    pub commit_hash: Option<String>,
+    pub build_date: Option<String>,
 }
 
 /// App + platform identity from build-time constants (no I/O, never fails).
@@ -158,7 +173,73 @@ pub fn app_info() -> AppInfo {
         os: std::env::consts::OS.to_string(),
         arch: std::env::consts::ARCH.to_string(),
         family: std::env::consts::FAMILY.to_string(),
+        commit_hash: option_env!("CODEHUB_COMMIT").map(|s| s.to_string()),
+        build_date: option_env!("CODEHUB_BUILD_DATE").map(|s| s.to_string()),
     }
+}
+
+/// Host memory + disk stats (About screen).
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct HostStats {
+    pub memory_total: u64,
+    pub memory_available: u64,
+    pub disk_total: u64,
+    pub disk_available: u64,
+}
+
+/// Read host stats via platform commands (no new crate).
+pub fn host_stats() -> HostStats {
+    let mut stats = HostStats {
+        memory_total: 0,
+        memory_available: 0,
+        disk_total: 0,
+        disk_available: 0,
+    };
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(out) = std::process::Command::new("sysctl")
+            .args(["-n", "hw.memsize"])
+            .output()
+        {
+            if let Ok(s) = String::from_utf8(out.stdout) {
+                stats.memory_total = s.trim().parse().unwrap_or(0);
+            }
+        }
+        if let Ok(out) = std::process::Command::new("vm_stat").output() {
+            if let Ok(s) = String::from_utf8(out.stdout) {
+                let page_size: u64 = 16384;
+                let free: u64 = s
+                    .lines()
+                    .find(|l| l.contains("Pages free"))
+                    .and_then(|l| l.split_whitespace().last())
+                    .and_then(|n| n.trim_end_matches('.').parse().ok())
+                    .unwrap_or(0);
+                stats.memory_available = free * page_size;
+            }
+        }
+    }
+    if let Ok(out) = std::process::Command::new("df").args(["-k", "/"]).output() {
+        if let Ok(s) = String::from_utf8(out.stdout) {
+            if let Some(line) = s.lines().nth(1) {
+                let cols: Vec<&str> = line.split_whitespace().collect();
+                if cols.len() >= 4 {
+                    stats.disk_total = cols[1].parse::<u64>().unwrap_or(0) * 1024;
+                    stats.disk_available = cols[3].parse::<u64>().unwrap_or(0) * 1024;
+                }
+            }
+        }
+    }
+    stats
+}
+
+/// Runtime tool versions from inside a container.
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeVersions {
+    pub node: Option<String>,
+    pub tmux: Option<String>,
+    pub git: Option<String>,
 }
 
 /// Where `/workspace` mounts from, and whether the container needs recreating to
@@ -205,46 +286,31 @@ pub struct Lifecycle {
     /// restart / status), so they never silently recreate a container onto a
     /// different mount and lose its sessions.
     pub enforce_mount: bool,
+    /// Extra `KEY=value` env vars injected into the container at create-time,
+    /// sourced from vault-backed account profiles. Populated by the manager
+    /// when the lifecycle is resolved, so `ensure_container` can inject them
+    /// alongside the host-env-forwarded vars.
+    pub vault_env: Vec<String>,
 }
 
 impl Lifecycle {
-    pub fn new(
-        container_name: String,
-        image: String,
-        config_dir: PathBuf,
-        default_workspace_dir: PathBuf,
-        config: Arc<ConfigStore>,
-    ) -> Result<Self, LifecycleError> {
-        let docker = Docker::connect_with_local_defaults()?;
-        Ok(Self::from_parts(
+    /// Build a `Lifecycle` reusing an existing daemon connection (the manager
+    /// connects once and shares the `Docker` handle across every workspace
+    /// lifecycle). `workspace_dir_override` pins the `/workspace` bind;
+    /// pass `None` to let the lifecycle resolve the dir from config.
+    pub fn from_parts(parts: LifecycleParts) -> Self {
+        let LifecycleParts {
             docker,
             container_name,
             image,
             config_dir,
             default_workspace_dir,
             config,
-            None,
-            None,
-            false,
-        ))
-    }
-
-    /// Build a `Lifecycle` reusing an existing daemon connection (the manager
-    /// connects once and shares the `Docker` handle across every workspace
-    /// lifecycle). `workspace_dir_override` pins the `/workspace` bind;
-    /// pass `None` to let the lifecycle resolve the dir from config.
-    #[allow(clippy::too_many_arguments)]
-    pub fn from_parts(
-        docker: Docker,
-        container_name: String,
-        image: String,
-        config_dir: PathBuf,
-        default_workspace_dir: PathBuf,
-        config: Arc<ConfigStore>,
-        workspace_dir_override: Option<PathBuf>,
-        workspace_label: Option<String>,
-        enforce_mount: bool,
-    ) -> Self {
+            workspace_dir_override,
+            workspace_label,
+            enforce_mount,
+            vault_env,
+        } = parts;
         Self {
             docker,
             container_name,
@@ -255,6 +321,7 @@ impl Lifecycle {
             workspace_dir_override,
             workspace_label,
             enforce_mount,
+            vault_env,
         }
     }
 
@@ -275,14 +342,33 @@ impl Lifecycle {
         }
     }
 
-    /// Env var NAMES referenced by stored account profiles (Tier-3), so they get
+    /// Resolve container resource limits: per-workspace override (from
+    /// SavedWorkspace.sizing) → global default_sizing → hardcoded default.
+    fn resolve_sizing(&self) -> crate::config::ContainerSizing {
+        let cfg = self.config.get();
+        if let Some(key) = &self.workspace_label {
+            if let Some(ws) = cfg
+                .saved_workspaces
+                .iter()
+                .find(|w| w.dir == *key || w.id == *key)
+            {
+                if let Some(sizing) = &ws.sizing {
+                    return sizing.clone();
+                }
+            }
+        }
+        cfg.default_sizing.clone()
+    }
+
+    /// Env var NAMES referenced by env-backed account profiles, so they get
     /// forwarded into the container at create-time. Names only — never values.
+    /// Vault-backed profiles are read only when a selected account is launched.
     fn profile_env_vars(&self) -> Vec<String> {
         self.config
             .get()
             .account_profiles
             .into_iter()
-            .map(|p| p.var_name)
+            .filter_map(|p| p.var_name().map(|s| s.to_string()))
             .collect()
     }
 
@@ -421,6 +507,7 @@ impl Lifecycle {
             },
         ];
 
+        let sizing = self.resolve_sizing();
         let host_config = HostConfig {
             mounts: Some(mounts),
             network_mode: Some(host_network_mode()),
@@ -430,14 +517,19 @@ impl Lifecycle {
             }),
             // Empty map keeps Docker happy when network_mode = host
             port_bindings: Some(HashMap::<String, Option<Vec<PortBinding>>>::new()),
+            nano_cpus: sizing.cpu_count.map(|c| (c * 1_000_000_000.0) as i64),
+            memory: sizing.memory_mb.map(|m| (m * 1024 * 1024) as i64),
             ..Default::default()
         };
 
         // Forward every host auth key the CLIs may need (Claude / Codex /
         // Antigravity) plus any custom-named account-profile vars, so a session
         // can remap its CLI's canonical var by NAME. Values never touch the logs.
-        let mut env = vec!["TMUX_TMPDIR=/tmp/codehub".to_string()];
+        let mut env = docker::base_container_env();
         env.extend(auth_env_with(&self.profile_env_vars()));
+        // Vault-backed secrets are not injected here. Keychain reads happen only
+        // when the user explicitly launches/uses an account that needs them.
+        env.extend(self.vault_env.iter().cloned());
 
         // Per-workspace containers self-describe via labels: `codehub.managed`
         // lets multi-container listing enumerate exactly the containers we own,

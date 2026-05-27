@@ -35,13 +35,18 @@ export function Grid({ ws }: { ws: Workspace }) {
 // (groupKey ctx), so the spawn lands here rather than in a new tab.
 function EmptyGroup({ ws, group }: { ws: Workspace; group: Group }) {
   const open = useLauncher((s) => s.open);
-  const addPaneToGroup = useStore((s) => s.addPaneToGroup);
   const setFiles = useOverlay((s) => s.setFiles);
   const setShell = useOverlay((s) => s.setShell);
   const setDiff = useOverlay((s) => s.setDiff);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const spawn = (cli: "claude" | "codex" | "antigravity") => {
-    void addPaneToGroup(ws.id, group.id, cli, "standard");
+    setMenu(null);
+    open(groupKey(group.id), {
+      dir: "row",
+      groupId: group.id,
+      workspaceId: ws.id,
+      preferredCli: cli,
+    });
   };
   const openMore = () =>
     open(groupKey(group.id), { dir: "row", groupId: group.id, workspaceId: ws.id });

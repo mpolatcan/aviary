@@ -2,8 +2,9 @@ import type { CSSProperties, ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { CLIS, SPEC_BY_CLI } from "../../lib/catalog";
 import { type Cli, ipc } from "../../lib/ipc";
+import { useLauncher } from "../../lib/launcher";
 import { useOverlay } from "../../lib/overlay";
-import { activeWorkspace, type HubView, useStore } from "../../lib/store";
+import { type HubView, activeWorkspace, useStore } from "../../lib/store";
 import { workspaceTitle } from "../../lib/tree";
 import {
   CommandDialog,
@@ -53,9 +54,9 @@ export function CommandPalette() {
   const setView = useStore((s) => s.setView);
   const setSettingsSection = useStore((s) => s.setSettingsSection);
   const focusSession = useStore((s) => s.focusSession);
-  const newPlate = useStore((s) => s.newPlate);
   const restartRuntime = useStore((s) => s.restartRuntime);
   const selectWorkspaceDir = useStore((s) => s.selectWorkspaceDir);
+  const openLaunch = useLauncher((s) => s.open);
   // Default OUTSIDE the selector: returning `?? []` inside hands
   // useSyncExternalStore a fresh array every render (config starts null) and
   // spins an infinite render loop. Select the stable ref, default in render.
@@ -96,8 +97,7 @@ export function CommandPalette() {
   };
   const spawn = (cli: Cli) => {
     setPalette(false);
-    // Match the lifecycle layer: surface IPC failures rather than swallow them.
-    newPlate(cli, "standard").catch(console.warn);
+    openLaunch(`palette:${cli}`, { dir: "row", preferredCli: cli });
   };
   const openDiff = () => {
     setPalette(false);

@@ -77,6 +77,17 @@ export async function createPane(
   const fit = new FitAddon();
   term.loadAddon(fit);
   term.open(el);
+  // Kill browser autocomplete on xterm's internal textarea. Some browsers
+  // ignore autocomplete="off" on well-known field names, so we randomize the
+  // name attribute to prevent any heuristic matching.
+  const ta = el.querySelector("textarea");
+  if (ta) {
+    ta.setAttribute("autocomplete", "off");
+    ta.setAttribute("autocorrect", "off");
+    ta.setAttribute("autocapitalize", "off");
+    ta.setAttribute("spellcheck", "false");
+    ta.setAttribute("name", `term-${Math.random().toString(36).slice(2)}`);
+  }
 
   try {
     const webgl = new WebglAddon();

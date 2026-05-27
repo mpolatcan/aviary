@@ -7,8 +7,8 @@
 import { AboutDialog } from "@/app/components/AboutDialog";
 import { Grid } from "@/app/components/Grid";
 import { AppShell } from "@/app/components/chrome/AppShell";
-import { CommandPalette } from "@/app/components/hub/CommandPalette";
 import { ActionBar } from "@/app/components/hub/ActionBar";
+import { CommandPalette } from "@/app/components/hub/CommandPalette";
 import { GroupsBar } from "@/app/components/hub/GroupsBar";
 import { HubSidebar } from "@/app/components/hub/HubSidebar";
 import { HubStatusBar } from "@/app/components/hub/HubStatusBar";
@@ -18,7 +18,7 @@ import { Shortcuts } from "@/app/components/hub/Shortcuts";
 import { WorkspaceBar } from "@/app/components/hub/WorkspaceBar";
 import { ipc } from "@/app/lib/ipc";
 import { useOverlay } from "@/app/lib/overlay";
-import { activeWorkspace, initLifecycle, type HubView, useStore } from "@/app/lib/store";
+import { type HubView, activeWorkspace, initLifecycle, useStore } from "@/app/lib/store";
 import { useTheme } from "@/app/lib/theme";
 import { MAX_GROUP_PANES, leavesList, workspaceTitle } from "@/app/lib/tree";
 import { Companion } from "@/app/screens/Companion";

@@ -262,7 +262,10 @@ export function FilesBrowser({ onClose }: { onClose: () => void }) {
         <span>{entries === null ? "reading" : `${rows.length} visible`}</span>
         {entries !== null && q && <span style={{ color: "var(--wait)" }}>filtered</span>}
         <span style={{ flex: 1 }} />
-        <span title={cwd} style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        <span
+          title={cwd}
+          style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+        >
           {cwd}
         </span>
       </div>

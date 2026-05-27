@@ -395,8 +395,8 @@ function FauxEditorWindow() {
         }}
       >
         <div style={{ width: 30, textAlign: "right", lineHeight: 1.6 }}>
-          {Array.from({ length: 14 }, (_, i) => (
-            <div key={i}>{i + 1}</div>
+          {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14].map((n) => (
+            <div key={n}>{n}</div>
           ))}
         </div>
         <div style={{ flex: 1, lineHeight: 1.6 }}>
@@ -404,13 +404,13 @@ function FauxEditorWindow() {
             <span style={{ color: "oklch(0.78 0.10 265)" }}>import</span>{" "}
             <span style={{ color: "rgba(255,255,255,0.7)" }}>{"{ Middleware }"}</span>{" "}
             <span style={{ color: "oklch(0.78 0.10 265)" }}>from</span>{" "}
-            <span style={{ color: "oklch(0.78 0.13 35)" }}>'koa'</span>;
+            <span style={{ color: "oklch(0.78 0.13 35)" }}>{"'koa';"}</span>
           </div>
           <div>
             <span style={{ color: "oklch(0.78 0.10 265)" }}>import</span>{" "}
             <span style={{ color: "rgba(255,255,255,0.7)" }}>{"{ verifyToken }"}</span>{" "}
             <span style={{ color: "oklch(0.78 0.10 265)" }}>from</span>{" "}
-            <span style={{ color: "oklch(0.78 0.13 35)" }}>'../auth/verifier'</span>;
+            <span style={{ color: "oklch(0.78 0.13 35)" }}>{"'../auth/verifier';"}</span>
           </div>
           <div>&nbsp;</div>
           <div>
@@ -472,9 +472,9 @@ function CompanionDock() {
         boxShadow: "0 12px 40px rgba(0,0,0,0.4)",
       }}
     >
-      {apps.map(([color, letter], i) => (
+      {apps.map(([color, letter]) => (
         <div
-          key={`${letter}-${i}`}
+          key={letter}
           style={{
             width: 42,
             height: 42,
@@ -493,7 +493,7 @@ function CompanionDock() {
           }}
         >
           {letter}
-          {i === 4 && (
+          {letter === "CH" && (
             <span
               style={{
                 position: "absolute",

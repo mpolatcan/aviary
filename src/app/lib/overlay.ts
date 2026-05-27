@@ -103,30 +103,19 @@ export const useOverlay = create<OverlayState>((set) => ({
 }));
 
 // ── Companion preferences (desktop-only, F-COMPANION) ───────────────────────
-// Live preferences for the always-on-top companion avatar(s): which character
-// style to use, the puck size, and behavioral toggles. These shape *only the
-// companion presentation* — no fabricated data flows through them.
-//
-// NOTE: these are session-local (not persisted). There is no backend command to
-// store companion prefs, and the honesty contract forbids inventing one; a
-// future BE track can add a `companion_prefs` config slice and wire it here. The
-// preferences panel is honestly labelled "desktop only" per the design.
+// Preferences for the always-on-top companion avatar(s): character style, puck
+// size, and behavioral toggles. Persisted to disk via AppSettings.companion —
+// the setters optimistically update the local store, then write through to the
+// backend config so preferences survive across sessions.
 export type CompanionSize = "S" | "M" | "L";
 
 interface CompanionPrefsState {
-  /** Master show/hide for the companion window. */
   show: boolean;
-  /** Auto-hide the companion while the main CodeHub window is focused. */
   hideWhenFocused: boolean;
-  /** Let the mouse pass through to apps underneath when there are no events. */
   clickThrough: boolean;
-  /** Snap the dragged companion to screen edges. */
   snapToEdges: boolean;
-  /** Reveal the context bubble on hover. */
   bubbleOnHover: boolean;
-  /** Default character art style (per-agent override is a future addition). */
   character: CharacterKind;
-  /** Puck size preset. */
   size: CompanionSize;
   setShow: (v: boolean) => void;
   setHideWhenFocused: (v: boolean) => void;
@@ -135,21 +124,75 @@ interface CompanionPrefsState {
   setBubbleOnHover: (v: boolean) => void;
   setCharacter: (v: CharacterKind) => void;
   setSize: (v: CompanionSize) => void;
+  /** Hydrate from persisted config (called once after loadConfig resolves). */
+  hydrate: (c: {
+    show: boolean;
+    hideWhenFocused: boolean;
+    clickThrough: boolean;
+    snapToEdges: boolean;
+    bubbleOnHover: boolean;
+    character: string;
+    size: string;
+  }) => void;
+}
+
+/** Persist a companion pref change to the backend settings store. */
+function persistCompanion(patch: Partial<CompanionPrefsState>) {
+  // Lazy import to avoid circular dep (store imports overlay for resetGridOverlays).
+  import("./store").then(({ useStore }) => {
+    const config = useStore.getState().config;
+    if (!config) return;
+    const current = config.companion ?? {};
+    useStore.getState().updateConfig({
+      companion: { ...current, ...patch } as typeof config.companion,
+    });
+  });
 }
 
 export const useCompanionPrefs = create<CompanionPrefsState>((set) => ({
   show: true,
   hideWhenFocused: false,
-  clickThrough: true,
-  snapToEdges: true,
+  clickThrough: false,
+  snapToEdges: false,
   bubbleOnHover: true,
   character: "glyph",
   size: "M",
-  setShow: (show) => set({ show }),
-  setHideWhenFocused: (hideWhenFocused) => set({ hideWhenFocused }),
-  setClickThrough: (clickThrough) => set({ clickThrough }),
-  setSnapToEdges: (snapToEdges) => set({ snapToEdges }),
-  setBubbleOnHover: (bubbleOnHover) => set({ bubbleOnHover }),
-  setCharacter: (character) => set({ character }),
-  setSize: (size) => set({ size }),
+  setShow: (show) => {
+    set({ show });
+    persistCompanion({ show });
+  },
+  setHideWhenFocused: (hideWhenFocused) => {
+    set({ hideWhenFocused });
+    persistCompanion({ hideWhenFocused });
+  },
+  setClickThrough: (clickThrough) => {
+    set({ clickThrough });
+    persistCompanion({ clickThrough });
+  },
+  setSnapToEdges: (snapToEdges) => {
+    set({ snapToEdges });
+    persistCompanion({ snapToEdges });
+  },
+  setBubbleOnHover: (bubbleOnHover) => {
+    set({ bubbleOnHover });
+    persistCompanion({ bubbleOnHover });
+  },
+  setCharacter: (character) => {
+    set({ character });
+    persistCompanion({ character });
+  },
+  setSize: (size) => {
+    set({ size });
+    persistCompanion({ size });
+  },
+  hydrate: (c) =>
+    set({
+      show: c.show,
+      hideWhenFocused: c.hideWhenFocused,
+      clickThrough: c.clickThrough,
+      snapToEdges: c.snapToEdges,
+      bubbleOnHover: c.bubbleOnHover,
+      character: (c.character || "glyph") as CharacterKind,
+      size: (c.size || "M") as CompanionSize,
+    }),
 }));

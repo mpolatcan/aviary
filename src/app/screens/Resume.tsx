@@ -21,8 +21,8 @@
  * toggle is omitted (not half-wired) — the drawer docks right; ⌘R / close toggle it.
  *
  * Resume action wires only to what the backend supports (docker.rs:710):
- *   - Claude reopens the exact conversation via newPlate's resume arg (true
- *     restore: the backend runs claude with its --resume flag).
+ *   - Claude reopens the exact conversation through the shared spawn dialog
+ *     (true restore: the backend runs claude with its --resume flag).
  *   - Codex's createSession has no --resume path, so we honestly spawn a FRESH
  *     Codex session (labelled "New Codex") rather than pretend to restore it.
  */
@@ -32,6 +32,7 @@ import { IconBtn } from "../components/primitives/IconBtn";
 import { Ico } from "../components/primitives/icons";
 import type { AgentCli, ClaudeSession, CodexSession } from "../lib/ipc";
 import { ipc } from "../lib/ipc";
+import { useLauncher } from "../lib/launcher";
 import { useOverlay } from "../lib/overlay";
 import { useStore } from "../lib/store";
 import { Button } from "../ui/button";
@@ -75,8 +76,8 @@ export function ResumeDrawer() {
   const side = useOverlay((s) => s.resumeSide);
   const setSide = useOverlay((s) => s.setResumeSide);
   const status = useStore((s) => s.status);
-  const newPlate = useStore((s) => s.newPlate);
   const setView = useStore((s) => s.setView);
+  const openLaunch = useLauncher((s) => s.open);
   const state = status?.state ?? "missing";
   const running = state === "running";
 
@@ -85,7 +86,6 @@ export function ResumeDrawer() {
   // to [] (honest — "none"), null only while the first read is still in flight.
   const [claude, setClaude] = useState<ClaudeSession[] | null>(null);
   const [codex, setCodex] = useState<CodexSession[] | null>(null);
-  const [resuming, setResuming] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [bucket, setBucket] = useState<Bucket>("all");
 
@@ -163,20 +163,16 @@ export function ResumeDrawer() {
   );
 
   // Claude → true restore via `--resume`. Codex → no backend resume path, so spawn
-  // a fresh Codex session honestly (not a restore). Both close the drawer after.
+  // a fresh Codex session honestly (not a restore). Both still go through the
+  // shared spawn dialog so account selection is consistent.
   const resume = (row: ResumeRow) => {
-    setResuming(row.id);
-    const spawn =
-      row.agent === "claude"
-        ? newPlate("claude", "standard", row.id)
-        : newPlate("codex", "standard");
-    spawn
-      .then(() => {
-        setView("hub");
-        setResume(false);
-      })
-      .catch(console.warn)
-      .finally(() => setResuming(null));
+    setView("hub");
+    setResume(false);
+    openLaunch(`resume:${row.id}`, {
+      dir: "row",
+      preferredCli: row.agent,
+      resume: row.agent === "claude" ? row.id : undefined,
+    });
   };
 
   if (!open) return null;
@@ -334,8 +330,8 @@ export function ResumeDrawer() {
                 <DrawerRow
                   key={`${row.agent}-${row.id}`}
                   row={row}
-                  busy={resuming === row.id}
-                  disabled={resuming !== null}
+                  busy={false}
+                  disabled={!running}
                   onResume={() => resume(row)}
                 />
               ))}

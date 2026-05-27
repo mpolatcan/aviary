@@ -22,6 +22,9 @@ export interface LaunchCtx {
   // assumptions.
   groupId?: string;
   workspaceId?: string;
+  // Optional Claude transcript id. Used by the Resume drawer so resumed sessions
+  // still pass through the same spawn dialog/account selector as fresh sessions.
+  resume?: string;
 }
 
 // Every launch surface (new-tab "+", ⌘T, pane split controls, sidebar "New

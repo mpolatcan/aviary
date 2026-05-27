@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { confirmCloseGroup, useStore } from "../../lib/store";
 import {
   GROUP_COLORS,
-  MAX_GROUP_PANES,
   type Group,
+  MAX_GROUP_PANES,
   type Workspace,
   leavesList,
 } from "../../lib/tree";

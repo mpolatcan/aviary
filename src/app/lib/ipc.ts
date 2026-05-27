@@ -46,22 +46,21 @@ export type Mode = "standard" | "auto" | "yolo";
 // output signal can't distinguish those). idleMs = ms since last output; bytes =
 // total output seen since attach. NOT tokens/cost — those need per-CLI capture.
 export type ActivityState = "working" | "idle";
+export type SessionStatusKind = "running" | "idle" | "awaiting" | "done" | "failed";
+
 export interface SessionActivity {
   session: string;
   state: ActivityState;
   idleMs: number;
   bytes: number;
-  // Agent identity registered at session creation (cli binary + display alias).
-  // Null when output created the entry before a label was registered — the
-  // always-on-top companion (its own webview, no access to the main store) reads
-  // these to render the glyph + name; UI falls back when absent.
   cli: string | null;
   alias: string | null;
-  // Claude `--session-id`/resumed id this session launched with, so a satellite
-  // view (companion) can read its transcript for a live token tally. Null for
-  // non-Claude agents (no transcript) or entries created by output before the
-  // identity was registered.
   claudeId: string | null;
+  taskDescription: string | null;
+  turnElapsedMs: number | null;
+  sessionStatus: SessionStatusKind;
+  failureReason: string | null;
+  gitBranch: string | null;
 }
 
 // Tier-1 reads (BACKEND_PLAN.md). docker_info backs the empty-state daemon pill;
@@ -84,9 +83,58 @@ export interface AgentVersion {
   version: string | null;
 }
 
+// Container resource limits preset (config::ContainerSizing in the backend).
+export interface ContainerSizing {
+  label: string;
+  cpuCount: number | null;
+  memoryMb: number | null;
+}
+
+// One environment variable from a running container (auth secrets filtered out).
+export interface EnvEntry {
+  name: string;
+  value: string;
+}
+
+// One git repository discovered under /workspace.
+export interface RepoInfo {
+  path: string;
+  branch: string | null;
+}
+
 // Persisted UI preferences (config::Settings in the backend). Mirrors the Rust
 // struct field-for-field; every field is always present (the backend fills
 // defaults), so this is never partial.
+// A registered model provider (Agent Settings).
+export interface ModelProvider {
+  id: string;
+  name: string;
+  kind: string;
+  endpoint: string | null;
+  apiKeyVar: string | null;
+  models: string[];
+  enabled: boolean;
+}
+
+// A saved prompt template for the spawn dialog.
+export interface PromptTemplate {
+  id: string;
+  name: string;
+  prompt: string;
+  cli: string | null;
+}
+
+// Companion avatar preferences, persisted to disk via AppSettings.companion.
+export interface CompanionPrefs {
+  show: boolean;
+  hideWhenFocused: boolean;
+  clickThrough: boolean;
+  snapToEdges: boolean;
+  bubbleOnHover: boolean;
+  character: string;
+  size: string;
+}
+
 export interface AppSettings {
   // Appearance
   terminalFontSize: number;
@@ -112,6 +160,26 @@ export interface AppSettings {
   notifyAwaitInput: boolean;
   notifyTurnFinish: boolean;
   playSound: boolean;
+  // Container sizing
+  defaultSizing: ContainerSizing;
+  // Agent behaviour
+  autoApproveSafe: boolean;
+  approveWrites: boolean;
+  costBudgetPerTurn: number | null;
+  contextBudget: number | null;
+  defaultModelPerAgent: Record<string, string>;
+  // Updates
+  autoUpdate: boolean;
+  // Lifecycle
+  idleTimeoutMinutes: number | null;
+  // Per-session notification mute list
+  mutedSessions: string[];
+  // Model providers
+  providers: ModelProvider[];
+  // Prompt templates
+  promptTemplates: PromptTemplate[];
+  // Companion avatar preferences
+  companion: CompanionPrefs;
 }
 
 // A user-saved workspace shown on the Welcome launcher (config::SavedWorkspace).
@@ -124,21 +192,39 @@ export interface SavedWorkspace {
   pinned: boolean;
   // Epoch-ms of the last open, or null if not opened since it was saved.
   lastOpened: number | null;
+  // Per-workspace container resource limits override.
+  sizing?: ContainerSizing | null;
 }
 
-// A label-only account profile (config::AccountProfile). `varName` is the NAME
-// of a host env var holding that account's credential — never the value.
+// An account profile (config::AccountProfile). Supports two credential models:
+// "env" — host env var by NAME (never value), "vault" — OS keychain entry.
 export interface AccountProfile {
   id: string;
   agent: string;
   label: string;
-  varName: string;
+  source: "env" | "vault";
+  varName: string | null;
 }
 
-// An account profile plus whether its host env var is present right now
-// (presence-only, like KeyStatus — the value is never read).
+// An account profile plus whether its credential is available right now.
+// Env-backed: host env var present. Vault-backed: keychain entry exists.
 export interface AccountProfileStatus extends AccountProfile {
   present: boolean;
+}
+
+// OAuth flow result, emitted by the backend on completion.
+export interface OAuthResult {
+  profileId: string;
+  provider: string;
+  success: boolean;
+  error?: string;
+}
+
+// GitHub device-flow code, emitted for user display.
+export interface DeviceCodeInfo {
+  profileId: string;
+  userCode: string;
+  verificationUri: string;
 }
 
 // Configured-vs-mounted /workspace dir + whether the runtime needs recreating to
@@ -157,6 +243,21 @@ export interface AppInfo {
   os: string;
   arch: string;
   family: string;
+  commitHash: string | null;
+  buildDate: string | null;
+}
+
+export interface HostStats {
+  memoryTotal: number;
+  memoryAvailable: number;
+  diskTotal: number;
+  diskAvailable: number;
+}
+
+export interface RuntimeVersions {
+  node: string | null;
+  tmux: string | null;
+  git: string | null;
 }
 
 // One-shot resource snapshot of the runtime container (Containers view gauges).
@@ -314,6 +415,8 @@ export interface ClaudeSession {
   turns: number;
   model: string | null;
   version: string | null;
+  estCostUsd: number | null;
+  totalTokens: number | null;
 }
 
 // Live per-session token tally for one Claude conversation, read from its own
@@ -520,6 +623,8 @@ export interface CodexSession {
   turns: number;
   model: string | null;
   version: string | null;
+  estCostUsd: number | null;
+  totalTokens: number | null;
 }
 
 // Live per-session Codex tally from its rollout file. `edits` is 0 when Codex's
@@ -567,6 +672,31 @@ export interface GithubRepo {
 
 // App update check (Settings → About). `available` null when up to date; the UI
 // shows an install affordance only when a newer version is present.
+// One stats sample in the sparkline ring buffer (Container Inspector).
+export interface StatsPoint {
+  at: number;
+  cpuPct: number;
+  memUsed: number;
+  netRxRate: number;
+  netTxRate: number;
+}
+
+// Rolling token + cost usage for a time window (Dashboard 24h strip).
+export interface RollingUsage {
+  tokensIn: number;
+  tokensOut: number;
+  estCostUsd: number;
+  windowHours: number;
+}
+
+// A transcript search result (Command Palette).
+export interface SearchHit {
+  sessionId: string;
+  title: string | null;
+  snippet: string;
+  at: string | null;
+}
+
 export interface UpdateStatus {
   current: string;
   available: string | null;
@@ -592,11 +722,17 @@ export const ipc = {
   dockerInfo: () => invoke<DockerInfo>("docker_info"),
   // Build + host platform identity for Settings → About.
   appInfo: () => invoke<AppInfo>("app_info"),
+  hostStats: () => invoke<HostStats>("host_stats"),
+  runtimeVersions: (workspace?: string) =>
+    invoke<RuntimeVersions>("runtime_versions", { workspace }),
   // Persisted UI preferences (Settings screen), backed by settings.json in the
   // app-data dir. getConfig returns the current snapshot; setConfig writes the
   // whole object and echoes back what landed.
   getConfig: () => invoke<AppSettings>("get_config"),
   setConfig: (config: AppSettings) => invoke<AppSettings>("set_config", { config }),
+  addPromptTemplate: (name: string, prompt: string, cli?: string) =>
+    invoke<PromptTemplate[]>("add_prompt_template", { name, prompt, cli }),
+  removePromptTemplate: (id: string) => invoke<PromptTemplate[]>("remove_prompt_template", { id }),
   // Tier-2 workspace/repo picker. pickDirectory opens the native folder dialog
   // (null on cancel, or in browser-mode where there's no native dialog).
   // setWorkspaceDir validates + persists the choice (echoes the stored config);
@@ -607,13 +743,27 @@ export const ipc = {
   workspaceInfo: (workspace?: string) => invoke<WorkspaceInfo>("workspace_info", { workspace }),
   recreateRuntime: (workspace: string) =>
     invoke<ContainerStatus>("recreate_runtime", { workspace }),
-  // Tier-3 label-only account profiles (no secrets). list/add/remove each return
-  // the full updated list with live host-env presence per profile.
+  // Account profiles (env-backed or vault-backed). list/add/remove return the
+  // full updated list with live presence per profile.
   listAccountProfiles: () => invoke<AccountProfileStatus[]>("list_account_profiles"),
-  addAccountProfile: (agent: AgentCli, label: string, varName: string) =>
-    invoke<AccountProfileStatus[]>("add_account_profile", { agent, label, varName }),
+  addAccountProfile: (agent: string, label: string, varName?: string, source?: "env" | "vault") =>
+    invoke<AccountProfileStatus[]>("add_account_profile", { agent, label, varName, source }),
   removeAccountProfile: (id: string) =>
     invoke<AccountProfileStatus[]>("remove_account_profile", { id }),
+  // Vault: OS-keychain credential management for built-in agents + GitHub.
+  // vaultStoreKey is the ONLY method that accepts a secret over IPC (paste flow).
+  // No method ever returns a secret value.
+  vaultStoreKey: (profileId: string, secret: string) =>
+    invoke<void>("vault_store_key", { profileId, secret }),
+  vaultDeleteKey: (profileId: string) => invoke<void>("vault_delete_key", { profileId }),
+  vaultHasKey: (profileId: string) => invoke<boolean>("vault_has_key", { profileId }),
+  vaultInitiateOauth: (provider: string, profileId: string) =>
+    invoke<{ sessionName?: string; workspace?: string; provider: string; profileId: string }>(
+      "vault_initiate_oauth",
+      { provider, profileId },
+    ),
+  vaultCompleteLogin: (provider: string, profileId: string, workspace: string, sessionName: string) =>
+    invoke<void>("vault_complete_login", { provider, profileId, workspace, sessionName }),
   // Agent-only maps (the backend probes claude/codex/antigravity; shell has no
   // version or key to report). The backend ALWAYS emits exactly these three
   // AgentCli keys (lifecycle::agent_key_status / docker::agent_versions build a
@@ -622,6 +772,8 @@ export const ipc = {
   agentKeyStatus: () => invoke<Record<AgentCli, KeyStatus>>("agent_key_status"),
   agentVersions: () => invoke<Record<AgentCli, AgentVersion>>("agent_versions"),
   containerStats: (workspace?: string) => invoke<ContainerStats>("container_stats", { workspace }),
+  containerStatsHistory: (workspace: string) =>
+    invoke<StatsPoint[]>("container_stats_history", { workspace }),
   // Tail of a container's log; defaults to 200 lines server-side. `workspace`
   // targets the workspace's container.
   containerLogs: (tail?: number, workspace?: string) =>
@@ -658,6 +810,12 @@ export const ipc = {
   // Stage every /workspace change (`git add -A`). Throws git's message on failure.
   containerGitStageAll: (workspace?: string) =>
     invoke<void>("container_git_stage_all", { workspace }),
+  containerGitStageFile: (path: string, workspace: string) =>
+    invoke<void>("container_git_stage_file", { path, workspace }),
+  containerGitUnstageFile: (path: string, workspace: string) =>
+    invoke<void>("container_git_unstage_file", { path, workspace }),
+  containerGitStageHunk: (patch: string, workspace: string) =>
+    invoke<void>("container_git_stage_hunk", { patch, workspace }),
   // Commit staged changes (`git commit -m`); resolves to git's summary line, or
   // rejects with git's verbatim message (nothing staged / no identity / not a repo).
   containerGitCommit: (message: string, workspace?: string) =>
@@ -669,6 +827,13 @@ export const ipc = {
   // Processes running inside a container (`docker top`). `workspace` targets
   // the workspace's container.
   containerTop: (workspace?: string) => invoke<ProcessInfo[]>("container_top", { workspace }),
+  // Environment variables in a container (auth secrets filtered out).
+  containerEnv: (workspace: string) => invoke<EnvEntry[]>("container_env", { workspace }),
+  // Git repositories discovered under /workspace.
+  containerRepos: (workspace: string) => invoke<RepoInfo[]>("container_repos", { workspace }),
+  // Clone a git repo by URL into /workspace.
+  containerGitClone: (url: string, workspace: string) =>
+    invoke<string>("container_git_clone", { url, workspace }),
   // Recent commits on /workspace (`git log`); defaults to 12 server-side.
   containerGitLog: (limit?: number, workspace?: string) =>
     invoke<CommitInfo[]>("container_git_log", { limit, workspace }),
@@ -690,6 +855,14 @@ export const ipc = {
   // model + permission mode + sub-agents/skills/plugins/marketplaces, all read
   // from on-disk config. Factual; empty collections render as honest empty states.
   claudeAgentConfig: () => invoke<AgentConfig>("claude_agent_config"),
+  setAgentModel: (model: string, workspace: string) =>
+    invoke<AgentConfig>("set_agent_model", { model, workspace }),
+  setPermissionMode: (mode: string, workspace: string) =>
+    invoke<AgentConfig>("set_permission_mode", { mode, workspace }),
+  setPermissionRules: (bucket: string, rules: string[], workspace: string) =>
+    invoke<AgentConfig>("set_permission_rules", { bucket, rules, workspace }),
+  toggleMcpServer: (name: string, enabled: boolean, workspace: string) =>
+    invoke<ClaudeIntegrations>("toggle_mcp_server", { name, enabled, workspace }),
   listSessions: () => invoke<SessionInfo[]>("list_sessions"),
   // `resume` (a Claude transcript id) relaunches that conversation with
   // `claude --resume <id>`. `sessionId` pins a fresh Claude session to a known
@@ -711,6 +884,7 @@ export const ipc = {
     account?: string,
     workspace?: string,
     workspaceDir?: string,
+    taskDescription?: string,
   ) =>
     invoke<void>("create_session", {
       name,
@@ -722,9 +896,12 @@ export const ipc = {
       account,
       workspace,
       workspaceDir,
+      taskDescription,
     }),
   killSession: (name: string, workspace?: string) =>
     invoke<void>("kill_session", { name, workspace }),
+  stopAllAgents: (workspace: string) => invoke<void>("stop_all_agents", { workspace }),
+  rollingUsage: (hours?: number) => invoke<RollingUsage>("rolling_usage", { hours }),
   renameSession: (name: string, alias: string, workspace?: string) =>
     invoke<void>("rename_session", { name, alias, workspace }),
   attachSession: (name: string, cols: number, rows: number, workspace?: string) =>
@@ -769,6 +946,24 @@ export const ipc = {
   githubRepos: () => invoke<GithubRepo[]>("github_repos"),
   // App update check (Settings → About).
   checkUpdate: () => invoke<UpdateStatus>("check_update"),
+  searchTranscripts: (query: string, limit?: number, workspace?: string) =>
+    invoke<SearchHit[]>("search_transcripts", { query, limit, workspace }),
+  listProviders: () => invoke<ModelProvider[]>("list_providers"),
+  addProvider: (
+    name: string,
+    kind: string,
+    endpoint?: string,
+    apiKeyVar?: string,
+    models?: string[],
+  ) => invoke<ModelProvider[]>("add_provider", { name, kind, endpoint, apiKeyVar, models }),
+  removeProvider: (id: string) => invoke<ModelProvider[]>("remove_provider", { id }),
+  updateProvider: (
+    id: string,
+    name?: string,
+    endpoint?: string,
+    enabled?: boolean,
+    models?: string[],
+  ) => invoke<ModelProvider[]>("update_provider", { id, name, endpoint, enabled, models }),
 } as const;
 
 // Live agent-native hook events (§7). Fires per normalized event; the store fans
@@ -789,4 +984,28 @@ export function onLifecycle(cb: (s: ContainerStatus) => void): Promise<UnlistenF
 
 export function onLifecycleError(cb: (msg: string) => void): Promise<UnlistenFn> {
   return listen<string>("codehub://lifecycle-error", (e) => cb(e.payload));
+}
+
+// OAuth flow completed (success or failure). Fires for both Claude and GitHub.
+export function onOAuthComplete(cb: (result: OAuthResult) => void): Promise<UnlistenFn> {
+  return listen<OAuthResult>("codehub://oauth-complete", (e) => cb(e.payload));
+}
+
+// GitHub device-flow code ready for user display.
+export function onOAuthDeviceCode(cb: (info: DeviceCodeInfo) => void): Promise<UnlistenFn> {
+  return listen<DeviceCodeInfo>("codehub://oauth-device-code", (e) => cb(e.payload));
+}
+
+// Container-mediated login progress (URL, device code, waiting, success, error).
+export interface AuthProgress {
+  profileId: string;
+  provider: string;
+  stage: "starting" | "url" | "device_code" | "waiting" | "success" | "error";
+  url?: string;
+  userCode?: string;
+  message?: string;
+}
+
+export function onAuthProgress(cb: (p: AuthProgress) => void): Promise<UnlistenFn> {
+  return listen<AuthProgress>("codehub://auth-progress", (e) => cb(e.payload));
 }

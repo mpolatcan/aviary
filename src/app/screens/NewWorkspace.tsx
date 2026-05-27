@@ -11,7 +11,7 @@
  *   - Step 1 "Repositories" (plural, N repos) → one Repository: the real folder
  *     bound at /workspace (RepositoryPicker, the same picker the spawn dialog uses).
  *   - Step 3 adds the genuinely-needed inputs: a workspace name, the first agent,
- *     its mode, and an optional initial prompt.
+ *     its mode, account, and an optional initial prompt.
  *
  * On finish it persists the workspace (saveWorkspace), marks it opened, and spawns
  * the first agent tab. Reuses the shared spawn-form pieces so it can't drift from
@@ -20,17 +20,24 @@
 import { Segmented } from "@/app/components/primitives/Segmented";
 import { Ico } from "@/app/components/primitives/icons";
 import {
+  AccountCard,
   AgentCard,
   FormRow,
   RepositoryPicker,
   SharedRuntimePanel,
 } from "@/app/components/spawn-form";
+import {
+  AUTO_ACCOUNT,
+  HOST_ACCOUNT,
+  accountProfileSubtitle,
+  agentAccountState,
+} from "@/app/lib/accounts";
 import { CLIS, MODE_BY_ID, modesFor } from "@/app/lib/catalog";
 import { type Cli, type ImageInfo, type Mode, ipc } from "@/app/lib/ipc";
 import { useOverlay } from "@/app/lib/overlay";
 import { useStore } from "@/app/lib/store";
 import { Button } from "@/app/ui/button";
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 
 const STEPS = ["Repository", "Container", "Name & launch"] as const;
 
@@ -48,13 +55,20 @@ export function NewWorkspace() {
   const openSavedWorkspace = useStore((s) => s.openSavedWorkspace);
   const newPlate = useStore((s) => s.newPlate);
   const defaultAgent = useStore((s) => s.config?.defaultAgent ?? "claude") as Cli;
+  const keyStatus = useStore((s) => s.keyStatus);
+  const accountProfiles = useStore((s) => s.accountProfiles);
+  const loadAccountProfiles = useStore((s) => s.loadAccountProfiles);
 
   const [step, setStep] = useState(1);
   const [name, setName] = useState("");
   const [touchedName, setTouchedName] = useState(false);
   const [agent, setAgentRaw] = useState<Cli>(defaultAgent);
   const [mode, setMode] = useState<Mode>("standard");
+  const [accountChoice, setAccountChoice] = useState<string>(AUTO_ACCOUNT);
   const [prompt, setPrompt] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [launchError, setLaunchError] = useState<string | null>(null);
+  const savedWorkspaceIdRef = useRef<string | null>(null);
 
   const defaultDir = workspaceInfo?.effective ?? null;
   const [repoDir, setRepoDir] = useState<string | null>(null);
@@ -72,8 +86,19 @@ export function NewWorkspace() {
   const setAgent = (next: Cli) => {
     setAgentRaw(next);
     if (!modesFor(next).includes(mode)) setMode("standard");
+    setAccountChoice(AUTO_ACCOUNT);
   };
   const modes = modesFor(agent);
+  const { agentAccounts, defaultKey, effectiveAccountChoice, selectedAccount } =
+    agentAccountState(agent, accountProfiles, keyStatus, accountChoice);
+
+  useEffect(() => {
+    void loadAccountProfiles();
+  }, [loadAccountProfiles]);
+
+  useEffect(() => {
+    setLaunchError(null);
+  }, [agent, mode, accountChoice, dir]);
 
   const dismiss = () => close(false);
   useEffect(() => {
@@ -87,21 +112,30 @@ export function NewWorkspace() {
   }, [close]);
 
   const finish = async () => {
-    if (!dir) return;
-    const title = name.trim() || dirName(dir) || "Untitled workspace";
-    const id = await saveWorkspace(title, dir);
-    await openSavedWorkspace(id); // marks lastOpened + ensures the mount points here
-    // Spawns the first agent tab. No-ops if the runtime is down — the workspace is
-    // still saved and shows on the launcher, so nothing is lost.
-    await newPlate(agent, mode, undefined, prompt.trim() || undefined, undefined, {
-      title,
-      dir,
-      savedWorkspaceId: id,
-    });
-    dismiss();
+    if (!dir || saving) return;
+    setSaving(true);
+    setLaunchError(null);
+    try {
+      const title = name.trim() || dirName(dir) || "Untitled workspace";
+      const id = savedWorkspaceIdRef.current ?? (await saveWorkspace(title, dir));
+      savedWorkspaceIdRef.current = id;
+      await openSavedWorkspace(id); // marks lastOpened + ensures the mount points here
+      await newPlate(agent, mode, undefined, prompt.trim() || undefined, selectedAccount, {
+        title,
+        dir,
+        savedWorkspaceId: id,
+      });
+      dismiss();
+    } catch (e) {
+      setLaunchError(String(e).replace(/^Error:\s*/, ""));
+      await loadAccountProfiles();
+    } finally {
+      setSaving(false);
+    }
   };
 
   const next = () => {
+    if (saving) return;
     if (step < 3) setStep(step + 1);
     else void finish();
   };
@@ -277,6 +311,41 @@ export function NewWorkspace() {
                 </div>
               </FormRow>
 
+              <FormRow label="Account">
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
+                  <AccountCard
+                    title="Host environment"
+                    sub={
+                      defaultKey?.present
+                        ? `${defaultKey.varName} · present`
+                        : defaultKey
+                          ? "no key on host"
+                          : "default credential"
+                    }
+                    present={defaultKey?.present ?? true}
+                    selected={effectiveAccountChoice === HOST_ACCOUNT}
+                    onSelect={() => setAccountChoice(HOST_ACCOUNT)}
+                  />
+                  {agentAccounts.map((p) => (
+                    <AccountCard
+                      key={p.id}
+                      title={p.label}
+                      sub={accountProfileSubtitle(p)}
+                      present={p.present}
+                      disabled={!p.present}
+                      selected={effectiveAccountChoice === p.id}
+                      onSelect={() => setAccountChoice(p.id)}
+                    />
+                  ))}
+                </div>
+                <div
+                  className="mono"
+                  style={{ fontSize: 10.5, color: "var(--fg-3)", marginTop: 6 }}
+                >
+                  Used for the first agent in this workspace. Manage saved accounts in Settings.
+                </div>
+              </FormRow>
+
               <FormRow label="Initial prompt" optional>
                 <textarea
                   value={prompt}
@@ -316,8 +385,15 @@ export function NewWorkspace() {
             flexShrink: 0,
           }}
         >
-          <span className="mono" style={{ fontSize: 11, color: "var(--fg-2)" }}>
-            {step === 3
+          <span
+            className="mono"
+            style={{ fontSize: 11, color: launchError ? "var(--err)" : "var(--fg-2)" }}
+          >
+            {launchError
+              ? launchError
+              : saving
+                ? "Saving workspace and launching the first agent..."
+                : step === 3
               ? running
                 ? "Saves the workspace and spawns the first agent"
                 : "Saves the workspace — start the runtime to launch agents"
@@ -327,12 +403,13 @@ export function NewWorkspace() {
           <Button
             variant="ghost"
             size="sm"
+            disabled={saving}
             onClick={() => (step > 1 ? setStep(step - 1) : dismiss())}
           >
             {step > 1 ? "Back" : "Cancel"}
           </Button>
-          <Button size="sm" style={{ padding: "6px 14px" }} disabled={!dir} onClick={next}>
-            {step < 3 ? "Continue" : "Save & launch"}
+          <Button size="sm" style={{ padding: "6px 14px" }} disabled={!dir || saving} onClick={next}>
+            {saving ? "Launching..." : step < 3 ? "Continue" : "Save & launch"}
             <span className="kbd" style={{ marginLeft: 6 }}>
               {step < 3 ? "⏎" : "⌘⏎"}
             </span>

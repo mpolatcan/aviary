@@ -80,6 +80,10 @@ pub struct IslandRow {
     pub status: IslandStatus,
     /// Honest, already-real metric line; None → omitted (never a fake zero).
     pub metric: Option<String>,
+    /// Active model (e.g. "opus-4.7"); None when unknown.
+    pub model: Option<String>,
+    /// Git branch the session's workspace is on; None when unknown.
+    pub branch: Option<String>,
 }
 
 /// The full snapshot the rich feed pushes: the rows + whether any row is

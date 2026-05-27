@@ -186,7 +186,9 @@ function HubView() {
           <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
             {/* New-agent flow opens the shared launcher anchored in the sidebar. */}
             <EmptyHero
-              onNew={(cli) => openLaunch("newtab", cli ? { dir: "row", preferredCli: cli } : undefined)}
+              onNew={(cli) =>
+                openLaunch("newtab", cli ? { dir: "row", preferredCli: cli } : undefined)
+              }
             />
           </div>
         )}

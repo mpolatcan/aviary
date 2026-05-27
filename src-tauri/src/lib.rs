@@ -2,6 +2,8 @@
 // devserver.rs) can reuse the same docker / pty / lifecycle logic without going
 // through Tauri.
 pub mod activity;
+/// Container-mediated agent login flows.
+pub mod auth;
 pub mod config;
 #[cfg(feature = "devserver")]
 pub mod devserver;
@@ -16,15 +18,19 @@ pub mod lifecycle;
 /// Per-workspace container manager (per-workspace-container architecture).
 pub mod manager;
 pub mod pty;
+/// Per-workspace container stats ring buffer (sparklines).
+pub mod stats_history;
 /// Shared IPC response types (Phase-0 completion contract).
 pub mod types;
+/// OS-keychain credential vault for built-in agent accounts + GitHub.
+pub mod vault;
 
 use activity::SessionActivity;
 use config::{AccountProfile, ConfigStore, Settings};
 use docker::{
     AgentConfig, AgentVersion, ClaudeIntegrations, ClaudeSession, ClaudeUsage, Cli, CommitInfo,
     ContainerStats, DockerClient, FileEntry, GitStatus, ImageInfo, LaunchMode, MountInfo,
-    ProcessInfo, RuntimeHealth, SessionUsage,
+    ProcessInfo, RuntimeHealth, SessionUsage, TmuxSessionRequest,
 };
 use events::EventsTracker;
 use lifecycle::{AppInfo, ContainerStatus, KeyStatus, Lifecycle, WorkspaceInfo};
@@ -62,6 +68,10 @@ pub struct AppState {
     pub config: Arc<ConfigStore>,
     /// Agent-event hook state: pending prompts + activity ring buffer.
     pub events: Arc<EventsTracker>,
+    /// Per-workspace container stats ring buffer (sparkline charts).
+    pub stats_history: Arc<stats_history::StatsHistory>,
+    /// OS-keychain credential vault for built-in agent accounts + GitHub.
+    pub vault: Arc<vault::Vault>,
 }
 
 const DEFAULT_IMAGE: &str = "ghcr.io/mpolatcan/codehub-runtime:0.1.3";
@@ -178,6 +188,29 @@ fn app_info() -> Result<AppInfo, String> {
     Ok(lifecycle::app_info())
 }
 
+/// Host memory + disk stats (About screen).
+#[tauri::command]
+fn host_stats() -> Result<lifecycle::HostStats, String> {
+    Ok(lifecycle::host_stats())
+}
+
+/// Runtime tool versions from inside a workspace container (About screen).
+#[tauri::command]
+async fn runtime_versions(
+    workspace: Option<String>,
+    state: tauri::State<'_, AppState>,
+) -> Result<lifecycle::RuntimeVersions, String> {
+    let docker = match workspace {
+        Some(ref key) => Arc::new(state.manager.workspace_container(key).docker_client()),
+        None => state
+            .manager
+            .any_running_docker()
+            .await
+            .ok_or_else(|| "no running workspace container".to_string())?,
+    };
+    docker.runtime_versions().await.map_err(|e| e.to_string())
+}
+
 /// Current persisted UI preferences (Settings screen). In-memory snapshot —
 /// never fails.
 #[tauri::command]
@@ -185,11 +218,147 @@ fn get_config(state: tauri::State<'_, AppState>) -> Result<Settings, String> {
     Ok(state.config.get())
 }
 
+pub fn preserve_backend_owned_settings(mut next: Settings, current: &Settings) -> Settings {
+    next.account_profiles = current.account_profiles.clone();
+    next
+}
+
 /// Replace the persisted UI preferences and write them to disk. Returns the
 /// stored settings so the frontend can confirm what landed.
 #[tauri::command]
 fn set_config(config: Settings, state: tauri::State<'_, AppState>) -> Result<Settings, String> {
-    state.config.set(config)
+    // Account profiles are mutated through dedicated add/remove commands because
+    // they are coupled to keychain entries. Generic UI settings writes can be
+    // based on an older frontend config snapshot, so never let them roll account
+    // metadata backward and orphan freshly stored keychain credentials.
+    let current = state.config.get();
+    state
+        .config
+        .set(preserve_backend_owned_settings(config, &current))
+}
+
+/// List model providers.
+#[tauri::command]
+fn list_providers(state: tauri::State<'_, AppState>) -> Result<Vec<config::ModelProvider>, String> {
+    Ok(state.config.get().providers)
+}
+
+/// Add a model provider.
+#[tauri::command]
+fn add_provider(
+    name: String,
+    kind: String,
+    endpoint: Option<String>,
+    api_key_var: Option<String>,
+    models: Vec<String>,
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<config::ModelProvider>, String> {
+    let mut settings = state.config.get();
+    settings.providers.push(config::ModelProvider {
+        id: uuid::Uuid::new_v4().to_string(),
+        name,
+        kind,
+        endpoint,
+        api_key_var,
+        models,
+        enabled: true,
+    });
+    let saved = state.config.set(settings)?;
+    Ok(saved.providers)
+}
+
+/// Remove a model provider by id.
+#[tauri::command]
+fn remove_provider(
+    id: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<config::ModelProvider>, String> {
+    let mut settings = state.config.get();
+    settings.providers.retain(|p| p.id != id);
+    let saved = state.config.set(settings)?;
+    Ok(saved.providers)
+}
+
+/// Update a model provider (partial update by id).
+#[tauri::command]
+fn update_provider(
+    id: String,
+    name: Option<String>,
+    endpoint: Option<String>,
+    enabled: Option<bool>,
+    models: Option<Vec<String>>,
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<config::ModelProvider>, String> {
+    let mut settings = state.config.get();
+    if let Some(p) = settings.providers.iter_mut().find(|p| p.id == id) {
+        if let Some(n) = name {
+            p.name = n;
+        }
+        if let Some(e) = endpoint {
+            p.endpoint = Some(e);
+        }
+        if let Some(en) = enabled {
+            p.enabled = en;
+        }
+        if let Some(m) = models {
+            p.models = m;
+        }
+    }
+    let saved = state.config.set(settings)?;
+    Ok(saved.providers)
+}
+
+/// Search transcripts across sessions (Command Palette).
+#[tauri::command]
+async fn search_transcripts(
+    query: String,
+    limit: Option<u32>,
+    workspace: Option<String>,
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<docker::SearchHit>, String> {
+    let docker = match workspace {
+        Some(ref key) => Arc::new(state.manager.workspace_container(key).docker_client()),
+        None => state
+            .manager
+            .any_running_docker()
+            .await
+            .ok_or_else(|| "no running workspace container".to_string())?,
+    };
+    docker
+        .search_transcripts(&query, limit.unwrap_or(20))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Add a prompt template and persist.
+#[tauri::command]
+fn add_prompt_template(
+    name: String,
+    prompt: String,
+    cli: Option<String>,
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<config::PromptTemplate>, String> {
+    let mut settings = state.config.get();
+    settings.prompt_templates.push(config::PromptTemplate {
+        id: uuid::Uuid::new_v4().to_string(),
+        name,
+        prompt,
+        cli,
+    });
+    let saved = state.config.set(settings)?;
+    Ok(saved.prompt_templates)
+}
+
+/// Remove a prompt template by id and persist.
+#[tauri::command]
+fn remove_prompt_template(
+    id: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<config::PromptTemplate>, String> {
+    let mut settings = state.config.get();
+    settings.prompt_templates.retain(|t| t.id != id);
+    let saved = state.config.set(settings)?;
+    Ok(saved.prompt_templates)
 }
 
 // — Tier-2: workspace / repository picker —
@@ -268,21 +437,19 @@ async fn recreate_runtime(
 // so devserver.rs can continue to import them from `crate::`. The commands below
 // now have real implementations (the BE track fills them per COMPLETION_PLAN.md).
 
-// Sentinel kept only for devserver.rs backward-compat during the transition;
-// will be removed once devserver stubs are updated to real state access.
-#[allow(dead_code)]
-pub(crate) const STUB_RATES_AS_OF: &str = "unloaded";
-
-/// All stored account profiles + live presence of each one's host env var.
+/// All stored account profiles + live presence status.
 #[tauri::command]
 fn list_account_profiles(
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<AccountProfileStatus>, String> {
-    Ok(profile_statuses(state.config.get().account_profiles))
+    Ok(profile_statuses(
+        state.config.get().account_profiles,
+        Some(&state.vault),
+    ))
 }
 
-/// Validate + construct a label-only account profile (no secret). Shared by the
-/// Tauri command and the dev bridge. Rejects agents with no credential var, an
+/// Validate + construct an env-backed account profile. Shared by the Tauri
+/// command and the dev bridge. Rejects agents with no credential var, an
 /// empty label, and any `var_name` that isn't a safe env identifier.
 pub fn build_account_profile(
     agent: &str,
@@ -307,32 +474,113 @@ pub fn build_account_profile(
         id: uuid::Uuid::new_v4().to_string(),
         agent: cli.binary().to_string(),
         label,
-        var_name,
+        credential: config::CredentialSource::Env { var_name },
     })
 }
 
-/// Add a label-only account profile (agent + label + host env var NAME). No
-/// secret is stored. Returns the full updated list + presence.
+/// Construct a vault-backed account profile. The secret itself is stored
+/// separately via `vault_store_key`; this only records the profile metadata.
+pub fn build_vault_profile(agent: &str, label: &str) -> Result<AccountProfile, String> {
+    let label = label.trim().to_string();
+    if label.is_empty() {
+        return Err("label is required".into());
+    }
+    if agent == "github" {
+        return Ok(AccountProfile {
+            id: uuid::Uuid::new_v4().to_string(),
+            agent: "github".to_string(),
+            label,
+            credential: config::CredentialSource::Vault,
+        });
+    }
+
+    let cli = Cli::parse(agent).map_err(|e| e.to_string())?;
+    if cli.canonical_auth_var().is_none() {
+        return Err(format!("{agent} has no credential to manage"));
+    }
+    Ok(AccountProfile {
+        id: uuid::Uuid::new_v4().to_string(),
+        agent: cli.binary().to_string(),
+        label,
+        credential: config::CredentialSource::Vault,
+    })
+}
+
+#[cfg(test)]
+mod account_profile_tests {
+    use super::*;
+
+    #[test]
+    fn vault_profile_accepts_github_connector() {
+        let profile = build_vault_profile("github", "GitHub").expect("github vault profile");
+        assert_eq!(profile.agent, "github");
+        assert!(matches!(
+            profile.credential,
+            config::CredentialSource::Vault
+        ));
+    }
+
+    #[test]
+    fn vault_env_name_is_shell_safe_for_uuid_profiles() {
+        let name = config::vault_env_name("3f2504e0-4f89-11d3-9a0c-0305e82c3301");
+        assert!(docker::is_env_name(&name));
+        assert_eq!(name, "CODEHUB_VAULT_3F2504E0_4F89_11D3_9A0C_0305E82C3301");
+    }
+
+    #[test]
+    fn ui_settings_update_preserves_backend_owned_account_profiles() {
+        let profile =
+            build_vault_profile("claude", "Claude Max").expect("valid Claude vault profile");
+        let stale_profile =
+            build_vault_profile("codex", "Stale Codex").expect("valid Codex vault profile");
+
+        let current = Settings {
+            account_profiles: vec![profile.clone()],
+            ..Default::default()
+        };
+
+        let incoming = Settings {
+            density: "compact".into(),
+            account_profiles: vec![stale_profile],
+            ..Default::default()
+        };
+
+        let merged = preserve_backend_owned_settings(incoming, &current);
+        assert_eq!(merged.density, "compact");
+        assert_eq!(merged.account_profiles, vec![profile]);
+    }
+}
+
+/// Add an account profile. `source` determines env-backed (requires var_name)
+/// or vault-backed (var_name ignored). Returns the full list + presence.
 #[tauri::command]
 fn add_account_profile(
     agent: String,
     label: String,
-    var_name: String,
+    var_name: Option<String>,
+    source: Option<String>,
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<AccountProfileStatus>, String> {
-    let profile = build_account_profile(&agent, &label, &var_name)?;
+    let profile = if source.as_deref() == Some("vault") {
+        build_vault_profile(&agent, &label)?
+    } else {
+        build_account_profile(&agent, &label, &var_name.unwrap_or_default())?
+    };
     let next = state.config.add_account_profile(profile)?;
-    Ok(profile_statuses(next.account_profiles))
+    Ok(profile_statuses(next.account_profiles, Some(&state.vault)))
 }
 
-/// Remove an account profile by id. Returns the full updated list + presence.
+/// Remove an account profile by id. Cascades to vault deletion for
+/// vault-backed profiles. Returns the full updated list + presence.
 #[tauri::command]
 fn remove_account_profile(
     id: String,
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<AccountProfileStatus>, String> {
+    // Delete from vault if it was vault-backed (no-op if env-backed).
+    let _ = state.vault.delete(&id);
     let next = state.config.remove_account_profile(&id)?;
-    Ok(profile_statuses(next.account_profiles))
+    Ok(profile_statuses(next.account_profiles, Some(&state.vault)))
 }
 
 /// `<cli> --version` for each agent inside a running workspace container.
@@ -364,6 +612,15 @@ async fn container_stats(
             .ok_or_else(|| "no running workspace container".to_string())?,
     };
     docker.stats().await.map_err(|e| e.to_string())
+}
+
+/// Sparkline history for a workspace container's stats (Container Inspector).
+#[tauri::command]
+async fn container_stats_history(
+    state: tauri::State<'_, AppState>,
+    workspace: String,
+) -> Result<Vec<stats_history::StatsPoint>, String> {
+    Ok(state.stats_history.history(&workspace))
 }
 
 /// Tail of a workspace container's log (Containers view log panel).
@@ -553,6 +810,119 @@ async fn container_git_open_pr(
         .map_err(|e| e.to_string())
 }
 
+/// Stage a single file in /workspace.
+#[tauri::command]
+async fn container_git_stage_file(
+    path: String,
+    workspace: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    docker_container_for(&state, &workspace)
+        .git_stage_file(&path)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Unstage a single file in /workspace.
+#[tauri::command]
+async fn container_git_unstage_file(
+    path: String,
+    workspace: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    docker_container_for(&state, &workspace)
+        .git_unstage_file(&path)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Apply a patch to the staging area (per-hunk staging).
+#[tauri::command]
+async fn container_git_stage_hunk(
+    patch: String,
+    workspace: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    docker_container_for(&state, &workspace)
+        .git_stage_hunk(&patch)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Set Claude Code's active model.
+#[tauri::command]
+async fn set_agent_model(
+    model: String,
+    workspace: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<AgentConfig, String> {
+    let docker = docker_container_for(&state, &workspace);
+    docker
+        .set_claude_model(&model)
+        .await
+        .map_err(|e| e.to_string())?;
+    docker
+        .claude_agent_config()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Set Claude Code's default permission mode.
+#[tauri::command]
+async fn set_permission_mode(
+    mode: String,
+    workspace: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<AgentConfig, String> {
+    let docker = docker_container_for(&state, &workspace);
+    docker
+        .set_permission_mode(&mode)
+        .await
+        .map_err(|e| e.to_string())?;
+    docker
+        .claude_agent_config()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Set Claude Code's permission rules for a bucket (allow/ask/deny).
+#[tauri::command]
+async fn set_permission_rules(
+    bucket: String,
+    rules: Vec<String>,
+    workspace: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<AgentConfig, String> {
+    let docker = docker_container_for(&state, &workspace);
+    docker
+        .set_permission_rules(&bucket, &rules)
+        .await
+        .map_err(|e| e.to_string())?;
+    docker
+        .claude_agent_config()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Toggle an MCP server's enabled state.
+#[tauri::command]
+async fn toggle_mcp_server(
+    name: String,
+    enabled: bool,
+    workspace: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<ClaudeIntegrations, String> {
+    let docker = docker_container_for(&state, &workspace);
+    docker
+        .toggle_mcp_server(&name, enabled)
+        .await
+        .map_err(|e| e.to_string())?;
+    docker
+        .claude_integrations()
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// Processes running inside a workspace container (Containers view "Processes" card).
 #[tauri::command]
 async fn container_top(
@@ -561,6 +931,50 @@ async fn container_top(
 ) -> Result<Vec<ProcessInfo>, String> {
     docker_container_for(&state, &workspace)
         .top()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Environment variables in a workspace container (Container Inspector).
+/// Auth secrets are filtered out by the backend (no-secret-leaking contract).
+#[tauri::command]
+async fn container_env(
+    state: tauri::State<'_, AppState>,
+    workspace: String,
+) -> Result<Vec<docker::EnvEntry>, String> {
+    docker_container_for(&state, &workspace)
+        .container_env()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Git repositories discovered under /workspace (Container Inspector).
+#[tauri::command]
+async fn container_repos(
+    state: tauri::State<'_, AppState>,
+    workspace: String,
+) -> Result<Vec<docker::RepoInfo>, String> {
+    docker_container_for(&state, &workspace)
+        .container_repos()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Clone a git repo by URL into /workspace (Welcome "From GitHub" template).
+#[tauri::command]
+async fn container_git_clone(
+    state: tauri::State<'_, AppState>,
+    url: String,
+    workspace: String,
+) -> Result<String, String> {
+    let lifecycle = state.manager.resolve(&workspace, None);
+    lifecycle
+        .ensure_runtime()
+        .await
+        .map_err(|e| e.to_string())?;
+    lifecycle
+        .docker_client()
+        .git_clone(&url)
         .await
         .map_err(|e| e.to_string())
 }
@@ -683,7 +1097,10 @@ async fn list_sessions(state: tauri::State<'_, AppState>) -> Result<Vec<SessionI
 }
 
 #[tauri::command]
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Tauri IPC passes these command arguments by name from the frontend"
+)]
 async fn create_session(
     name: String,
     cli: String,
@@ -694,20 +1111,84 @@ async fn create_session(
     account: Option<String>,
     workspace: String,
     workspace_dir: Option<String>,
+    task_description: Option<String>,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
     let cli = Cli::parse(&cli).map_err(|e| e.to_string())?;
     let mode = mode.as_deref().map(LaunchMode::parse).unwrap_or_default();
     let alias = alias.unwrap_or_default();
-    let account_var = account.and_then(|id| {
-        state
+    // Resolve the chosen account profile to the env var name the session should
+    // remap its CLI's canonical auth var from. Env-backed profiles use the host
+    // var name. Vault-backed profiles are read just-in-time from the keychain and
+    // forwarded through this Docker exec's structured env, so existing workspace
+    // containers can use accounts created after the container started.
+    let mut account_var: Option<String> = None;
+    let mut account_env: Vec<String> = Vec::new();
+    let mut restore_claude_bundle_env: Option<String> = None;
+    if let Some(id) = account {
+        let profile = state
             .config
             .get()
             .account_profiles
             .into_iter()
-            .find(|p| p.id == id)
-            .map(|p| p.var_name)
-    });
+            .find(|p| p.id == id);
+        match profile {
+            Some(profile) => match profile.credential {
+                config::CredentialSource::Env { var_name } => {
+                    account_var = Some(var_name);
+                },
+                config::CredentialSource::Vault => {
+                    let env_name = config::vault_env_name(&profile.id);
+                    let secret = state
+                        .vault
+                        .read(&profile.id)
+                        .map_err(|e| e.to_string())?
+                        .ok_or_else(|| {
+                            let _ = state.config.remove_account_profile(&profile.id);
+                            format!(
+                                "selected account '{}' is missing from keychain; removed the broken profile. Sign in again.",
+                                profile.label
+                            )
+                        })?;
+                    account_env.push(format!("{env_name}={secret}"));
+                    if matches!(cli, Cli::Claude)
+                        && secret.starts_with(auth::CLAUDE_AUTH_BUNDLE_PREFIX)
+                    {
+                        restore_claude_bundle_env = Some(env_name);
+                    } else {
+                        account_var = Some(env_name);
+                    }
+                },
+            },
+            None => {
+                let secret = state
+                    .vault
+                    .read(&id)
+                    .map_err(|e| e.to_string())?
+                    .ok_or_else(|| "selected account profile not found".to_string())?;
+                let label = match cli {
+                    Cli::Claude => "Claude",
+                    Cli::Codex => "Codex",
+                    Cli::Antigravity => "Antigravity",
+                    Cli::Shell => "Shell",
+                };
+                let _ = state.config.add_account_profile(AccountProfile {
+                    id: id.clone(),
+                    agent: cli.binary().to_string(),
+                    label: label.to_string(),
+                    credential: config::CredentialSource::Vault,
+                });
+                let env_name = config::vault_env_name(&id);
+                account_env.push(format!("{env_name}={secret}"));
+                if matches!(cli, Cli::Claude) && secret.starts_with(auth::CLAUDE_AUTH_BUNDLE_PREFIX)
+                {
+                    restore_claude_bundle_env = Some(env_name);
+                } else {
+                    account_var = Some(env_name);
+                }
+            },
+        }
+    }
     let lifecycle = state
         .manager
         .resolve(&workspace, workspace_dir.map(std::path::PathBuf::from));
@@ -715,24 +1196,52 @@ async fn create_session(
         .ensure_runtime()
         .await
         .map_err(|e| e.to_string())?;
-    lifecycle
-        .docker_client()
-        .create_tmux_session(
-            &name,
+    let docker = lifecycle.docker_client();
+    let mut session_env: Vec<String> = Vec::new();
+    let mut launch_account_env = account_env;
+    if let Some(env_name) = restore_claude_bundle_env {
+        let dir = docker
+            .restore_claude_bundle_from_env(&env_name, &launch_account_env)
+            .await
+            .map_err(|e| e.to_string())?;
+        session_env.push(format!("CLAUDE_CONFIG_DIR={dir}"));
+        launch_account_env.clear();
+    }
+    docker
+        .create_tmux_session(TmuxSessionRequest {
+            name: &name,
             cli,
             mode,
-            &alias,
-            resume.as_deref(),
-            session_id.as_deref(),
-            account_var.as_deref(),
-        )
+            alias: &alias,
+            resume: resume.as_deref(),
+            session_id: session_id.as_deref(),
+            account_var: account_var.as_deref(),
+            session_env: &session_env,
+            account_env: &launch_account_env,
+        })
         .await
         .map_err(|e| e.to_string())?;
+    let git_branch = docker
+        .exec_capture_pub(vec!["git", "-C", "/workspace", "branch", "--show-current"])
+        .await
+        .ok()
+        .and_then(|b: String| {
+            let b = b.trim().to_string();
+            if b.is_empty() {
+                None
+            } else {
+                Some(b)
+            }
+        });
     let claude_id = resume.as_deref().or(session_id.as_deref());
-    state
-        .registry
-        .activity()
-        .register(&name, cli.binary(), &alias, claude_id);
+    state.registry.activity().register(
+        &name,
+        cli.binary(),
+        &alias,
+        claude_id,
+        git_branch.as_deref(),
+        task_description.as_deref(),
+    );
     Ok(())
 }
 
@@ -748,6 +1257,91 @@ async fn kill_session(
         .kill_tmux_session(&name)
         .await
         .map_err(|e| e.to_string())
+}
+
+/// Kill all agent sessions in a workspace (Settings danger zone).
+#[tauri::command]
+async fn stop_all_agents(
+    workspace: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let docker = docker_for(&state, &workspace);
+    let sessions = docker
+        .list_tmux_sessions()
+        .await
+        .map_err(|e| e.to_string())?;
+    for s in sessions {
+        state.registry.detach_by_session(&s.name).await;
+        state.events.remove_session(&s.name);
+        let _ = docker.kill_tmux_session(&s.name).await;
+    }
+    Ok(())
+}
+
+/// Rolling usage for the last N hours (default 24). Sums by_day from Claude
+/// and Codex usage, filtered to the time window.
+#[tauri::command]
+async fn rolling_usage(
+    hours: Option<u32>,
+    state: tauri::State<'_, AppState>,
+) -> Result<crate::types::RollingUsage, String> {
+    let window_hours = hours.unwrap_or(24);
+    let docker = state
+        .manager
+        .any_running_docker()
+        .await
+        .ok_or_else(|| "no running workspace container".to_string())?;
+    let cutoff_date = utc_date_minus_hours(window_hours);
+    let mut tokens_in: u64 = 0;
+    let mut tokens_out: u64 = 0;
+    let mut est_cost_usd: f64 = 0.0;
+    if let Ok(claude) = docker.claude_usage().await {
+        for d in &claude.by_day {
+            if d.date >= cutoff_date {
+                tokens_in += d.totals.input + d.totals.cache_read;
+                tokens_out += d.totals.output;
+                est_cost_usd += d.est_cost_usd;
+            }
+        }
+    }
+    if let Ok(codex) = docker.codex_usage().await {
+        for d in &codex.by_day {
+            if d.date >= cutoff_date {
+                tokens_in += d.totals.input + d.totals.cached_input;
+                tokens_out += d.totals.output + d.totals.reasoning_output;
+                est_cost_usd += d.est_cost_usd;
+            }
+        }
+    }
+    Ok(crate::types::RollingUsage {
+        tokens_in,
+        tokens_out,
+        est_cost_usd,
+        window_hours,
+    })
+}
+
+/// Compute a UTC date string (YYYY-MM-DD) for now minus `hours`.
+pub fn utc_date_minus_hours(hours: u32) -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let now_secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let cutoff_secs = now_secs.saturating_sub(u64::from(hours) * 3600);
+    let days = cutoff_secs / 86400;
+    // Civil date from days since 1970-01-01 (Algorithm from Howard Hinnant).
+    let z = days as i64 + 719468;
+    let era = if z >= 0 { z } else { z - 146096 } / 146097;
+    let doe = (z - era * 146097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    format!("{y:04}-{m:02}-{d:02}")
 }
 
 #[tauri::command]
@@ -937,9 +1531,9 @@ async fn focus_session_from_companion(name: String, app: tauri::AppHandle) -> Re
     Ok(())
 }
 
-// ── Phase-0 completion contract: stub commands ──────────────────────────────
-// Honest-empty defaults so the live app degrades gracefully; the parallel fleet
-// fills the bodies. NOT panics, NOT Err.
+// ── Phase-0 completion contract: live command handlers ──────────────────────
+// Honest-empty defaults remain for absent agent signals, but these handlers now
+// read the live event, usage, and transcript sources instead of placeholder data.
 
 /// Sessions awaiting user input right now (← agent-native hooks, §7).
 /// Reads the in-memory [`EventsTracker`] — never fabricated, honest-empty when
@@ -1098,6 +1692,192 @@ async fn check_update() -> Result<UpdateStatus, String> {
     })
 }
 
+// ── Vault commands ────────────────────────────────────────────────────────
+// Manage secrets in the OS keychain for built-in agents + GitHub. The ONLY
+// command that accepts a secret over IPC is `vault_store_key` (paste flow);
+// no command ever returns a secret value.
+
+/// Store an API key / token in the vault (paste flow for Codex/Antigravity/
+/// GitHub PAT). The secret crosses IPC exactly once (paste → backend → keyring)
+/// and is never logged, stored on disk, or returned.
+#[tauri::command]
+fn vault_store_key(
+    profile_id: String,
+    secret: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    state
+        .vault
+        .store(&profile_id, &secret)
+        .map_err(|e| e.to_string())
+}
+
+/// Delete a vault entry by profile id.
+#[tauri::command]
+fn vault_delete_key(profile_id: String, state: tauri::State<'_, AppState>) -> Result<(), String> {
+    state.vault.delete(&profile_id).map_err(|e| e.to_string())
+}
+
+/// Metadata-only presence check. Does not read the keychain because macOS may
+/// prompt on protected secret reads; launch/use paths perform the real read.
+#[tauri::command]
+fn vault_has_key(profile_id: String, state: tauri::State<'_, AppState>) -> Result<bool, String> {
+    let configured = state
+        .config
+        .get()
+        .account_profiles
+        .into_iter()
+        .any(|p| p.id == profile_id && p.is_vault());
+    Ok(configured && state.vault.exists(&profile_id))
+}
+
+/// Start a container-mediated login for an agent. Creates a temporary
+/// container with a tmux session running the agent's login command. Returns
+/// the session name + workspace key so the frontend can open it as a visible
+/// pane. After the user completes login, the frontend calls
+/// `vault_complete_login` to capture the credential.
+///
+/// GitHub has no container step; it starts the device-code polling loop in the
+/// background and emits auth-progress events directly.
+#[tauri::command]
+async fn vault_initiate_oauth(
+    provider: String,
+    profile_id: String,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    match provider.as_str() {
+        "claude" | "codex" | "antigravity" => {
+            let spec = auth::login_spec(&provider)
+                .ok_or_else(|| format!("unknown provider: {provider}"))?;
+            let (login_cmd, _) = spec;
+
+            // Use a dedicated temporary workspace key for login containers.
+            let ws_key = format!("codehub-login-{}", uuid::Uuid::new_v4());
+            let session_name = format!(
+                "login-{provider}-{}",
+                &profile_id[..8.min(profile_id.len())]
+            );
+
+            // Ensure the container is running.
+            let lifecycle = state.manager.resolve(&ws_key, None);
+            lifecycle
+                .ensure_runtime()
+                .await
+                .map_err(|e| e.to_string())?;
+            let docker = lifecycle.docker_client();
+
+            // Build the login command as a normal CodeHub tmux session. It must
+            // use the default socket under TMUX_TMPDIR, because `attach_session`
+            // attaches through that same socket.
+            let mut tmux_cmd: Vec<String> = ["tmux", "new-session", "-d", "-s"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect();
+            tmux_cmd.push(session_name.clone());
+            tmux_cmd.push("-n".into());
+            tmux_cmd.push("Login".into());
+            docker::push_base_tmux_env(&mut tmux_cmd);
+            if provider == "claude" {
+                docker::push_tmux_env(
+                    &mut tmux_cmd,
+                    format!(
+                        "CLAUDE_CONFIG_DIR={}",
+                        auth::claude_login_config_dir(&session_name)
+                    ),
+                );
+            }
+            tmux_cmd.extend(login_cmd.into_iter().map(String::from));
+            docker
+                .exec_capture_pub(tmux_cmd.iter().map(String::as_str).collect())
+                .await
+                .map_err(|e| e.to_string())?;
+            let capture_path = auth::login_capture_path(&session_name);
+            let pipe_cmd = format!("cat >> {capture_path}");
+            let _ = docker
+                .exec_capture_pub(vec![
+                    "tmux",
+                    "pipe-pane",
+                    "-o",
+                    "-t",
+                    &session_name,
+                    &pipe_cmd,
+                ])
+                .await;
+
+            Ok(serde_json::json!({
+                "sessionName": session_name,
+                "workspace": ws_key,
+                "provider": provider,
+                "profileId": profile_id,
+            }))
+        },
+        "github" => {
+            let vault = state.vault.clone();
+            let app2 = app.clone();
+            let pid = profile_id.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = auth::github_login(&vault, &pid, &app2).await {
+                    tracing::warn!("github login failed: {e}");
+                }
+            });
+            Ok(serde_json::json!({ "provider": "github", "profileId": profile_id }))
+        },
+        _ => Err(format!("unknown provider: {provider}")),
+    }
+}
+
+/// After a login session exits, read the credential from the container and
+/// store it in the vault. The frontend calls this when the login pane closes.
+#[tauri::command]
+async fn vault_complete_login(
+    provider: String,
+    profile_id: String,
+    workspace: String,
+    session_name: Option<String>,
+    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let docker = Arc::new(
+        state
+            .manager
+            .workspace_container(&workspace)
+            .docker_client(),
+    );
+
+    let result = async {
+        let credential =
+            auth::capture_credential(&docker, &provider, session_name.as_deref()).await?;
+
+        if let Some(cred) = credential {
+            auth::store_credential(&state.vault, &profile_id, &provider, &cred, &app)?;
+        } else {
+            let message = auth::login_failure_message(&docker, &provider, session_name.as_deref())
+                .await
+                .unwrap_or_else(|| "No credential found after login".into());
+            let _ = app.emit(
+                "codehub://auth-progress",
+                auth::AuthProgress {
+                    profile_id: profile_id.clone(),
+                    provider: provider.clone(),
+                    stage: "error".into(),
+                    url: None,
+                    user_code: None,
+                    message: Some(message.clone()),
+                },
+            );
+            return Err(message);
+        }
+
+        Ok(())
+    }
+    .await;
+
+    // Clean up the temporary login container whether capture succeeded or not.
+    let _ = state.manager.remove_workspace(&workspace).await;
+    result
+}
+
 /// Bundle identifier used by the app before the Aviary→CodeHub rebrand. The OS
 /// app-data dir is namespaced by this id, so a rebranded build looks at a fresh
 /// (empty) path and existing users would lose their CLI auth + workspace.
@@ -1197,15 +1977,14 @@ pub fn run() {
             // Loaded BEFORE the lifecycle: the effective workspace dir + account
             // profile env vars are read from it at container-create time.
             let config = Arc::new(ConfigStore::load(app_data.join("settings.json")));
+            let app_vault = Arc::new(vault::Vault::new());
 
-            let manager = Arc::new(LifecycleManager::new(
-                image.clone(),
-                config_dir,
-                workspace_dir,
-                config.clone(),
-            )?);
+            let manager = Arc::new(
+                LifecycleManager::new(image.clone(), config_dir, workspace_dir, config.clone())?
+                    .with_vault(app_vault.clone()),
+            );
             let registry = Arc::new(PtyRegistry::new());
-            let events = Arc::new(EventsTracker::new());
+            let events = Arc::new(EventsTracker::with_activity(registry.activity()));
 
             let notify_config = config.clone();
 
@@ -1216,11 +1995,38 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             let island_manager = manager.clone();
 
+            let stats_hist = Arc::new(stats_history::StatsHistory::new());
+
+            // Background poller: sample container_stats for all running
+            // workspaces every 2s, feeding the sparkline ring buffer.
+            {
+                let poller_manager = manager.clone();
+                let poller_hist = stats_hist.clone();
+                tauri::async_runtime::spawn(async move {
+                    loop {
+                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                        if let Ok(containers) = poller_manager.list_workspace_containers().await {
+                            for wc in containers {
+                                if wc.status.state == lifecycle::ContainerState::Running {
+                                    let docker =
+                                        poller_manager.workspace_container(&wc.key).docker_client();
+                                    if let Ok(stats) = docker.stats().await {
+                                        poller_hist.push(&wc.key, &stats);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+
             app.manage(AppState {
                 manager: manager.clone(),
                 registry,
                 config,
                 events: events.clone(),
+                stats_history: stats_hist,
+                vault: app_vault,
             });
 
             // macOS: feed the native Dynamic Island a RICH snapshot while it is on
@@ -1292,20 +2098,25 @@ pub fn run() {
                         let rows = activity
                             .into_iter()
                             .map(|a| {
-                                let status = if waiting.contains(&a.session) {
-                                    island::IslandStatus::Wait
-                                } else if matches!(a.state, activity::ActivityState::Working) {
-                                    island::IslandStatus::Live
-                                } else {
-                                    island::IslandStatus::Idle
+                                let status = match a.session_status {
+                                    activity::SessionStatus::Done => island::IslandStatus::Done,
+                                    activity::SessionStatus::Failed => island::IslandStatus::Err,
+                                    activity::SessionStatus::Awaiting => island::IslandStatus::Wait,
+                                    _ if waiting.contains(&a.session) => island::IslandStatus::Wait,
+                                    _ if matches!(a.state, activity::ActivityState::Working) => {
+                                        island::IslandStatus::Live
+                                    },
+                                    _ => island::IslandStatus::Idle,
                                 };
                                 let metric = metric_cache.get(&a.session).cloned();
                                 island::IslandRow {
                                     label: a.alias.unwrap_or_else(|| a.session.clone()),
-                                    session: a.session,
+                                    session: a.session.clone(),
                                     agent: a.cli,
                                     status,
                                     metric,
+                                    model: None,
+                                    branch: a.git_branch,
                                 }
                             })
                             .collect();
@@ -1355,8 +2166,12 @@ pub fn run() {
             container_restart,
             docker_info,
             app_info,
+            host_stats,
+            runtime_versions,
             get_config,
             set_config,
+            add_prompt_template,
+            remove_prompt_template,
             pick_directory,
             set_workspace_dir,
             workspace_info,
@@ -1369,6 +2184,7 @@ pub fn run() {
             agent_key_status,
             agent_versions,
             container_stats,
+            container_stats_history,
             container_logs,
             container_mounts,
             container_image,
@@ -1381,9 +2197,19 @@ pub fn run() {
             container_git_diff_staged,
             container_git_diff_unstaged,
             container_git_stage_all,
+            container_git_stage_file,
+            container_git_unstage_file,
+            container_git_stage_hunk,
             container_git_commit,
             container_git_open_pr,
+            set_agent_model,
+            set_permission_mode,
+            set_permission_rules,
+            toggle_mcp_server,
             container_top,
+            container_env,
+            container_repos,
+            container_git_clone,
             claude_usage,
             claude_sessions,
             claude_session_usage,
@@ -1393,6 +2219,8 @@ pub fn run() {
             list_sessions,
             create_session,
             kill_session,
+            stop_all_agents,
+            rolling_usage,
             rename_session,
             attach_session,
             pty_write,
@@ -1402,7 +2230,7 @@ pub fn run() {
             open_companion,
             close_companion,
             focus_session_from_companion,
-            // Phase-0 completion contract (stubs; BE track fills bodies).
+            // Phase-0 completion contract: live command handlers.
             pending_prompts,
             respond_prompt,
             session_activity_history,
@@ -1413,6 +2241,17 @@ pub fn run() {
             github_status,
             github_repos,
             check_update,
+            search_transcripts,
+            list_providers,
+            add_provider,
+            remove_provider,
+            update_provider,
+            // Vault: OS-keychain credential management for built-in agents + GitHub.
+            vault_store_key,
+            vault_delete_key,
+            vault_has_key,
+            vault_initiate_oauth,
+            vault_complete_login,
         ])
         .run(tauri::generate_context!())
         .expect("error while running codehub");

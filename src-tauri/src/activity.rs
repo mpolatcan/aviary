@@ -1,19 +1,9 @@
-//! Per-session activity signal, derived from pane output flow.
+//! Per-session activity signal, derived from pane output flow + hook events.
 //!
-//! This is the honest, CLI-agnostic foundation for "what is each agent doing
-//! right now". The agent TUIs (Claude Code / Codex / Antigravity) stream output
-//! continuously while they work — thinking spinners, token streaming, tool
-//! output all produce bytes — and fall quiet when they finish a turn or wait for
-//! input. So the presence of recent output is a robust proxy for "working", and
-//! its absence for "idle/quiet", WITHOUT parsing any CLI-specific format.
-//!
-//! What this deliberately does NOT claim: it cannot tell *idle* apart from
-//! *waiting-for-approval* apart from *done* (all three are simply "quiet"), and
-//! it does not extract tokens / cost / turn counts — those live only inside each
-//! CLI's own session and would need a per-CLI parser or the CLI's session files
-//! (a separate effort; see BACKEND_PLAN.md). A TUI that animates while genuinely
-//! idle could read as "working"; that is the known limit of an output-flow
-//! signal and is preferred over fabricating a richer state we cannot observe.
+//! The output-flow signal (bytes from the pty pump) gives coarse working/idle.
+//! The hook-driven `SessionStatus` (set by events.rs from agent-native hooks)
+//! adds richer states: Awaiting, Done, Failed. Both are real observations —
+//! nothing is fabricated.
 
 use serde::Serialize;
 use std::collections::HashMap;
@@ -21,33 +11,29 @@ use std::sync::Mutex;
 use std::time::Instant;
 
 /// A session is "working" while output arrived within this window, else "idle".
-/// Sized to bridge the normal gaps between a TUI's repaints during a turn
-/// without latching on so long that a finished turn keeps reading as working.
 const WORKING_GRACE_MS: u64 = 1500;
 
-/// Coarse, observable activity state. Intentionally only two values — see the
-/// module note on why we don't fabricate approve/done/error here.
+/// Coarse, observable activity state from output flow.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ActivityState {
-    /// Output arrived within the grace window — the agent is producing.
     Working,
-    /// No output for longer than the grace window — quiet (idle / waiting / done).
     Idle,
 }
 
-/// One session's activity, as the frontend sees it. `idleMs` is how long since
-/// the last output byte (0 while actively producing, or before any output);
-/// `bytes` is the total output observed for the session since attach (a cheap,
-/// real throughput hint). `cli` / `alias` are the agent identity registered at
-/// session creation — they let a satellite view (the always-on-top companion,
-/// which runs in its own webview and cannot read the main store) render the
-/// agent glyph + name without re-deriving them. `claudeId` is the Claude
-/// `--session-id` (or resumed id) the session launched with, so that satellite
-/// view can read this session's own transcript for a live token tally
-/// (`claude_session_usage`) — `None` for non-Claude agents. All `Option` so an
-/// entry created by output before any label is registered still serializes
-/// honestly.
+/// Richer session lifecycle status, driven by agent-native hook events.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum SessionStatus {
+    #[default]
+    Running,
+    Idle,
+    Awaiting,
+    Done,
+    Failed,
+}
+
+/// One session's activity snapshot as the frontend sees it.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionActivity {
@@ -58,23 +44,28 @@ pub struct SessionActivity {
     pub cli: Option<String>,
     pub alias: Option<String>,
     pub claude_id: Option<String>,
+    pub task_description: Option<String>,
+    pub turn_elapsed_ms: Option<u64>,
+    pub session_status: SessionStatus,
+    pub failure_reason: Option<String>,
+    pub git_branch: Option<String>,
 }
 
 #[derive(Default)]
 struct Entry {
-    /// `None` until the first output byte — a session can be registered (created)
-    /// before it has produced anything, and that pre-output window reads as idle.
     last_output: Option<Instant>,
     bytes: u64,
     cli: Option<String>,
     alias: Option<String>,
     claude_id: Option<String>,
+    task_description: Option<String>,
+    turn_started_at: Option<Instant>,
+    session_status: SessionStatus,
+    failure_reason: Option<String>,
+    git_branch: Option<String>,
 }
 
-/// Shared, in-memory per-session activity. Fed from the pty output pump (via
-/// [`mark`](ActivityTracker::mark)) and read by the `session_activity` command.
-/// Uses a std `Mutex` because every critical section is a tiny synchronous map
-/// op with no `.await` held across the lock.
+/// Shared, in-memory per-session activity tracker.
 #[derive(Default)]
 pub struct ActivityTracker {
     inner: Mutex<HashMap<String, Entry>>,
@@ -85,49 +76,66 @@ impl ActivityTracker {
         Self::default()
     }
 
-    /// Lock the inner map, recovering a poisoned lock — the data is plain
-    /// counters, so a panic mid-update can't leave it logically corrupt.
     fn lock_inner(&self) -> std::sync::MutexGuard<'_, HashMap<String, Entry>> {
         self.inner.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// Record `len` output bytes for `session` at the current instant. Creates
-    /// the entry on first output. A poisoned lock is recovered (the data is
-    /// plain counters — a panic mid-update can't leave it logically corrupt).
+    /// Record output bytes. Tracks turn start on idle→working transition.
     pub fn mark(&self, session: &str, len: usize) {
         let mut map = self.lock_inner();
         let entry = map.entry(session.to_string()).or_default();
+        let was_idle = entry
+            .last_output
+            .map(|t| t.elapsed().as_millis() as u64 >= WORKING_GRACE_MS)
+            .unwrap_or(true);
         entry.last_output = Some(Instant::now());
         entry.bytes = entry.bytes.saturating_add(len as u64);
+        if was_idle {
+            entry.turn_started_at = Some(Instant::now());
+        }
     }
 
-    /// Attach the agent identity (cli + display alias, and the Claude transcript
-    /// id for Claude sessions) to a session. Called when the session is created
-    /// so the activity snapshot can carry who each session is — not just its tmux
-    /// name — and, for Claude, which transcript holds its live token tally.
-    /// Pre-creates an idle entry if output hasn't started yet, so a freshly
-    /// spawned agent shows up immediately.
-    pub fn register(&self, session: &str, cli: &str, alias: &str, claude_id: Option<&str>) {
+    /// Attach agent identity at session creation.
+    pub fn register(
+        &self,
+        session: &str,
+        cli: &str,
+        alias: &str,
+        claude_id: Option<&str>,
+        git_branch: Option<&str>,
+        task_description: Option<&str>,
+    ) {
         let mut map = self.lock_inner();
         let entry = map.entry(session.to_string()).or_default();
         entry.cli = Some(cli.to_string());
         entry.alias = Some(alias.to_string());
         entry.claude_id = claude_id.map(|s| s.to_string());
+        entry.git_branch = git_branch.map(|s| s.to_string());
+        entry.task_description = task_description.map(|s| s.to_string());
     }
 
-    /// Forget a session (its tmux session was killed / pane detached). Keeps the
-    /// snapshot from reporting activity for sessions that no longer exist.
+    /// Update session status from hook events.
+    pub fn set_status(&self, session: &str, status: SessionStatus, reason: Option<String>) {
+        let mut map = self.lock_inner();
+        if let Some(entry) = map.get_mut(session) {
+            entry.session_status = status;
+            if reason.is_some() {
+                entry.failure_reason = reason;
+            }
+        }
+    }
+
+    /// Forget a session.
     pub fn remove(&self, session: &str) {
         self.lock_inner().remove(session);
     }
 
-    /// Current activity for every tracked session, state derived at read time.
+    /// Current activity for every tracked session.
     pub fn snapshot(&self) -> Vec<SessionActivity> {
         let now = Instant::now();
         self.lock_inner()
             .iter()
             .map(|(session, e)| {
-                // No output yet → idle, idle_ms 0 (unknown rather than fabricated).
                 let idle_ms = e
                     .last_output
                     .map(|t| now.duration_since(t).as_millis() as u64)
@@ -137,6 +145,9 @@ impl ActivityTracker {
                 } else {
                     ActivityState::Idle
                 };
+                let turn_elapsed_ms = e
+                    .turn_started_at
+                    .map(|t| now.duration_since(t).as_millis() as u64);
                 SessionActivity {
                     session: session.clone(),
                     state,
@@ -145,6 +156,11 @@ impl ActivityTracker {
                     cli: e.cli.clone(),
                     alias: e.alias.clone(),
                     claude_id: e.claude_id.clone(),
+                    task_description: e.task_description.clone(),
+                    turn_elapsed_ms,
+                    session_status: e.session_status,
+                    failure_reason: e.failure_reason.clone(),
+                    git_branch: e.git_branch.clone(),
                 }
             })
             .collect()
@@ -197,7 +213,7 @@ mod tests {
     #[test]
     fn register_attaches_identity_and_survives_output() {
         let t = ActivityTracker::new();
-        t.register("s1", "claude", "Claude 1", Some("abc-123"));
+        t.register("s1", "claude", "Claude 1", Some("abc-123"), None, None);
         t.mark("s1", 7);
         let snap = t.snapshot();
         assert_eq!(snap.len(), 1);
@@ -211,8 +227,7 @@ mod tests {
     #[test]
     fn registered_but_silent_session_is_idle() {
         let t = ActivityTracker::new();
-        // A non-Claude agent registers no transcript id.
-        t.register("s1", "codex", "Codex 1", None);
+        t.register("s1", "codex", "Codex 1", None, None, None);
         let snap = t.snapshot();
         assert_eq!(snap.len(), 1);
         assert_eq!(snap[0].state, ActivityState::Idle);
@@ -220,5 +235,42 @@ mod tests {
         assert_eq!(snap[0].bytes, 0);
         assert_eq!(snap[0].alias.as_deref(), Some("Codex 1"));
         assert_eq!(snap[0].claude_id, None);
+    }
+
+    #[test]
+    fn set_status_updates_session() {
+        let t = ActivityTracker::new();
+        t.register("s1", "claude", "Claude 1", None, None, None);
+        t.set_status("s1", SessionStatus::Awaiting, None);
+        assert_eq!(t.snapshot()[0].session_status, SessionStatus::Awaiting);
+        t.set_status("s1", SessionStatus::Failed, Some("OOM".into()));
+        let snap = t.snapshot();
+        assert_eq!(snap[0].session_status, SessionStatus::Failed);
+        assert_eq!(snap[0].failure_reason.as_deref(), Some("OOM"));
+    }
+
+    #[test]
+    fn turn_elapsed_tracks_working_transition() {
+        let t = ActivityTracker::new();
+        t.mark("s1", 1);
+        let snap = t.snapshot();
+        assert!(snap[0].turn_elapsed_ms.is_some());
+        assert!(snap[0].turn_elapsed_ms.unwrap() < 100);
+    }
+
+    #[test]
+    fn register_with_branch_and_task() {
+        let t = ActivityTracker::new();
+        t.register(
+            "s1",
+            "claude",
+            "Claude 1",
+            None,
+            Some("feat/auth"),
+            Some("Fix login"),
+        );
+        let snap = t.snapshot();
+        assert_eq!(snap[0].git_branch.as_deref(), Some("feat/auth"));
+        assert_eq!(snap[0].task_description.as_deref(), Some("Fix login"));
     }
 }

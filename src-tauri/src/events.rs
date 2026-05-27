@@ -116,14 +116,30 @@ struct SessionState {
 /// Shared, in-memory per-session event state. Filled by the tail task and read
 /// by the Tauri commands via `pending_prompts` / `session_activity_history`
 /// / `respond_prompt`.
-#[derive(Default)]
 pub struct EventsTracker {
     inner: Mutex<HashMap<String, SessionState>>,
+    activity: Option<Arc<crate::activity::ActivityTracker>>,
+}
+
+impl Default for EventsTracker {
+    fn default() -> Self {
+        Self {
+            inner: Mutex::new(HashMap::new()),
+            activity: None,
+        }
+    }
 }
 
 impl EventsTracker {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn with_activity(activity: Arc<crate::activity::ActivityTracker>) -> Self {
+        Self {
+            inner: Mutex::new(HashMap::new()),
+            activity: Some(activity),
+        }
     }
 
     /// Lock the inner map, recovering a poisoned lock — the state is plain data,
@@ -175,29 +191,49 @@ impl EventsTracker {
         let mut map = self.lock_inner();
         let state = map.entry(ev.session.clone()).or_default();
 
-        // Update pending-prompt state.
+        // Update pending-prompt state + session status on the activity tracker.
         match kind {
             KIND_NOTIFICATION => {
-                // notification_type:"permission_prompt" → awaiting input.
-                // notification_type:"idle_prompt" (or unknown) → NOT awaiting.
-                // §7.6: field verified (doc shape provisional but keyed correctly).
                 let is_prompt = ev
                     .notification_type
                     .as_deref()
                     .map(|t| t == "permission_prompt")
-                    // When the type is absent (pre-authed run / doc drift), leave
-                    // pending unchanged — honest-uncertain.
                     .unwrap_or(false);
                 if is_prompt {
                     state.pending = Some(PendingEntry {
                         message: ev.message.clone(),
                         since: ev.at,
                     });
+                    if let Some(ref act) = self.activity {
+                        act.set_status(&ev.session, crate::activity::SessionStatus::Awaiting, None);
+                    }
                 }
             },
             KIND_STOP | KIND_PROMPT_SUBMIT => {
-                // Turn finished or new turn started → clear pending.
                 state.pending = None;
+                if let Some(ref act) = self.activity {
+                    if ev.kind == "StopFailure" {
+                        act.set_status(
+                            &ev.session,
+                            crate::activity::SessionStatus::Failed,
+                            ev.message.clone(),
+                        );
+                    } else if kind == KIND_STOP {
+                        act.set_status(&ev.session, crate::activity::SessionStatus::Idle, None);
+                    } else {
+                        act.set_status(&ev.session, crate::activity::SessionStatus::Running, None);
+                    }
+                }
+            },
+            KIND_PRE_TOOL => {
+                if let Some(ref act) = self.activity {
+                    act.set_status(&ev.session, crate::activity::SessionStatus::Running, None);
+                }
+            },
+            KIND_SESSION_END => {
+                if let Some(ref act) = self.activity {
+                    act.set_status(&ev.session, crate::activity::SessionStatus::Done, None);
+                }
             },
             _ => {},
         }
