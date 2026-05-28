@@ -1,5 +1,6 @@
 import { motion } from "motion/react";
-import { useEffect, useState } from "react";
+import type { DragEvent } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { PaneMount } from "../../components/PaneMount";
 import { IconBtn } from "../../components/primitives/IconBtn";
 import { StatusDot } from "../../components/primitives/StatusDot";
@@ -8,27 +9,33 @@ import { slideUp } from "../../hooks/useSlideIn";
 import { useOverlay } from "../../lib/overlay";
 import { activeWorkspace, useStore } from "../../lib/store";
 
-// Docked bottom shell panel (design/screens/hub-states.jsx ShellPanel). It
-// mounts a real reusable tmux shell for the active workspace container; it is
-// intentionally not part of the split-grid tree.
+interface ShellTab {
+  name: string;
+  label: string;
+}
+
 export function ShellPanel() {
   const ws = useStore(activeWorkspace);
   const status = useStore((s) => s.status);
   const ensureDockedShell = useStore((s) => s.ensureDockedShell);
+  const createExtraShell = useStore((s) => s.createExtraShell);
   const setShell = useOverlay((s) => s.setShell);
-  const [session, setSession] = useState<string | null>(null);
+  const [tabs, setTabs] = useState<ShellTab[]>([]);
+  const [activeIdx, setActiveIdx] = useState(0);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const initDone = useRef(false);
 
   const running = status?.state === "running";
   const containerKey = ws?.containerKey ?? null;
 
   useEffect(() => {
     let alive = true;
-    setSession(null);
+    setTabs([]);
+    setActiveIdx(0);
     setErr(null);
-    if (!containerKey) return;
-    if (!running) {
+    initDone.current = false;
+    if (!containerKey || !running) {
       setLoading(false);
       return;
     }
@@ -37,8 +44,13 @@ export function ShellPanel() {
     ensureDockedShell()
       .then((name) => {
         if (!alive) return;
-        setSession(name);
-        setErr(name ? null : "No workspace shell is available.");
+        if (name) {
+          setTabs([{ name, label: "Shell 1" }]);
+          setActiveIdx(0);
+        } else {
+          setErr("No workspace shell is available.");
+        }
+        initDone.current = true;
       })
       .catch((e) => {
         if (alive) setErr(String(e));
@@ -51,6 +63,53 @@ export function ShellPanel() {
       alive = false;
     };
   }, [containerKey, ensureDockedShell, running]);
+
+  const addTab = useCallback(async () => {
+    try {
+      const name = await createExtraShell();
+      if (!name) return;
+      setTabs((prev) => {
+        const next = [...prev, { name, label: `Shell ${prev.length + 1}` }];
+        setActiveIdx(next.length - 1);
+        return next;
+      });
+    } catch (e) {
+      console.warn("Failed to create extra shell:", e);
+    }
+  }, [createExtraShell]);
+
+  const closeTab = useCallback(
+    (idx: number) => {
+      if (tabs.length <= 1) return;
+      setTabs((prev) => {
+        const next = prev.filter((_, i) => i !== idx);
+        setActiveIdx((a) => (a >= next.length ? next.length - 1 : a > idx ? a - 1 : a));
+        return next;
+      });
+    },
+    [tabs.length],
+  );
+
+  const [dragIdx, setDragIdx] = useState<number | null>(null);
+  const [dropIdx, setDropIdx] = useState<number | null>(null);
+
+  const onDragStart = useCallback((idx: number) => setDragIdx(idx), []);
+  const onDragOver = useCallback((idx: number) => setDropIdx(idx), []);
+  const onDragEnd = useCallback(() => {
+    if (dragIdx !== null && dropIdx !== null && dragIdx !== dropIdx) {
+      setTabs((prev) => {
+        const next = [...prev];
+        const [moved] = next.splice(dragIdx, 1);
+        next.splice(dropIdx, 0, moved);
+        setActiveIdx(dropIdx);
+        return next;
+      });
+    }
+    setDragIdx(null);
+    setDropIdx(null);
+  }, [dragIdx, dropIdx]);
+
+  const activeTab = tabs[activeIdx] ?? null;
 
   return (
     <motion.div
@@ -73,16 +132,55 @@ export function ShellPanel() {
           borderBottom: "1px solid var(--bd-soft)",
           display: "flex",
           alignItems: "center",
-          gap: 7,
+          gap: 4,
           padding: "0 10px",
         }}
       >
         <span style={{ color: "var(--live)", display: "inline-flex" }}>{Ico.terminal}</span>
-        <span style={{ fontSize: 12, color: "var(--fg-0)", fontWeight: 500 }}>Shell</span>
-        <div style={{ display: "flex", gap: 2, marginLeft: 7, minWidth: 0 }}>
-          <ShellTab name={session ? "bash · workspace shell" : "workspace shell"} active />
+        <div
+          className="scroll"
+          style={{
+            display: "flex",
+            gap: 2,
+            marginLeft: 4,
+            minWidth: 0,
+            flex: 1,
+            overflow: "auto hidden",
+          }}
+        >
+          {tabs.map((tab, i) => (
+            <ShellTabBtn
+              key={tab.name}
+              label={tab.label}
+              active={i === activeIdx}
+              closable={tabs.length > 1}
+              dragging={dragIdx === i}
+              dropTarget={dropIdx === i && dragIdx !== i}
+              onClick={() => setActiveIdx(i)}
+              onClose={() => closeTab(i)}
+              onDragStart={() => onDragStart(i)}
+              onDragOver={() => onDragOver(i)}
+              onDragEnd={onDragEnd}
+            />
+          ))}
+          {tabs.length === 0 && !loading && (
+            <span
+              className="mono"
+              style={{ fontSize: 11, color: "var(--fg-3)", padding: "2px 8px" }}
+            >
+              workspace shell
+            </span>
+          )}
         </div>
-        <span style={{ flex: 1 }} />
+        <IconBtn
+          title="New shell tab"
+          style={{ width: 22, height: 22 }}
+          onClick={addTab}
+          disabled={!running || loading}
+        >
+          {Ico.plus}
+        </IconBtn>
+        <span style={{ width: 1, height: 14, background: "var(--bd-soft)", flexShrink: 0 }} />
         <span
           className="mono"
           style={{
@@ -92,21 +190,22 @@ export function ShellPanel() {
             minWidth: 0,
             color: "var(--fg-3)",
             fontSize: 10,
+            flexShrink: 0,
           }}
           title={status?.name ?? containerKey ?? undefined}
         >
           <StatusDot status={running ? "live" : "off"} pulse={running} />
-          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          <span
+            style={{
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              maxWidth: 140,
+            }}
+          >
             {status?.name ?? containerKey ?? "no workspace"}
           </span>
         </span>
-        <IconBtn
-          title="Detach to grid pane (not available yet)"
-          disabled
-          style={{ width: 22, height: 22 }}
-        >
-          {Ico.expand}
-        </IconBtn>
         <IconBtn
           title="Hide shell (⌘⇧B)"
           onClick={() => setShell(false)}
@@ -117,8 +216,8 @@ export function ShellPanel() {
       </div>
 
       <div className="pane-body" style={{ background: "var(--bg-0)" }}>
-        {session ? (
-          <PaneMount session={session} />
+        {activeTab ? (
+          <PaneMount session={activeTab.name} />
         ) : (
           <ShellEmpty loading={loading} running={running} err={err} />
         )}
@@ -127,10 +226,46 @@ export function ShellPanel() {
   );
 }
 
-function ShellTab({ name, active }: { name: string; active?: boolean }) {
+function ShellTabBtn({
+  label,
+  active,
+  closable,
+  dragging,
+  dropTarget,
+  onClick,
+  onClose,
+  onDragStart,
+  onDragOver,
+  onDragEnd,
+}: {
+  label: string;
+  active: boolean;
+  closable: boolean;
+  dragging: boolean;
+  dropTarget: boolean;
+  onClick: () => void;
+  onClose: () => void;
+  onDragStart: () => void;
+  onDragOver: () => void;
+  onDragEnd: () => void;
+}) {
   return (
     <span
-      title={name}
+      draggable
+      onDragStart={(e: DragEvent) => {
+        e.dataTransfer.effectAllowed = "move";
+        onDragStart();
+      }}
+      onDragOver={(e: DragEvent) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
+        onDragOver();
+      }}
+      onDrop={(e: DragEvent) => {
+        e.preventDefault();
+        onDragEnd();
+      }}
+      onDragEnd={onDragEnd}
       style={{
         display: "inline-flex",
         alignItems: "center",
@@ -139,22 +274,62 @@ function ShellTab({ name, active }: { name: string; active?: boolean }) {
         borderRadius: 4,
         fontFamily: "var(--mono)",
         fontSize: 11,
-        background: active ? "var(--bg-3)" : "transparent",
+        background: dropTarget
+          ? "color-mix(in oklab, var(--pri) 20%, var(--bg-3))"
+          : active
+            ? "var(--bg-3)"
+            : "transparent",
         color: active ? "var(--fg-0)" : "var(--fg-2)",
-        border: active ? "1px solid var(--bd-soft)" : "1px solid transparent",
+        border: dropTarget
+          ? "1px solid var(--pri)"
+          : active
+            ? "1px solid var(--bd-soft)"
+            : "1px solid transparent",
         minWidth: 0,
+        cursor: dragging ? "grabbing" : "grab",
+        whiteSpace: "nowrap",
+        flexShrink: 0,
+        opacity: dragging ? 0.4 : 1,
+        transition: "background .12s, border-color .12s, opacity .12s",
       }}
     >
-      <span
+      <button
+        type="button"
+        onClick={onClick}
         style={{
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap",
-          maxWidth: 160,
+          background: "transparent",
+          border: "none",
+          padding: 0,
+          cursor: "inherit",
+          color: "inherit",
+          fontFamily: "inherit",
+          fontSize: "inherit",
         }}
       >
-        {name}
-      </span>
+        {label}
+      </button>
+      {closable && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onClose();
+          }}
+          title="Close shell tab"
+          style={{
+            background: "transparent",
+            border: "none",
+            padding: 0,
+            cursor: "pointer",
+            color: "var(--fg-3)",
+            fontSize: 11,
+            lineHeight: 1,
+            display: "inline-flex",
+          }}
+        >
+          ×
+        </button>
+      )}
     </span>
   );
 }

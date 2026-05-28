@@ -2,7 +2,7 @@
  * Theme — dark/light token switch (Tier 0, client-only).
  *
  * Toggles the `.dark`/`.light` class on <html>, which flips the design tokens
- * in tokens.css. Persisted to localStorage for now; per BACKEND_PLAN.md this
+ * in tokens.css. Persisted to localStorage for now; this
  * migrates to the Tier-2 config store (`get_config`/`set_config`) when that
  * lands, at which point localStorage becomes the offline fallback. No backend.
  */

@@ -6,6 +6,7 @@ import { Logo } from "../../components/primitives/Logo";
 import { StatusDot } from "../../components/primitives/StatusDot";
 import { Tip } from "../../components/primitives/Tip";
 import { Ico } from "../../components/primitives/icons";
+import { fmtTokens, useSessionUsage } from "../../hooks/useSessionUsage";
 import { MODE_BY_ID, SPEC_BY_CLI } from "../../lib/catalog";
 import { useOverlay } from "../../lib/overlay";
 import { confirmCloseRunningSession, useStore } from "../../lib/store";
@@ -27,7 +28,7 @@ function dirName(path: string | undefined): string | null {
 
 // design NAV_ITEMS — top-level views. `view` is the live HubView each maps to;
 // `badge` resolves to a real count (sessions) or undefined.
-type NavId = "hub" | "dashboard" | "workspaces" | "usage" | "settings";
+type NavId = "hub" | "dashboard" | "workspaces" | "settings";
 
 export function HubSidebar() {
   const collapsed = useStore((s) => s.sidebarCollapsed);
@@ -51,7 +52,11 @@ function useNav() {
   const view = useStore((s) => s.view);
   const setView = useStore((s) => s.setView);
   const setSettingsSection = useStore((s) => s.setSettingsSection);
-  const sessionCount = useStore((s) => Object.keys(s.sessionMeta).length);
+  // Count agents (non-shell), matching the Dashboard header's "N agents" and the
+  // running-card "of N sessions" — shell panels aren't agents.
+  const sessionCount = useStore(
+    (s) => Object.values(s.sessionMeta).filter((m) => m.cli !== "shell").length,
+  );
 
   const activeId: NavId | null =
     view === "hub"
@@ -60,11 +65,9 @@ function useNav() {
         ? "dashboard"
         : view === "containers"
           ? "workspaces"
-          : view === "usage"
-            ? "usage"
-            : view === "settings"
-              ? "settings"
-              : null;
+          : view === "settings"
+            ? "settings"
+            : null;
 
   const items: Array<{
     id: NavId;
@@ -82,7 +85,6 @@ function useNav() {
       go: () => setView("dashboard"),
     },
     { id: "workspaces", label: "Workspaces", icon: Ico.container, go: () => setView("containers") },
-    { id: "usage", label: "Usage", icon: Ico.cpu, go: () => setView("usage") },
     {
       id: "settings",
       label: "Settings",
@@ -381,15 +383,36 @@ function SessionRow({
   const focused = workspaceFocused === session;
   const working = activity?.state === "working";
   const status = awaiting ? "wait" : working ? "live" : focused ? "live" : "idle";
+  const claudeId = activity?.claudeId ?? (meta.cli === "claude" ? meta.claudeId : undefined);
+  const usage = useSessionUsage(claudeId ?? null);
+  const isAgent = meta.cli !== "shell";
 
   return (
     <div
-      className={`side-item${focused ? " active" : ""}`}
-      style={{ alignItems: "flex-start", padding: "8px 10px" }}
+      className={`side-item${focused ? " active" : ""}${working ? " session-working" : ""}`}
+      style={{
+        alignItems: "flex-start",
+        padding: "8px 10px",
+        position: "relative",
+        overflow: "hidden",
+        ...(working
+          ? {
+              background: "color-mix(in oklab, var(--live) 6%, transparent)",
+              borderLeft: "2px solid var(--live)",
+              paddingLeft: 8,
+            }
+          : awaiting
+            ? {
+                background: "color-mix(in oklab, var(--wait) 8%, transparent)",
+                borderLeft: "2px solid var(--wait)",
+                paddingLeft: 8,
+              }
+            : {}),
+      }}
       onClick={() => focusSession(session)}
     >
       <div style={{ display: "flex", alignItems: "center", paddingTop: 1 }}>
-        <StatusDot status={status} pulse={working || focused} />
+        <StatusDot status={status} pulse={working || awaiting || focused} />
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 2 }}>
@@ -408,6 +431,23 @@ function SessionRow({
             {meta.alias}
           </span>
           {badge && <span className={`mode-badge badge-${meta.mode}`}>{badge}</span>}
+          {awaiting && (
+            <span
+              className="mono"
+              style={{
+                fontSize: 9,
+                fontWeight: 600,
+                color: "var(--wait)",
+                background: "color-mix(in oklab, var(--wait) 15%, transparent)",
+                padding: "1px 5px",
+                borderRadius: 3,
+                flexShrink: 0,
+                letterSpacing: "0.03em",
+              }}
+            >
+              INPUT
+            </span>
+          )}
           <span style={{ flex: 1 }} />
           <button
             type="button"
@@ -434,19 +474,43 @@ function SessionRow({
           </button>
         </div>
         <div
+          className="mono tnum"
           style={{
-            fontSize: 11,
-            color: "var(--fg-2)",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
+            fontSize: 10.5,
+            color: working ? "var(--live)" : awaiting ? "var(--wait)" : "var(--fg-3)",
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
           }}
         >
-          {spec.label}
+          <span style={working ? { fontWeight: 500 } : undefined}>
+            {awaiting
+              ? "needs input"
+              : working
+                ? "working"
+                : activity
+                  ? `idle ${fmtIdle(activity.idleMs)}`
+                  : spec.label}
+          </span>
+          {isAgent && usage && (
+            <>
+              <span style={{ color: "var(--fg-3)" }}>·</span>
+              <span style={{ color: "var(--fg-3)" }}>
+                {usage.turns}t · {fmtTokens(usage.tokensIn + usage.tokensOut)} tok
+              </span>
+            </>
+          )}
         </div>
       </div>
     </div>
   );
+}
+
+function fmtIdle(ms: number): string {
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m`;
+  return `${Math.floor(s / 3600)}h`;
 }
 
 // ── footer — design's account row, fed by real runtime identity ──────────────

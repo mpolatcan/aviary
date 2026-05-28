@@ -3,6 +3,7 @@ import { CLIS } from "../lib/catalog";
 import { type AppInfo, type ImageInfo, type UpdateStatus, ipc } from "../lib/ipc";
 import { useOverlay } from "../lib/overlay";
 import { useStore } from "../lib/store";
+import { Button } from "../ui/button";
 import { Logo } from "./primitives/Logo";
 
 // About CodeHub — a modal "about this app", ported from design/screens/about.jsx.
@@ -205,7 +206,8 @@ export function AboutDialog() {
         <div
           style={{
             padding: "26px 28px 22px",
-            background: "linear-gradient(135deg, oklch(0.25 0.06 250), var(--bg-2))",
+            background:
+              "linear-gradient(135deg, color-mix(in oklab, var(--pri) 16%, var(--bg-2)), var(--bg-2))",
             display: "flex",
             alignItems: "center",
             gap: 18,
@@ -294,23 +296,14 @@ export function AboutDialog() {
               </div>
             </div>
           )}
-          <button
-            type="button"
+          <Button
+            variant="outline"
+            size="xs"
+            className="mono self-start"
             onClick={close}
-            className="mono"
-            style={{
-              alignSelf: "flex-start",
-              padding: "3px 8px",
-              borderRadius: 6,
-              border: "1px solid var(--bd)",
-              background: "var(--bg-1)",
-              color: "var(--fg-2)",
-              fontSize: 11,
-              cursor: "pointer",
-            }}
           >
             esc
-          </button>
+          </Button>
         </div>
 
         {/* environment — every field is real */}
@@ -416,38 +409,12 @@ export function AboutDialog() {
           <span style={{ color: "var(--fg-3)" }}>·</span>
           <span>built on Tauri, tmux, Docker, and Geist Mono</span>
           <span style={{ flex: 1 }} />
-          <button
-            type="button"
-            onClick={() => copyAbout("Tauri, tmux, Docker, Geist Mono")}
-            style={{
-              padding: "4px 9px",
-              borderRadius: 6,
-              border: "1px solid var(--bd)",
-              background: "transparent",
-              color: "var(--fg-1)",
-              fontSize: 11,
-              cursor: "pointer",
-              flexShrink: 0,
-            }}
-          >
+          <Button variant="outline" size="xs" onClick={() => copyAbout("Tauri, tmux, Docker, Geist Mono")}>
             Credits
-          </button>
-          <button
-            type="button"
-            onClick={() => copyAbout("MIT licensed")}
-            style={{
-              padding: "4px 9px",
-              borderRadius: 6,
-              border: "1px solid var(--bd)",
-              background: "transparent",
-              color: "var(--fg-1)",
-              fontSize: 11,
-              cursor: "pointer",
-              flexShrink: 0,
-            }}
-          >
+          </Button>
+          <Button variant="outline" size="xs" onClick={() => copyAbout("MIT licensed")}>
             License
-          </button>
+          </Button>
         </div>
 
         {/* footer — honest update status. "Check now" re-runs check_update; the
@@ -496,67 +463,21 @@ export function AboutDialog() {
           >
             {REPO_RELEASES}
           </span>
-          <button
-            type="button"
-            onClick={checkNow}
-            disabled={updateState === "checking"}
-            style={{
-              padding: "6px 14px",
-              borderRadius: 7,
-              border: "1px solid var(--bd)",
-              background: "var(--bg-2)",
-              color: "var(--fg-1)",
-              fontSize: 12,
-              cursor: updateState === "checking" ? "default" : "pointer",
-              opacity: updateState === "checking" ? 0.6 : 1,
-              flexShrink: 0,
-              whiteSpace: "nowrap",
-            }}
-          >
+          <Button variant="outline" size="sm" onClick={checkNow} disabled={updateState === "checking"}>
             Check now
-          </button>
+          </Button>
           {hasUpdate ? (
-            <button
-              type="button"
-              // Install is wired to the BE updater (tauri-plugin-updater); until
-              // that lands `hasUpdate` is never true, so this never renders with a
-              // dead action. When it does, it triggers the real install+restart.
-              onClick={() => {
-                void ipc.checkUpdate();
-              }}
-              style={{
-                padding: "6px 14px",
-                borderRadius: 7,
-                border: "none",
-                background: "var(--live)",
-                color: "var(--bg-0)",
-                fontSize: 12,
-                fontWeight: 600,
-                cursor: "pointer",
-                flexShrink: 0,
-                whiteSpace: "nowrap",
-              }}
+            <Button
+              variant="success"
+              size="sm"
+              onClick={() => { void ipc.checkUpdate(); }}
             >
               Install v{update?.available} &amp; restart
-            </button>
+            </Button>
           ) : (
-            <button
-              type="button"
-              onClick={close}
-              style={{
-                padding: "6px 14px",
-                borderRadius: 7,
-                border: "1px solid var(--bd)",
-                background: "var(--bg-2)",
-                color: "var(--fg-0)",
-                fontSize: 12,
-                cursor: "pointer",
-                flexShrink: 0,
-                whiteSpace: "nowrap",
-              }}
-            >
+            <Button variant="outline" size="sm" onClick={close}>
               Close
-            </button>
+            </Button>
           )}
         </div>
       </div>

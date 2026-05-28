@@ -17,6 +17,7 @@ import {
 } from "../../lib/ipc";
 import { useOverlay } from "../../lib/overlay";
 import { useStore } from "../../lib/store";
+import { Input } from "../../ui/input";
 
 // Right activity rail, aligned with design/screens/main-hub-a.jsx:
 // header + live badge + awaiting-input cards + activity feed. Data remains real
@@ -24,7 +25,7 @@ import { useStore } from "../../lib/store";
 // honest-empty states until a backend source exists.
 export function ActivityRail() {
   const running = useStore((s) => s.status?.state === "running");
-  const setActivityRail = useOverlay((s) => s.setActivityRail);
+  const setFiles = useOverlay((s) => s.setFiles);
   const [filter, setFilter] = useState("");
   const [showFilter, setShowFilter] = useState(false);
   const filterRef = useRef<HTMLInputElement>(null);
@@ -98,7 +99,7 @@ export function ActivityRail() {
         <IconBtn
           title="Collapse activity panel (⌘⇧A)"
           style={{ width: 22, height: 22 }}
-          onClick={() => setActivityRail(false)}
+          onClick={() => setFiles(false)}
         >
           {Ico.sidebarR}
         </IconBtn>
@@ -106,7 +107,7 @@ export function ActivityRail() {
 
       {showFilter && (
         <div style={{ padding: "6px 10px", borderBottom: "1px solid var(--bd-soft)" }}>
-          <input
+          <Input
             ref={filterRef}
             type="text"
             value={filter}
@@ -116,17 +117,7 @@ export function ActivityRail() {
             }}
             placeholder="filter sessions…"
             spellCheck={false}
-            style={{
-              width: "100%",
-              background: "var(--bg-2)",
-              border: "1px solid var(--bd)",
-              borderRadius: 5,
-              padding: "4px 8px",
-              fontSize: 11,
-              color: "var(--fg-1)",
-              fontFamily: "var(--mono)",
-              outline: "none",
-            }}
+            className="mono h-auto rounded-[5px] px-2 py-1 text-[11px]"
           />
         </div>
       )}

@@ -1,5 +1,4 @@
-//! Shared IPC response types for the Phase-0 completion contract
-//! (COMPLETION_PLAN.md §3.2).
+//! Shared IPC response types for the Phase-0 completion contract.
 //!
 //! Defined here (rather than in lib.rs) so both `lib.rs` (Tauri commands) and
 //! `events.rs` (hook subsystem) can import them without circular dependency.

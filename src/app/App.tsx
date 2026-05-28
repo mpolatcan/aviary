@@ -4,20 +4,20 @@ import { AboutDialog } from "./components/AboutDialog";
 import { Grid } from "./components/Grid";
 import { SpawnModal } from "./components/SpawnModal";
 import { ActionBar } from "./components/hub/ActionBar";
-import { ActivityRail } from "./components/hub/ActivityRail";
 import { BusyOverlay } from "./components/hub/BusyOverlay";
 import { CommandPalette } from "./components/hub/CommandPalette";
 import { DiffViewer } from "./components/hub/DiffViewer";
+import { FilePreview } from "./components/hub/FilePreview";
 import { FilesBrowser } from "./components/hub/FilesBrowser";
 import { GroupsBar } from "./components/hub/GroupsBar";
 import { HubSidebar } from "./components/hub/HubSidebar";
 import { HubStatusBar } from "./components/hub/HubStatusBar";
 import { HubTabs } from "./components/hub/HubTabs";
+import { PromptToasts } from "./components/hub/PromptToasts";
 import { RuntimeBanner } from "./components/hub/RuntimeBanner";
 import { ShellPanel } from "./components/hub/ShellPanel";
 import { Shortcuts } from "./components/hub/Shortcuts";
 import { WorkspaceBar } from "./components/hub/WorkspaceBar";
-import { Ico } from "./components/primitives/icons";
 import { useActivityPoll } from "./hooks/useActivityPoll";
 import { useAgentEvents } from "./hooks/useAgentEvents";
 import { useContainerStatsPoll } from "./hooks/useContainerStatsPoll";
@@ -35,7 +35,7 @@ import { NewWorkspace } from "./screens/NewWorkspace";
 import { ResumeDrawer } from "./screens/Resume";
 import { SessionDetail } from "./screens/SessionDetail";
 import { Settings } from "./screens/Settings";
-import { Usage } from "./screens/Usage";
+
 import { Welcome } from "./screens/Welcome";
 
 // App shell. The left sidebar is always present; the main region swaps on the
@@ -103,8 +103,6 @@ export function App() {
         <Settings />
       ) : view === "dashboard" ? (
         <Dashboard />
-      ) : view === "usage" ? (
-        <Usage />
       ) : (
         <HubView />
       )}
@@ -121,36 +119,28 @@ export function App() {
   );
 }
 
-// The Hub view: workspace tabs + per-pane terminal grid + activity rail. Splits,
-// rename, keyboard shortcuts and lifecycle wiring are preserved from the vanilla
-// shell — only the chrome is reskinned.
+// The Hub view: workspace tabs + per-pane terminal grid. Activity info is now
+// shown inline in the sidebar's session rows; file preview + diff dock on the
+// right as independent panels.
 function HubView() {
   const active = useStore(activeWorkspace);
   const openLaunch = useLauncher((s) => s.open);
-  // No tab open → the launcher. With saved workspaces, show the Welcome picker;
-  // on a cold first run with none, the original setup hero.
-  const hasSaved = useStore((s) => (s.config?.savedWorkspaces?.length ?? 0) > 0);
-  // Docked utility panels (design hub-states FilesPanel / DiffPanel), toggled
-  // from the ActionBar (⌘E / ⌘D) or the activity rail's Changes list. They dock
-  // as flex siblings of <main> — Files on the left, Diff on the right just
-  // inside the activity rail — so the tab bar + status bar stay main-width.
+  const hasSaved = useStore(
+    (s) => (s.config?.savedWorkspaces?.length ?? 0) > 0 || (s.workspaceContainers?.length ?? 0) > 0,
+  );
+  const initialLoadDone = useStore(
+    (s) => s.workspaceContainers !== null && s.dockerInfo !== null,
+  );
   const files = useOverlay((s) => s.files);
   const setFiles = useOverlay((s) => s.setFiles);
   const diff = useOverlay((s) => s.diff);
   const setDiff = useOverlay((s) => s.setDiff);
+  const filePreview = useOverlay((s) => s.filePreview);
+  const setFilePreview = useOverlay((s) => s.setFilePreview);
   const shell = useOverlay((s) => s.shell);
-  // Resume drawer docks at the right, replacing the activity-rail slot (design
-  // resume.jsx). The drawer self-gates on the same flag, so it's null when closed.
   const resume = useOverlay((s) => s.resume);
-  // The drawer can dock left (before the hub) or right (replacing the rail).
   const resumeSide = useOverlay((s) => s.resumeSide);
-  const activityRail = useOverlay((s) => s.activityRail);
-  const setActivityRail = useOverlay((s) => s.setActivityRail);
-  // Real working/idle signal for PaneHead + the rail's Activity section.
   useActivityPoll();
-  // Live awaiting-input + turn-history stream (← agent-native hooks, §7): keeps
-  // pending_prompts (bell dot / toast) + session_activity_history (feed) fresh.
-  // Honest-empty until the BE track lands.
   useAgentEvents();
 
   return (
@@ -166,6 +156,7 @@ function HubView() {
           flexDirection: "column",
           minWidth: 0,
           background: "var(--bg-1)",
+          position: "relative",
         }}
       >
         <RuntimeBanner />
@@ -173,23 +164,22 @@ function HubView() {
         {active ? (
           <>
             <GroupsBar ws={active} />
-            <div className="hub-grid">
+            <div className="hub-grid" style={{ position: "relative" }}>
               <Grid ws={active} />
+              <PromptToasts />
             </div>
             {shell && <ShellPanel />}
-            {/* Design order below the grid: meta strip → pane actions → status. */}
             <WorkspaceBar />
-            {/* Bottom chrome: Files / Shell / Diff + Resume + the spawn CTA. Only
-                with a live pane grid — the empty hero owns the space otherwise. */}
             <ActionBar />
           </>
+        ) : !initialLoadDone ? (
+          <div style={{ flex: 1 }} />
         ) : hasSaved ? (
           <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
             <Welcome />
           </div>
         ) : (
           <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
-            {/* New-agent flow opens the shared launcher anchored in the sidebar. */}
             <EmptyHero
               onNew={(cli) =>
                 openLaunch("newtab", cli ? { dir: "row", preferredCli: cli } : undefined)
@@ -205,23 +195,12 @@ function HubView() {
           <AnimatePresence>
             {diff !== null && <DiffViewer key="diff" path={diff} onClose={() => setDiff(null)} />}
           </AnimatePresence>
-          {resume && resumeSide === "right" ? (
-            <ResumeDrawer />
-          ) : activityRail ? (
-            <ActivityRail />
-          ) : (
-            <button
-              type="button"
-              className="ch-activity-rail-reveal"
-              title="Show activity panel (⌘⇧A)"
-              onClick={() => setActivityRail(true)}
-            >
-              <span style={{ position: "relative", display: "inline-flex" }}>{Ico.bell}</span>
-              <span style={{ display: "inline-flex", transform: "rotate(180deg)" }}>
-                {Ico.sidebarR}
-              </span>
-            </button>
-          )}
+          <AnimatePresence>
+            {filePreview !== null && (
+              <FilePreview key="filepreview" path={filePreview} onClose={() => setFilePreview(null)} />
+            )}
+          </AnimatePresence>
+          {resume && resumeSide === "right" && <ResumeDrawer />}
         </>
       )}
     </>

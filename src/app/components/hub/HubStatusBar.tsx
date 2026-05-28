@@ -23,6 +23,14 @@ function fmtGiB(bytes: number): string {
   return (bytes / 1024 ** 3).toFixed(1);
 }
 
+// Adaptive byte unit for cumulative net I/O — KB for small, MB/GB as it grows,
+// so a long-lived container reads "251 MB" not "257077 KB".
+function fmtBytes(bytes: number): string {
+  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
+  if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(0)} MB`;
+  return `${(bytes / 1024).toFixed(0)} KB`;
+}
+
 // Live cpu/mem/net snapshot, shared by both variants. Reads the single app-wide
 // poll (useContainerStatsPoll) from the store; null until the runtime is up + the
 // first poll lands.
@@ -42,6 +50,9 @@ const barStyle: React.CSSProperties = {
   fontFamily: "var(--mono)",
   fontSize: 11,
   color: "var(--fg-2)",
+  // Clip rather than spill/overlap when side panels narrow the main region.
+  overflow: "hidden",
+  minWidth: 0,
 };
 
 export function HubStatusBar({ variant = "tabs" }: { variant?: "tabs" | "grid" }) {
@@ -99,14 +110,29 @@ function TabsStatusBar() {
             : "—"}
       </span>
       <span className="tnum" title="Network">
-        net {stats ? `↓${(stats.netRx / 1024).toFixed(0)} KB` : "—"}
+        net {stats ? `↓${fmtBytes(stats.netRx)}` : "—"}
       </span>
       <BurnRate />
       <span style={{ flex: 1 }} />
-      <span className="vr" style={{ height: 14 }} />
-      <span style={{ color: "var(--fg-3)" }}>⌘K palette</span>
-      <span style={{ color: "var(--fg-3)" }}>⌘\ split</span>
-      <span style={{ color: "var(--fg-3)" }}>⌘1–9 jump</span>
+      {/* Discoverability hints — shrink/clip first (overflow), so the stats above
+          stay legible when the bar is squeezed by open panels. */}
+      <span
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 14,
+          minWidth: 0,
+          flexShrink: 1,
+          overflow: "hidden",
+          whiteSpace: "nowrap",
+          color: "var(--fg-3)",
+        }}
+      >
+        <span className="vr" style={{ height: 14 }} />
+        <span>⌘K palette</span>
+        <span>⌘\ split</span>
+        <span>⌘1–9 jump</span>
+      </span>
     </div>
   );
 }

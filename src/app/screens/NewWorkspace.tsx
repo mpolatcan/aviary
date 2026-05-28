@@ -6,7 +6,7 @@
  * opening it creates or reuses that workspace's own container. So the design's
  * fabricated surfaces are corrected to the honest ones:
  *   - Step 2 "Container size / $cost / keychain / sleep-30min" → the current
- *     workspace container panel (SharedRuntimePanel): host-env keys, no sizing
+ *     workspace container panel (SharedRuntimePanel): keychain creds, no sizing
  *     to fake. The size/cost/lifecycle rows are dropped, not invented.
  *   - Step 1 "Repositories" (plural, N repos) → one Repository: the real folder
  *     bound at /workspace (RepositoryPicker, the same picker the spawn dialog uses).
@@ -32,6 +32,8 @@ import { type Cli, type ImageInfo, type Mode, ipc } from "@/app/lib/ipc";
 import { useOverlay } from "@/app/lib/overlay";
 import { useStore } from "@/app/lib/store";
 import { Button } from "@/app/ui/button";
+import { Input } from "@/app/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/app/ui/select";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 
 const STEPS = ["Repository", "Container", "Name & launch"] as const;
@@ -180,9 +182,9 @@ export function NewWorkspace() {
           top: "50%",
           left: "50%",
           transform: "translate(-50%, -50%)",
-          width: "52rem",
+          width: "40rem",
           maxWidth: "calc(100vw - 48px)",
-          height: "min(38rem, calc(100vh - 56px))",
+          maxHeight: "calc(100vh - 56px)",
           background: "var(--bg-2)",
           border: "1px solid var(--bd-strong)",
           borderRadius: 14,
@@ -260,7 +262,7 @@ export function NewWorkspace() {
           {step === 3 && (
             <>
               <FormRow label="Workspace name">
-                <input
+                <Input
                   value={name}
                   onChange={(e) => {
                     setName(e.target.value);
@@ -270,18 +272,7 @@ export function NewWorkspace() {
                   spellCheck={false}
                   // biome-ignore lint/a11y/noAutofocus: first field of the final step
                   autoFocus
-                  className="mono"
-                  style={{
-                    width: "100%",
-                    background: "var(--bg-0)",
-                    border: "1px solid var(--bd)",
-                    borderRadius: 8,
-                    padding: "10px 14px",
-                    fontSize: 14,
-                    color: "var(--fg-0)",
-                    outline: "none",
-                    boxSizing: "border-box",
-                  }}
+                  className="mono h-auto rounded-lg px-3.5 py-2.5 text-sm"
                 />
               </FormRow>
 
@@ -291,65 +282,35 @@ export function NewWorkspace() {
                     <div className="lbl" style={{ marginBottom: 6 }}>
                       Agent
                     </div>
-                    <select
-                      value={agent}
-                      onChange={(e) => setAgent(e.target.value as Cli)}
-                      className="mono"
-                      style={{
-                        width: "100%",
-                        padding: "9px 12px",
-                        borderRadius: 8,
-                        border: "1px solid var(--bd)",
-                        background: "var(--bg-0)",
-                        color: "var(--fg-0)",
-                        fontSize: 13,
-                        outline: "none",
-                        cursor: "pointer",
-                        appearance: "none",
-                        backgroundImage: `url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%236a6f79' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E")`,
-                        backgroundRepeat: "no-repeat",
-                        backgroundPosition: "right 12px center",
-                        paddingRight: 32,
-                      }}
-                    >
-                      {CLIS.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.label}
-                        </option>
-                      ))}
-                    </select>
+                    <Select value={agent} onValueChange={(v) => setAgent(v as Cli)}>
+                      <SelectTrigger className="mono w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent className="z-[70]">
+                        {CLIS.map((c) => (
+                          <SelectItem key={c.id} value={c.id}>
+                            {c.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
                   <div>
                     <div className="lbl" style={{ marginBottom: 6 }}>
                       Mode
                     </div>
-                    <select
-                      value={mode}
-                      onChange={(e) => setMode(e.target.value as Mode)}
-                      className="mono"
-                      style={{
-                        width: "100%",
-                        padding: "9px 12px",
-                        borderRadius: 8,
-                        border: "1px solid var(--bd)",
-                        background: "var(--bg-0)",
-                        color: "var(--fg-0)",
-                        fontSize: 13,
-                        outline: "none",
-                        cursor: "pointer",
-                        appearance: "none",
-                        backgroundImage: `url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%236a6f79' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E")`,
-                        backgroundRepeat: "no-repeat",
-                        backgroundPosition: "right 12px center",
-                        paddingRight: 32,
-                      }}
-                    >
-                      {modes.map((m) => (
-                        <option key={m} value={m}>
-                          {MODE_BY_ID[m].label} — {MODE_BY_ID[m].hint}
-                        </option>
-                      ))}
-                    </select>
+                    <Select value={mode} onValueChange={(v) => setMode(v as Mode)}>
+                      <SelectTrigger className="mono w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent className="z-[70]">
+                        {modes.map((m) => (
+                          <SelectItem key={m} value={m}>
+                            {MODE_BY_ID[m].label} — {MODE_BY_ID[m].hint}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
                 </div>
               </FormRow>
@@ -794,8 +755,8 @@ function RepoStep({
       {/* local folder — input + browse button */}
       <FormRow label="Local folder">
         <div style={{ display: "flex", gap: 8 }}>
-          <input
-            className="mono"
+          <Input
+            className="mono flex-1 text-xs"
             value={localPath}
             onChange={(e) => setLocalPath(e.target.value)}
             onKeyDown={(e) => {
@@ -806,16 +767,6 @@ function RepoStep({
             }}
             placeholder="/path/to/project"
             spellCheck={false}
-            style={{
-              flex: 1,
-              padding: "8px 12px",
-              borderRadius: 8,
-              border: "1px solid var(--bd)",
-              background: "var(--bg-0)",
-              color: "var(--fg-0)",
-              fontSize: 12,
-              outline: "none",
-            }}
           />
           <Button variant="outline" size="sm" onClick={() => void browseLocal()}>
             {Ico.files} Browse…

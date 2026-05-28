@@ -63,6 +63,16 @@ Five views in sidebar nav: Hub, Dashboard, Workspaces, Usage, Settings. Integrat
 
 All UI changes must be visually verified via `make dev-web` + Playwright before claiming done. Never trust inference alone — screenshot and read the actual result.
 
+## Backend dependency rule
+
+When a frontend or design change requires data that doesn't exist yet (new IPC commands, new backend state, new container metrics, etc.), **don't fake it with hardcoded/mock data and call it done.** Instead:
+
+1. Identify what backend or data-layer work is needed.
+2. Plan and implement the backend side first (Rust command, store field, IPC type, dev-bridge route).
+3. Wire the frontend to the real data source.
+
+If the backend work is out of scope or deferred, say so explicitly — don't ship a screen with placeholder data pretending it's functional.
+
 ## Frontend-specific behavioral notes
 
 - **Don't refactor adjacent components** while fixing one screen. If you're fixing Dashboard, don't "also clean up" ActivityRail.

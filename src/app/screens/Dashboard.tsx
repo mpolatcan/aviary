@@ -32,26 +32,35 @@
  */
 import { AGENT_META, AgentGlyph } from "@/app/components/primitives/AgentGlyph";
 import { IconBtn } from "@/app/components/primitives/IconBtn";
+import { Segmented } from "@/app/components/primitives/Segmented";
 import { Spark } from "@/app/components/primitives/Spark";
 import { StatusBadge } from "@/app/components/primitives/StatusBadge";
 import type { StatusKey } from "@/app/components/primitives/StatusDot";
+import { Tag } from "@/app/components/primitives/Tag";
 import { Ico } from "@/app/components/primitives/icons";
 import { MODE_BY_ID } from "@/app/lib/catalog";
 import {
   type ActivityEvent,
+  type ClaudeAccount,
   type ClaudeUsage,
+  type CodexDayUsage,
+  type CodexRateLimits,
+  type CodexTokenTotals,
   type CodexUsage,
+  type DayUsage,
   type PendingPrompt,
   type SessionActivity,
   type SessionUsage,
+  type TokenTotals,
   ipc,
 } from "@/app/lib/ipc";
 import { useLauncher } from "@/app/lib/launcher";
 import { useStore } from "@/app/lib/store";
 import { Button } from "@/app/ui/button";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 type Filter = "all" | "running";
+type AgentFilter = "all" | "claude" | "codex" | "antigravity";
 
 export function Dashboard() {
   const status = useStore((s) => s.status);
@@ -77,6 +86,11 @@ export function Dashboard() {
   const [prompts, setPrompts] = useState<PendingPrompt[]>([]);
   const [history, setHistory] = useState<ActivityEvent[]>([]);
   const [claudeBySession, setClaudeBySession] = useState<Record<string, SessionUsage | null>>({});
+  // Usage analytics state (formerly the standalone Usage screen).
+  const [rates, setRates] = useState<CodexRateLimits | null>(null);
+  const [claudeAccount, setClaudeAccount] = useState<ClaudeAccount | null>(null);
+  const [usageFilter, setUsageFilter] = useState<AgentFilter>("all");
+  const [usageLoaded, setUsageLoaded] = useState(false);
   // Wall-clock tick (1s) so "updated Ns ago" + prompt ages advance between polls.
   const [, setTick] = useState(0);
   const [updatedAt, setUpdatedAt] = useState(() => Date.now());
@@ -90,6 +104,9 @@ export function Dashboard() {
       setPrompts([]);
       setHistory([]);
       setClaudeBySession({});
+      setRates(null);
+      setClaudeAccount(null);
+      setUsageLoaded(false);
       return;
     }
     let alive = true;
@@ -135,6 +152,18 @@ export function Dashboard() {
         setHistory,
         8000,
         () => setHistory([]),
+      ),
+      poll(
+        () => ipc.codexRateLimits(),
+        (v) => { setRates(v); setUsageLoaded(true); },
+        10000,
+        () => { setRates(null); setUsageLoaded(true); },
+      ),
+      poll(
+        () => ipc.claudeIntegrations().then((i) => i.account),
+        setClaudeAccount,
+        10000,
+        () => setClaudeAccount(null),
       ),
     ];
     const ticker = setInterval(() => setTick((t) => t + 1), 1000);
@@ -221,7 +250,27 @@ export function Dashboard() {
   const ctxAvg =
     ctxVals.length > 0 ? Math.round(ctxVals.reduce((a, b) => a + b, 0) / ctxVals.length) : null;
 
-  const working = activity.filter((a) => a.state === "working").length;
+  // Count working among CURRENT sessions (via stateBy, the same per-session
+  // source the table uses) — not raw activity rows, which can include stale
+  // entries and overcount past the session total ("3 of 2").
+  const working = sessions.filter(([s]) => stateBy.get(s) === "working").length;
+
+  // ── Usage analytics computed values ────────────────────────────────────────
+  const claudeHas = claude !== null && claude.turns > 0;
+  const codexHas = codex !== null && codex.turns > 0;
+  const totalTokens =
+    (claude ? claude.totals.input + claude.totals.output : 0) +
+    (codex ? codex.totals.input + codex.totals.output : 0);
+  const totalTurns = allTurns;
+  const totalCost = allCost;
+  const totalSessions = (claude?.sessions ?? 0) + (codex?.sessions ?? 0);
+  const avgPerTurn = totalTurns > 0 ? totalCost / totalTurns : 0;
+  const claudeCount = claude?.sessions ?? 0;
+  const codexCount = codex?.sessions ?? 0;
+  const showClaude = usageFilter === "all" || usageFilter === "claude";
+  const showCodex = usageFilter === "all" || usageFilter === "codex";
+  const showAntigravity = usageFilter === "all" || usageFilter === "antigravity";
+  const exportCsv = useMemo(() => makeCsvExporter(claude, codex), [claude, codex]);
 
   const open = (session: string) => {
     focusSession(session);
@@ -340,10 +389,12 @@ export function Dashboard() {
             display: "grid",
             gridTemplateColumns: "minmax(0, 1fr) clamp(280px, 22%, 360px)",
             gap: 12,
+            flex: 1,
+            minHeight: 200,
           }}
         >
           {/* table */}
-          <div className="ch-card" style={{ padding: 0, minWidth: 0, overflow: "hidden" }}>
+          <div className="ch-card" style={{ padding: 0, minWidth: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
             <div
               style={{
                 padding: "12px 16px",
@@ -372,8 +423,11 @@ export function Dashboard() {
               <div
                 className="mono"
                 style={{
+                  flex: 1,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
                   padding: "28px 16px",
-                  textAlign: "center",
                   fontSize: 11.5,
                   color: "var(--fg-3)",
                 }}
@@ -383,7 +437,7 @@ export function Dashboard() {
                   : "No sessions match this filter."}
               </div>
             ) : (
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, flex: 1 }}>
                 <thead>
                   <tr>
                     <Th>Session</Th>
@@ -664,11 +718,173 @@ export function Dashboard() {
                 all-time · est. cost
               </span>
               <span style={{ flex: 1 }} />
-              <Button size="sm" variant="ghost" onClick={() => setView("usage")}>
-                Details
+              <Button size="sm" variant="ghost" onClick={exportCsv} disabled={!running || (!claudeHas && !codexHas)}>
+                Export CSV
               </Button>
             </div>
             <AgentUsageRows claude={claude} codex={codex} running={running} />
+          </div>
+        </div>
+
+        {/* ── USAGE ANALYTICS (formerly the standalone Usage screen) ────────── */}
+        <div style={{ marginTop: 22, borderTop: "1px solid var(--bd-soft)", paddingTop: 18 }}>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 14, marginBottom: 16 }}>
+            <span style={{ fontSize: 15, fontWeight: 600, color: "var(--fg-0)" }}>
+              Usage analytics
+            </span>
+            <span className="mono" style={{ fontSize: 12, color: "var(--fg-2)" }}>
+              {running
+                ? `${totalSessions} session${totalSessions === 1 ? "" : "s"} · ${totalTurns} turn${totalTurns === 1 ? "" : "s"} · ${fmtUsd(totalCost)} est. · token counts factual, cost estimated`
+                : `runtime ${state}`}
+            </span>
+            <span style={{ flex: 1 }} />
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={!running || (!claudeHas && !codexHas)}
+              onClick={exportCsv}
+            >
+              Export CSV
+            </Button>
+          </div>
+
+          {/* aggregate strip */}
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+              gap: 12,
+              marginBottom: 14,
+            }}
+          >
+            <UsageSummaryCell
+              label="tokens · all-time"
+              value={running ? fmtNum(totalTokens) : "—"}
+              subtle={running ? "input + output · Claude + Codex" : "runtime not running"}
+            />
+            <UsageSummaryCell
+              label="est. cost · all-time"
+              value={running ? `≈ ${fmtUsd(totalCost)}` : "—"}
+              subtle="estimate — not billed"
+            />
+            <UsageSummaryCell
+              label="turns · all-time"
+              value={running ? String(totalTurns) : "—"}
+              subtle={
+                running && totalTurns > 0 ? `${fmtUsd(avgPerTurn)} est. avg / turn` : "no turns yet"
+              }
+            />
+            <UsageSummaryCell
+              label="sessions · all-time"
+              value={running ? String(totalSessions) : "—"}
+              subtle={running ? `Claude ${claudeCount} · Codex ${codexCount}` : "—"}
+            />
+            <UsageSummaryCell
+              label="codex quota"
+              value={running ? rateHeadline(rates) : "—"}
+              subtle={running ? rateHeadlineSub(rates) : "runtime not running"}
+              tone={rateTone(rates)}
+            />
+          </div>
+
+          {/* agent filter */}
+          <div
+            style={{
+              padding: "10px 0",
+              marginBottom: 12,
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+            }}
+          >
+            <Segmented<AgentFilter>
+              value={usageFilter}
+              onChange={setUsageFilter}
+              options={[
+                { key: "all", label: `All · ${claudeCount + codexCount}` },
+                { key: "claude", label: `Claude · ${claudeCount}` },
+                { key: "codex", label: `Codex · ${codexCount}` },
+                { key: "antigravity", label: "Antigravity · 0" },
+              ]}
+            />
+            <span style={{ flex: 1 }} />
+            <span className="mono" style={{ fontSize: 11, color: "var(--fg-3)" }}>
+              {running ? `updated ${fmtSince(updatedAt)}` : "runtime offline"}
+            </span>
+          </div>
+
+          {/* per-agent cards */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            {!running ? (
+              <UsageNote>Runtime not running — start a workspace to see usage data.</UsageNote>
+            ) : !usageLoaded ? (
+              <UsageNote>Reading session transcripts…</UsageNote>
+            ) : claude === null && codex === null ? (
+              <UsageNote>No session transcripts found — start an agent to begin tracking usage.</UsageNote>
+            ) : (
+              <>
+                {showClaude &&
+                  (claudeHas ? (
+                    <AgentUsageCard
+                      agent="claude"
+                      usage={claude as ClaudeUsage}
+                      totals={claudeTotalsToCard(claude as ClaudeUsage)}
+                      rateMeters={null}
+                      plan={claudeAccount?.plan ?? null}
+                      onNew={() => openLaunch("newtab")}
+                      onExport={exportCsv}
+                    />
+                  ) : (
+                    <EmptyAgentCard
+                      agent="claude"
+                      note={
+                        claude === null
+                          ? "Reading transcripts…"
+                          : "No Claude turns recorded yet. Usage appears once an agent responds."
+                      }
+                      source="on-disk transcripts"
+                      onNew={() => openLaunch("newtab")}
+                    />
+                  ))}
+
+                {showCodex &&
+                  (codexHas ? (
+                    <AgentUsageCard
+                      agent="codex"
+                      usage={codex as CodexUsage}
+                      totals={codexTotalsToTokenTotals(codex as CodexUsage)}
+                      rateMeters={rates}
+                      plan={rates?.planType ?? null}
+                      onNew={() => openLaunch("newtab")}
+                      onExport={exportCsv}
+                    />
+                  ) : (
+                    <EmptyAgentCard
+                      agent="codex"
+                      note={
+                        codex === null
+                          ? "Reading rollout files…"
+                          : "No Codex turns recorded yet. Usage appears once an agent responds."
+                      }
+                      source="rollout files"
+                      rateNote={
+                        rates === null ? "No rate-limit data on disk yet." : rateHeadlineSub(rates)
+                      }
+                      onNew={() => openLaunch("newtab")}
+                    />
+                  ))}
+
+                {showAntigravity && (
+                  <EmptyAgentCard
+                    agent="antigravity"
+                    note="Not installed in the runtime image — no readable usage data."
+                    source="runtime image"
+                    rateNote="No local Antigravity reader is available."
+                    disabled
+                  />
+                )}
+              </>
+            )}
           </div>
         </div>
       </div>
@@ -1165,4 +1381,699 @@ function fmtNum(n: number): string {
 function fmtUsd(n: number): string {
   if (n > 0 && n < 0.01) return `$${n.toFixed(4)}`;
   return `$${n.toFixed(2)}`;
+}
+
+// Window length: minutes → "3h" / "5h" / "45m" / "7d".
+function fmtWindow(minutes: number): string {
+  if (minutes >= 1440 && minutes % 1440 === 0) return `${minutes / 1440}d`;
+  if (minutes >= 60 && minutes % 60 === 0) return `${minutes / 60}h`;
+  if (minutes >= 60) return `${(minutes / 60).toFixed(1)}h`;
+  return `${minutes}m`;
+}
+
+function fmtResets(resetsAt: string): string {
+  let ms: number;
+  const asNum = Number(resetsAt);
+  if (Number.isFinite(asNum) && resetsAt.trim() !== "") {
+    ms = asNum > 1e12 ? asNum : asNum * 1000;
+  } else {
+    ms = Date.parse(resetsAt);
+  }
+  if (!Number.isFinite(ms)) return resetsAt;
+  const diff = ms - Date.now();
+  if (diff <= 0) return "now";
+  const totalMin = Math.floor(diff / 60000);
+  if (totalMin >= 1440) return `in ${Math.floor(totalMin / 1440)}d`;
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  return `in ${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
+// ── Usage analytics components ─────────────────────────────────────────────
+// Migrated from the standalone Usage screen into Dashboard as a scrollable
+// extension below the Activity + Token usage row.
+
+interface CardTokenTotals {
+  input: number;
+  output: number;
+  cache: number;
+  reasoning: number | null;
+}
+
+function AgentUsageCard({
+  agent,
+  usage,
+  totals,
+  rateMeters,
+  plan,
+  onNew,
+  onExport,
+}: {
+  agent: "claude" | "codex";
+  usage: ClaudeUsage | CodexUsage;
+  totals: CardTokenTotals;
+  rateMeters: CodexRateLimits | null;
+  plan: string | null;
+  onNew: () => void;
+  onExport: () => void;
+}) {
+  const tokens = totals.input + totals.output;
+  const spark = (usage.byDay as Array<DayUsage | CodexDayUsage>)
+    .slice(-13)
+    .map((d) => d.totals.input + d.totals.output + cacheTokens(d.totals));
+
+  const hasRate = rateMeters !== null && hasAnyRate(rateMeters);
+  const tone = rateTone(rateMeters);
+  const accentBd =
+    tone === "warn"
+      ? "color-mix(in oklab, var(--wait) 35%, var(--bd))"
+      : tone === "over"
+        ? "color-mix(in oklab, var(--err) 35%, var(--bd))"
+        : "var(--bd)";
+
+  return (
+    <div
+      className="ch-card ch-card-interactive"
+      style={{ padding: 0, display: "flex", overflow: "hidden", borderColor: accentBd }}
+    >
+      <div
+        style={{
+          flex: "0 0 260px",
+          padding: "16px 18px",
+          borderRight: "1px solid var(--bd-soft)",
+          display: "flex",
+          flexDirection: "column",
+          gap: 12,
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 11 }}>
+          <AgentGlyph agent={agent} size={28} color={`var(--a-${agent})`} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 13.5, fontWeight: 600, color: "var(--fg-0)" }}>
+              {AGENT_META[agent].name}
+            </div>
+            <div className="mono" style={{ fontSize: 11, color: "var(--fg-2)" }}>
+              {plan ? plan : agent === "claude" ? "subscription / API" : "—"}
+            </div>
+          </div>
+          <StatusBadge status="live">Active</StatusBadge>
+        </div>
+
+        {spark.length > 1 && (
+          <div style={{ marginTop: 4 }}>
+            <div className="lbl-soft" style={{ marginBottom: 4 }}>
+              last {spark.length} days · tokens
+            </div>
+            <Spark data={spark} w={224} h={28} color={`var(--a-${agent})`} fill />
+          </div>
+        )}
+
+        <div
+          style={{
+            marginTop: "auto",
+            display: "flex",
+            flexDirection: "column",
+            gap: 4,
+            fontSize: 11,
+            color: "var(--fg-2)",
+            fontFamily: "var(--mono)",
+          }}
+        >
+          <div>
+            <span style={{ color: "var(--fg-3)" }}>source</span>{" "}
+            <span style={{ color: "var(--fg-1)" }}>
+              {agent === "claude" ? "on-disk transcripts" : "rollout files"}
+            </span>
+          </div>
+          <div>
+            <span style={{ color: "var(--fg-3)" }}>cost</span>{" "}
+            <span style={{ color: "var(--fg-1)" }}>estimate · not billed</span>
+          </div>
+        </div>
+      </div>
+
+      <div
+        style={{
+          flex: 1,
+          padding: "16px 22px",
+          minWidth: 0,
+          display: "flex",
+          flexDirection: "column",
+          gap: 14,
+        }}
+      >
+        {agent === "codex" && hasRate && rateMeters && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <div className="lbl">Rate windows · on-disk quota</div>
+            <RateMeter
+              label="primary window"
+              usedPct={rateMeters.primaryUsedPct}
+              windowMinutes={rateMeters.primaryWindowMinutes}
+              resetsAt={rateMeters.primaryResetsAt}
+            />
+            <RateMeter
+              label="secondary window"
+              usedPct={rateMeters.secondaryUsedPct}
+              windowMinutes={rateMeters.secondaryWindowMinutes}
+              resetsAt={rateMeters.secondaryResetsAt}
+            />
+            <div style={{ height: 1, background: "var(--bd-soft)" }} />
+          </div>
+        )}
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14 }}>
+          <UsageStat label="Input" value={fmtNum(totals.input)} />
+          <UsageStat label="Output" value={fmtNum(totals.output)} />
+          <UsageStat label="Cache" value={fmtNum(totals.cache)} />
+          {totals.reasoning !== null ? (
+            <UsageStat label="Reasoning" value={fmtNum(totals.reasoning)} />
+          ) : (
+            <UsageStat label="Tokens" value={fmtNum(tokens)} />
+          )}
+        </div>
+
+        <div>
+          <div className="lbl" style={{ marginBottom: 8 }}>
+            By model
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <ModelRowHead />
+            {usage.byModel.map((m) => (
+              <ModelRow
+                key={m.model}
+                model={m.model}
+                turns={m.turns}
+                tokens={modelTokens(m)}
+                priced={m.priced}
+                cost={m.estCostUsd}
+              />
+            ))}
+          </div>
+        </div>
+
+        <div
+          style={{
+            marginTop: "auto",
+            padding: "10px 0 0",
+            borderTop: "1px dashed var(--bd-soft)",
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            flexWrap: "wrap",
+            fontSize: 12,
+            color: tone === "over" ? "var(--err)" : tone === "warn" ? "var(--wait)" : "var(--fg-2)",
+          }}
+        >
+          <span
+            style={{
+              fontFamily: "var(--mono)",
+              fontSize: 10.5,
+              color: "var(--fg-3)",
+              textTransform: "uppercase",
+              letterSpacing: "0.08em",
+            }}
+          >
+            forecast
+          </span>
+          <span>{forecastText(agent, rateMeters)}</span>
+          <span style={{ flex: 1 }} />
+          <span className="mono" style={{ fontSize: 10.5, color: "var(--fg-3)" }}>
+            ≈ {fmtUsd(usage.estCostUsd)} est · rates {usage.ratesAsOf}
+          </span>
+          {usage.unpricedTokens > 0 && (
+            <span className="mono" style={{ fontSize: 10.5, color: "var(--wait)" }}>
+              · {fmtNum(usage.unpricedTokens)} unpriced excluded
+            </span>
+          )}
+        </div>
+      </div>
+
+      <div
+        style={{
+          flex: "0 0 160px",
+          padding: "16px 18px",
+          borderLeft: "1px solid var(--bd-soft)",
+          display: "flex",
+          flexDirection: "column",
+          gap: 8,
+        }}
+      >
+        <Button size="sm" style={{ width: "100%", justifyContent: "center" }} onClick={onNew}>
+          New {AGENT_META[agent].name}
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          style={{ width: "100%", justifyContent: "center" }}
+          onClick={onExport}
+        >
+          Export CSV
+        </Button>
+        <span style={{ flex: 1 }} />
+        <div
+          className="mono"
+          style={{ fontSize: 10, color: "var(--fg-3)", lineHeight: 1.5, textAlign: "center" }}
+        >
+          plan &amp; billing managed by the provider
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RateMeter({
+  label,
+  usedPct,
+  windowMinutes,
+  resetsAt,
+}: {
+  label: string;
+  usedPct: number | null;
+  windowMinutes: number | null;
+  resetsAt: string | null;
+}) {
+  if (usedPct === null) return null;
+  const pct = Math.min(1, Math.max(0, usedPct / 100));
+  const color = pct > 0.85 ? "var(--err)" : pct > 0.7 ? "var(--wait)" : "var(--live)";
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+        <span className="mono" style={{ fontSize: 11.5, color: "var(--fg-1)" }}>
+          {label}
+          {windowMinutes !== null && (
+            <span style={{ color: "var(--fg-3)" }}> · {fmtWindow(windowMinutes)}</span>
+          )}
+        </span>
+        <span style={{ flex: 1 }} />
+        <span
+          className="mono tnum"
+          style={{ fontSize: 12.5, color: "var(--fg-0)", fontWeight: 500 }}
+        >
+          {usedPct.toFixed(usedPct < 10 ? 1 : 0)}%
+        </span>
+      </div>
+      <div style={{ height: 5, background: "var(--bg-3)", borderRadius: 999, overflow: "hidden" }}>
+        <div style={{ width: `${pct * 100}%`, height: "100%", background: color }} />
+      </div>
+      <div className="mono" style={{ fontSize: 10.5, color: "var(--fg-3)" }}>
+        {resetsAt ? `resets ${fmtResets(resetsAt)}` : "no reset time on disk"}
+      </div>
+    </div>
+  );
+}
+
+function ModelRowHead() {
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        padding: "0 8px 4px",
+        borderBottom: "1px solid var(--bd-soft)",
+      }}
+    >
+      <span className="lbl" style={{ flex: 1 }}>model</span>
+      <NumCell head>turns</NumCell>
+      <NumCell head>tokens</NumCell>
+      <NumCell head wide>est. cost</NumCell>
+    </div>
+  );
+}
+
+function ModelRow({
+  model,
+  turns,
+  tokens,
+  priced,
+  cost,
+}: {
+  model: string;
+  turns: number;
+  tokens: number;
+  priced: boolean;
+  cost: number;
+}) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 8px" }}>
+      <span
+        className="mono"
+        style={{
+          flex: 1,
+          minWidth: 0,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+          color: "var(--fg-0)",
+          fontSize: 12,
+        }}
+        title={model}
+      >
+        {model}
+        {!priced && (
+          <span style={{ marginLeft: 6, fontSize: 9.5, color: "var(--fg-3)" }}>unpriced</span>
+        )}
+      </span>
+      <NumCell>{String(turns)}</NumCell>
+      <NumCell>{fmtNum(tokens)}</NumCell>
+      <NumCell wide>{priced ? fmtUsd(cost) : "—"}</NumCell>
+    </div>
+  );
+}
+
+function NumCell({
+  children,
+  head,
+  wide,
+}: {
+  children: React.ReactNode;
+  head?: boolean;
+  wide?: boolean;
+}) {
+  return (
+    <span
+      className={head ? "lbl tnum" : "mono tnum"}
+      style={{
+        width: wide ? 80 : 56,
+        textAlign: "right",
+        flexShrink: 0,
+        fontSize: head ? undefined : 12,
+        color: head ? undefined : "var(--fg-1)",
+      }}
+    >
+      {children}
+    </span>
+  );
+}
+
+function UsageStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      <span className="lbl-soft">{label}</span>
+      <span className="mono tnum" style={{ fontSize: 16, color: "var(--fg-0)", fontWeight: 500 }}>
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function EmptyAgentCard({
+  agent,
+  note,
+  source,
+  rateNote,
+  onNew,
+  disabled,
+}: {
+  agent: "claude" | "codex" | "antigravity";
+  note: string;
+  source: string;
+  rateNote?: string;
+  onNew?: () => void;
+  disabled?: boolean;
+}) {
+  const accent = `var(--a-${agent})`;
+  return (
+    <div
+      className="ch-card ch-card-interactive"
+      style={{
+        padding: 0,
+        display: "flex",
+        overflow: "hidden",
+        opacity: disabled ? 0.74 : 1,
+      }}
+    >
+      <div
+        style={{
+          flex: "0 0 260px",
+          padding: "16px 18px",
+          borderRight: "1px solid var(--bd-soft)",
+          display: "flex",
+          flexDirection: "column",
+          gap: 12,
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 11 }}>
+          <AgentGlyph agent={agent} size={28} color={accent} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 13.5, fontWeight: 600, color: "var(--fg-0)" }}>
+              {AGENT_META[agent].name}
+            </div>
+            <div className="mono" style={{ fontSize: 11, color: "var(--fg-2)" }}>
+              waiting for recorded usage
+            </div>
+          </div>
+          {disabled ? <Tag>not installed</Tag> : <StatusBadge status="idle">Ready</StatusBadge>}
+        </div>
+
+        <div
+          style={{
+            marginTop: "auto",
+            display: "flex",
+            flexDirection: "column",
+            gap: 4,
+            fontSize: 11,
+            color: "var(--fg-2)",
+            fontFamily: "var(--mono)",
+          }}
+        >
+          <div>
+            <span style={{ color: "var(--fg-3)" }}>source</span>{" "}
+            <span style={{ color: "var(--fg-1)" }}>{source}</span>
+          </div>
+          <div>
+            <span style={{ color: "var(--fg-3)" }}>cost</span>{" "}
+            <span style={{ color: "var(--fg-1)" }}>not estimated yet</span>
+          </div>
+        </div>
+      </div>
+
+      <div
+        style={{
+          flex: 1,
+          padding: "16px 22px",
+          minWidth: 0,
+          display: "flex",
+          flexDirection: "column",
+          gap: 14,
+        }}
+      >
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14 }}>
+          <UsageStat label="Input" value="—" />
+          <UsageStat label="Output" value="—" />
+          <UsageStat label="Cache" value="—" />
+          <UsageStat label={agent === "codex" ? "Reasoning" : "Tokens"} value="—" />
+        </div>
+
+        <div
+          className="mono"
+          style={{
+            padding: "12px 0",
+            borderTop: "1px solid var(--bd-soft)",
+            borderBottom: "1px solid var(--bd-soft)",
+            color: "var(--fg-2)",
+            fontSize: 12,
+          }}
+        >
+          {note}
+        </div>
+
+        <div
+          style={{
+            marginTop: "auto",
+            padding: "10px 0 0",
+            borderTop: "1px dashed var(--bd-soft)",
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            fontSize: 12,
+            color: "var(--fg-2)",
+          }}
+        >
+          <span
+            style={{
+              fontFamily: "var(--mono)",
+              fontSize: 10.5,
+              color: "var(--fg-3)",
+              textTransform: "uppercase",
+              letterSpacing: "0.08em",
+            }}
+          >
+            forecast
+          </span>
+          <span>{rateNote ?? "No quota window is available from local data."}</span>
+        </div>
+      </div>
+
+      <div
+        style={{
+          flex: "0 0 160px",
+          padding: "16px 18px",
+          borderLeft: "1px solid var(--bd-soft)",
+          display: "flex",
+          flexDirection: "column",
+          gap: 8,
+        }}
+      >
+        <Button
+          size="sm"
+          style={{ width: "100%", justifyContent: "center" }}
+          onClick={onNew}
+          disabled={disabled || !onNew}
+        >
+          New {AGENT_META[agent].name}
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          style={{ width: "100%", justifyContent: "center" }}
+          disabled
+        >
+          Export CSV
+        </Button>
+        <span style={{ flex: 1 }} />
+        <div
+          className="mono"
+          style={{ fontSize: 10, color: "var(--fg-3)", lineHeight: 1.5, textAlign: "center" }}
+        >
+          usage appears after a recorded turn
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function UsageSummaryCell({
+  label,
+  value,
+  subtle,
+  tone,
+}: {
+  label: string;
+  value: string;
+  subtle: string;
+  tone?: "warn" | "over";
+}) {
+  const valueColor =
+    tone === "warn" ? "var(--spend-warn)" : tone === "over" ? "var(--spend-over)" : "var(--fg-0)";
+  const subColor = tone === "warn" ? "var(--wait)" : tone === "over" ? "var(--err)" : "var(--fg-2)";
+  return (
+    <div
+      className="ch-card ch-card-interactive"
+      style={{ padding: 14, display: "flex", flexDirection: "column", gap: 4 }}
+    >
+      <div className="lbl">{label}</div>
+      <span
+        className="mono tnum"
+        style={{ fontSize: 28, color: valueColor, fontWeight: 500, letterSpacing: "-0.02em" }}
+      >
+        {value}
+      </span>
+      <div className="mono" style={{ fontSize: 10.5, color: subColor }}>
+        {subtle}
+      </div>
+    </div>
+  );
+}
+
+function UsageNote({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      className="mono"
+      style={{ padding: "40px 16px", textAlign: "center", fontSize: 12, color: "var(--fg-3)" }}
+    >
+      {children}
+    </div>
+  );
+}
+
+// ── Usage data helpers ─────────────────────────────────────────────────────
+
+function cacheTokens(t: TokenTotals | CodexTokenTotals): number {
+  return "cacheRead" in t ? t.cacheRead + t.cacheCreation : t.cachedInput;
+}
+
+function claudeTotalsToCard(u: ClaudeUsage): CardTokenTotals {
+  return {
+    input: u.totals.input,
+    output: u.totals.output,
+    cache: u.totals.cacheRead + u.totals.cacheCreation,
+    reasoning: null,
+  };
+}
+
+function codexTotalsToTokenTotals(u: CodexUsage): CardTokenTotals {
+  return {
+    input: u.totals.input,
+    output: u.totals.output,
+    cache: u.totals.cachedInput,
+    reasoning: u.totals.reasoningOutput,
+  };
+}
+
+function modelTokens(m: ClaudeUsage["byModel"][number] | CodexUsage["byModel"][number]): number {
+  if ("cacheRead" in m.totals) {
+    return m.totals.input + m.totals.output + m.totals.cacheRead + m.totals.cacheCreation;
+  }
+  return m.totals.input + m.totals.output + m.totals.cachedInput + m.totals.reasoningOutput;
+}
+
+function hasAnyRate(r: CodexRateLimits): boolean {
+  return r.primaryUsedPct !== null || r.secondaryUsedPct !== null;
+}
+
+function rateHeadline(r: CodexRateLimits | null): string {
+  if (!r || r.primaryUsedPct === null) return "—";
+  return `${r.primaryUsedPct.toFixed(r.primaryUsedPct < 10 ? 1 : 0)}%`;
+}
+
+function rateHeadlineSub(r: CodexRateLimits | null): string {
+  if (!r) return "no rollout data";
+  if (r.primaryUsedPct === null) return "no quota on disk";
+  const plan = r.planType ? `${r.planType} · ` : "";
+  return `${plan}primary window`;
+}
+
+function rateTone(r: CodexRateLimits | null): "warn" | "over" | undefined {
+  if (!r || r.primaryUsedPct === null) return undefined;
+  if (r.primaryUsedPct > 85) return "over";
+  if (r.primaryUsedPct > 70) return "warn";
+  return undefined;
+}
+
+function forecastText(agent: "claude" | "codex", r: CodexRateLimits | null): string {
+  if (agent === "claude") {
+    return "No on-disk quota windows for Claude — token usage here is unmetered.";
+  }
+  if (!r || r.primaryUsedPct === null) {
+    return "No rate-limit data on disk yet — usage appears after the next turn.";
+  }
+  const reset = r.primaryResetsAt ? ` · primary window ${fmtResets(r.primaryResetsAt)}` : "";
+  if (r.primaryUsedPct > 85)
+    return `Primary window ${r.primaryUsedPct.toFixed(0)}% used — near limit${reset}`;
+  if (r.primaryUsedPct > 70) return `Primary window ${r.primaryUsedPct.toFixed(0)}% used${reset}`;
+  return `Comfortable headroom · ${r.primaryUsedPct.toFixed(0)}% of primary window used${reset}`;
+}
+
+function makeCsvExporter(claude: ClaudeUsage | null, codex: CodexUsage | null): () => void {
+  return () => {
+    const rows: string[] = ["date,agent,input_tokens,output_tokens,cache_tokens,est_cost_usd"];
+    const add = (agent: string, days: Array<DayUsage | CodexDayUsage>) => {
+      for (const d of days) {
+        const cache = cacheTokens(d.totals);
+        rows.push(
+          `${d.date},${agent},${d.totals.input},${d.totals.output},${cache},${d.estCostUsd.toFixed(4)}`,
+        );
+      }
+    };
+    if (claude) add("claude", claude.byDay);
+    if (codex) add("codex", codex.byDay);
+    const blob = new Blob([rows.join("\n")], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `codehub-usage-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 }

@@ -41,7 +41,7 @@ export type AgentCli = "claude" | "codex" | "antigravity";
 export type Cli = AgentCli | "shell";
 export type Mode = "standard" | "auto" | "yolo";
 
-// Per-session activity derived from pane output flow (BACKEND_PLAN.md). "working"
+// Per-session activity derived from pane output flow. "working"
 // = output within the grace window; "idle" = quiet (idle / waiting / done — the
 // output signal can't distinguish those). idleMs = ms since last output; bytes =
 // total output seen since attach. NOT tokens/cost — those need per-CLI capture.
@@ -63,7 +63,7 @@ export interface SessionActivity {
   gitBranch: string | null;
 }
 
-// Tier-1 reads (BACKEND_PLAN.md). docker_info backs the empty-state daemon pill;
+// Tier-1 reads. docker_info backs the empty-state daemon pill;
 // agent_versions / agent_key_status back the agent cards + Settings.
 export interface DockerInfo {
   reachable: boolean;
@@ -71,8 +71,14 @@ export interface DockerInfo {
   apiVersion: string | null;
 }
 
-// Presence-only auth status. `present` + `varName` (env var NAME) only — the
-// backend never returns the secret value.
+// Installed container runtimes + daemon reachability (first-run hero).
+export interface DockerRuntimeDetection {
+  installed: string[];
+  daemonRunning: boolean;
+}
+
+// Presence-only auth status. `present` indicates whether a credential exists.
+// The backend never returns the secret value.
 export interface KeyStatus {
   present: boolean;
   source: string;
@@ -153,8 +159,8 @@ export interface AppSettings {
   // Saved workspaces shown on the Welcome launcher (config::SavedWorkspace).
   // Name + dir pointers only — each opens in its own per-workspace container.
   savedWorkspaces: SavedWorkspace[];
-  // Accounts (Tier-3, label-only — no secrets). Each maps an agent to a host
-  // env var NAME; the value is never stored here.
+  // Accounts (Tier-3, label-only — no secrets). Each maps an agent to a
+  // keychain-backed credential.
   accountProfiles: AccountProfile[];
   // Notifications
   notifyAwaitInput: boolean;
@@ -200,7 +206,7 @@ export interface SavedWorkspace {
 }
 
 // An account profile (config::AccountProfile). Supports two credential models:
-// "env" — host env var by NAME (never value), "vault" — OS keychain entry.
+// Credential source: "env" (legacy) or "vault" (OS keychain).
 export interface AccountProfile {
   id: string;
   agent: string;
@@ -210,7 +216,7 @@ export interface AccountProfile {
 }
 
 // An account profile plus whether its credential is available right now.
-// Env-backed: host env var present. Vault-backed: keychain entry exists.
+// Account profile with live presence check.
 export interface AccountProfileStatus extends AccountProfile {
   present: boolean;
 }
@@ -516,7 +522,7 @@ export interface AgentConfig {
   marketplaces: string[];
 }
 
-// ── Phase-0 completion contract (COMPLETION_PLAN.md) ────────────────────────
+// ── Phase-0 completion contract ────────────────────────
 // New surface for the parallel fleet. Shapes are frozen; backend fns are stubs
 // until the BE track fills them. Honesty contract holds: absent data → null /
 // empty / em-dash, never fabricated.
@@ -654,8 +660,7 @@ export interface CodexRateLimits {
   planType: string | null;
 }
 
-// GitHub connection (Integrations). Presence-only auth: `connected` reflects the
-// host env var (e.g. GITHUB_TOKEN) being set — the value is NEVER read/returned.
+// GitHub connection (Integrations). Presence-only auth check.
 // login/scopes/tokenExpiry come from the GitHub API when reachable, else null.
 export interface GithubStatus {
   connected: boolean;
@@ -723,6 +728,8 @@ export const ipc = {
   removeWorkspaceContainer: (workspace: string) =>
     invoke<void>("remove_workspace_container", { workspace }),
   dockerInfo: () => invoke<DockerInfo>("docker_info"),
+  detectDockerRuntime: () => invoke<DockerRuntimeDetection>("detect_docker_runtime"),
+  startDockerApp: (runtime: string) => invoke<void>("start_docker_app", { runtime }),
   // Build + host platform identity for Settings → About.
   appInfo: () => invoke<AppInfo>("app_info"),
   hostStats: () => invoke<HostStats>("host_stats"),
@@ -746,13 +753,15 @@ export const ipc = {
   workspaceInfo: (workspace?: string) => invoke<WorkspaceInfo>("workspace_info", { workspace }),
   recreateRuntime: (workspace: string) =>
     invoke<ContainerStatus>("recreate_runtime", { workspace }),
-  // Account profiles (env-backed or vault-backed). list/add/remove return the
+  // Account profiles (keychain-backed). list/add/remove/rename return the
   // full updated list with live presence per profile.
   listAccountProfiles: () => invoke<AccountProfileStatus[]>("list_account_profiles"),
   addAccountProfile: (agent: string, label: string, varName?: string, source?: "env" | "vault") =>
     invoke<AccountProfileStatus[]>("add_account_profile", { agent, label, varName, source }),
   removeAccountProfile: (id: string) =>
     invoke<AccountProfileStatus[]>("remove_account_profile", { id }),
+  renameAccountProfile: (id: string, label: string) =>
+    invoke<AccountProfileStatus[]>("rename_account_profile", { id, label }),
   // Vault: OS-keychain credential management for built-in agents + GitHub.
   // vaultStoreKey is the ONLY method that accepts a secret over IPC (paste flow).
   // No method ever returns a secret value.
@@ -875,8 +884,8 @@ export const ipc = {
   // `claude --resume <id>`. `sessionId` pins a fresh Claude session to a known
   // UUID (`--session-id`) so its transcript can be read back. Mutually exclusive.
   // `account` (Tier-3) is an account-profile id; the backend resolves it to that
-  // profile's host env var NAME and remaps the CLI's credential var onto it for
-  // this session. Absent → the default (canonical host env).
+  // profile's credential from the vault and injects it for this session.
+  // Absent → auto-select.
   // `workspace` is the per-workspace-container key: the session is created in
   // that workspace's own container (lazily ensured), with `workspaceDir` bound
   // at /workspace on first create. attach/kill/rename must pass the SAME

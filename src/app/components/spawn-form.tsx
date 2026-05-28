@@ -1,7 +1,7 @@
 /**
  * Shared spawn-form pieces, used by BOTH the SpawnDialog modal and the
  * new-workspace wizard. Extracted so the two surfaces can't drift — every
- * honest adaptation (host-env accounts not keychain, per-workspace containers,
+ * honest adaptation (keychain-backed accounts, per-workspace containers,
  * the real /workspace mount picker with its recreate affordance) lives here once.
  */
 import { AGENT_META, AgentGlyph, type AgentId } from "@/app/components/primitives/AgentGlyph";
@@ -11,6 +11,7 @@ import { Ico } from "@/app/components/primitives/icons";
 import { type AgentCli, ipc } from "@/app/lib/ipc";
 import { useStore } from "@/app/lib/store";
 import { Button } from "@/app/ui/button";
+import { Input } from "@/app/ui/input";
 import { type ReactNode, useEffect, useState } from "react";
 
 // Per-agent model/window hint shown under the glyph. Static catalog copy.
@@ -110,8 +111,7 @@ export function AgentCard({
   );
 }
 
-// One selectable account card: the default host-env credential, or a label-only
-// profile. A status dot reflects whether its host env var is present.
+// One selectable account card. A status dot reflects whether its credential is present.
 export function AccountCard({
   title,
   sub,
@@ -276,7 +276,7 @@ export function SharedRuntimePanel() {
         }}
       >
         <RuntimeFact on>Workspace mounted read-write</RuntimeFact>
-        <RuntimeFact on>API keys forwarded from host environment</RuntimeFact>
+        <RuntimeFact on>Credentials from OS keychain</RuntimeFact>
         <RuntimeFact>Network: bridge (host networking off)</RuntimeFact>
         <RuntimeFact soon>Container sizing</RuntimeFact>
       </div>
@@ -409,8 +409,8 @@ export function RepositoryPicker({
             gap: 8,
           }}
         >
-          <input
-            className="mono"
+          <Input
+            className="mono h-auto flex-1 min-w-0 rounded-md px-2 py-1.5 text-[11.5px]"
             value={manualPath}
             onChange={(e) => setManualPath(e.target.value)}
             onKeyDown={(e) => {
@@ -418,17 +418,6 @@ export function RepositoryPicker({
             }}
             placeholder="/absolute/path/to/repo"
             spellCheck={false}
-            style={{
-              flex: 1,
-              minWidth: 0,
-              padding: "6px 8px",
-              borderRadius: 6,
-              border: "1px solid var(--bd-soft)",
-              background: "var(--bg-0)",
-              color: "var(--fg-1)",
-              fontSize: 11.5,
-              outline: "none",
-            }}
           />
           <Button
             variant="outline"

@@ -2,9 +2,8 @@
  * Settings — sectioned left-nav + right pane. Ported from design/screens/settings.jsx.
  *
  * Every pane is now ported and reads real data:
- *  - Agents & API keys: versions from `agent_versions`, connection state from
- *    `agent_key_status` (host-env presence, never the value); default agent is
- *    live (config store → launcher); "Stop all" is real (closeAllSessions).
+ *  - Coding Agents: versions from `agent_versions`, connection state from
+ *    `agent_key_status` (presence-only, never the value).
  *  - Container runtime / Repositories: live `docker_*` / git reads.
  *  - Appearance: theme (useTheme) + terminal font size (config store → panes) +
  *    density (config store → data-density on <html> → compact chrome).
@@ -21,8 +20,7 @@
  * the store's `config` + `updateConfig`. Controls whose feature isn't built yet
  * (per-agent permissions, cost/context budgets) render disabled until they wire.
  *
- * Copy note: keys are forwarded from the host environment, NOT an OS keychain —
- * wording corrected from the design.
+ * Credentials are stored in the OS keychain (API keys + OAuth tokens).
  */
 import { AGENT_META, AgentGlyph } from "@/app/components/primitives/AgentGlyph";
 import { Logo } from "@/app/components/primitives/Logo";
@@ -36,14 +34,13 @@ import {
   type AppInfo,
   type AppSettings,
   type AuthProgress,
-  type Cli,
   ipc,
   onAuthProgress,
 } from "@/app/lib/ipc";
 import { useStore } from "@/app/lib/store";
 import { type Theme, useTheme } from "@/app/lib/theme";
 import { Button } from "@/app/ui/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/app/ui/select";
+import { Switch } from "@/app/ui/switch";
 import { type CSSProperties, type ReactNode, useEffect, useRef, useState } from "react";
 import { ApiKeyDialog } from "../components/ApiKeyDialog";
 import { LoginTerminalDialog } from "../components/LoginTerminalDialog";
@@ -51,8 +48,6 @@ import { AgentDetail } from "./AgentDetail";
 import { IntegrationsPane } from "./Integrations";
 
 export interface SettingsProps {
-  /** Kill every running session. Defaults to the store's closeAllSessions. */
-  onStopAll?: () => void;
   /** Dev preview hook: open Agents directly on one agent's factual detail view. */
   initialAgentDetail?: AgentCli;
 }
@@ -62,7 +57,7 @@ const NAV_GROUPS: { label: string; items: { key: string; label: string; soon?: b
     label: "Workspace",
     items: [
       { key: "general", label: "General" },
-      { key: "agents", label: "Agents & API keys" },
+      { key: "agents", label: "Coding Agents" },
       { key: "integrations", label: "Integrations" },
       { key: "platform", label: "Platform" },
     ],
@@ -83,11 +78,11 @@ const NAV_GROUPS: { label: string; items: { key: string; label: string; soon?: b
   },
 ];
 
-export function Settings({ onStopAll, initialAgentDetail }: SettingsProps) {
+export function Settings({ initialAgentDetail }: SettingsProps) {
   // Every pane is now ported. Panes with a real backend (Agents, Container
   // runtime, Repositories, Keyboard shortcuts, Appearance, About) show live
   // data; the rest (General, Notifications) render honest disabled controls
-  // until the Tier-2 config store lands (BACKEND_PLAN.md).
+  // until the Tier-2 config store lands.
   // Active sub-pane is lifted to the store so other surfaces can deep-link into a
   // pane (the sidebar's "Integrations" entry, Welcome's "From GitHub" card, the
   // palette's GitHub repo rows) by setting it before navigating to Settings.
@@ -180,9 +175,18 @@ export function Settings({ onStopAll, initialAgentDetail }: SettingsProps) {
       </nav>
 
       {/* pane */}
-      <div className="scroll" style={{ flex: 1, overflow: "auto", padding: "24px 32px" }}>
+      <div
+        className={active === "agents" ? undefined : "scroll"}
+        style={{
+          flex: 1,
+          overflow: active === "agents" ? "hidden" : "auto",
+          padding: active === "agents" ? "24px 32px 0" : "24px 32px",
+          display: "flex",
+          flexDirection: "column",
+        }}
+      >
         {active === "agents" ? (
-          <AgentsPane onStopAll={onStopAll} initialDetail={initialAgentDetail} />
+          <AgentsPane initialDetail={initialAgentDetail} />
         ) : active === "integrations" ? (
           <IntegrationsPane />
         ) : active === "platform" ? (
@@ -227,12 +231,27 @@ const NATIVE_PROVIDERS: Record<AgentCli, string> = {
 
 const AGENT_DESCRIPTIONS: Record<AgentCli, string> = {
   claude:
-    "Default agent · supports Anthropic + OpenAI-compatible providers (MiniMax, GLM, Qwen, custom). Click the avatar to upload a custom logo PNG — falls back to the built-in glyph.",
+    "Anthropic's coding agent. Supports Anthropic-compatible providers (MiniMax, GLM, Qwen, custom endpoints).",
   codex:
-    "OpenAI agent · uses GPT models via the OpenAI API. Supports standard, auto, and YOLO permission modes.",
+    "OpenAI's coding agent. Uses GPT/o-series models. Supports standard, auto, and full-auto permission modes.",
   antigravity:
-    "Google agent · uses Gemini models. Standard mode only — launch flags are unverified.",
+    "Google's coding agent. Uses Gemini models. Standard mode only — launch flags are unverified.",
 };
+
+const COMPATIBLE_PROVIDERS: Record<AgentCli, string[]> = {
+  claude: ["Anthropic-compatible", "AWS Bedrock", "Vertex AI"],
+  codex: ["OpenAI-compatible", "Azure OpenAI"],
+  antigravity: [],
+};
+
+const PROVIDER_PRESETS: { name: string; kind: string; baseUrl: string; models: string[]; note?: string }[] = [
+  { name: "AWS Bedrock", kind: "bedrock", baseUrl: "", models: ["claude-sonnet-4-20250514", "claude-haiku-4-20250414"], note: "Uses AWS credentials, no base URL needed" },
+  { name: "Vertex AI", kind: "vertex", baseUrl: "", models: ["claude-sonnet-4@20250514", "claude-haiku-4@20250414"], note: "Uses GCP credentials, no base URL needed" },
+  { name: "MiniMax", kind: "anthropic-compatible", baseUrl: "https://api.minimax.io/anthropic", models: ["MiniMax-M2.7", "MiniMax-M2.5", "MiniMax-M2.7-highspeed"], note: "Anthropic-compatible endpoint. Set ANTHROPIC_AUTH_TOKEN to your MiniMax API key." },
+  { name: "GLM / Zhipu", kind: "openai-compatible", baseUrl: "https://open.bigmodel.cn/api/paas/v4", models: ["glm-4-plus", "glm-4-flash", "glm-4-long"], note: "OpenAI-compatible. Set OPENAI_API_KEY to your Zhipu API key." },
+  { name: "Azure OpenAI", kind: "azure", baseUrl: "", models: ["gpt-4o", "gpt-4o-mini"], note: "Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY" },
+  { name: "Custom endpoint", kind: "anthropic-compatible", baseUrl: "", models: [] },
+];
 
 function avatarHue(str: string): number {
   let h = 0;
@@ -246,22 +265,20 @@ function avatarInitials(label: string): string {
   return label.slice(0, 2).toUpperCase();
 }
 
-// Agents & API keys — tabbed per-agent view with hero, accounts, and providers.
+// Coding Agents — tabbed per-agent view with hero, API keys, OAuth accounts,
+// and model providers as separate sections.
 function AgentsPane({
-  onStopAll,
   initialDetail,
 }: {
-  onStopAll?: () => void;
   initialDetail?: AgentCli;
 }) {
   const keyStatus = useStore((s) => s.keyStatus);
   const agentVersions = useStore((s) => s.agentVersions);
-  const sessionCount = useStore((s) => Object.keys(s.sessionMeta).length);
-  const closeAllSessions = useStore((s) => s.closeAllSessions);
   const config = useStore((s) => s.config);
   const profiles = useStore((s) => s.accountProfiles);
   const loadAccountProfiles = useStore((s) => s.loadAccountProfiles);
   const removeAccountProfile = useStore((s) => s.removeAccountProfile);
+  const renameAccountProfile = useStore((s) => s.renameAccountProfile);
   const [detail, setDetail] = useState<AgentCli | null>(initialDetail ?? null);
   const [selectedAgent, setSelectedAgent] = useState<AgentCli>("claude");
   const [keyDialog, setKeyDialog] = useState<string | null>(null);
@@ -275,12 +292,10 @@ function AgentsPane({
     workspace: string;
   } | null>(null);
   const pendingProfileId = useRef<string | null>(null);
-
-  const stopAll = () => {
-    if (sessionCount === 0) return;
-    if (!window.confirm(`Stop all ${sessionCount} running session(s)? Scrollback is kept.`)) return;
-    (onStopAll ?? (() => void closeAllSessions()))();
-  };
+  const [managingId, setManagingId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+  const [providerDialog, setProviderDialog] = useState<{ editing?: typeof providers[number] } | null>(null);
+  const [managingProviderId, setManagingProviderId] = useState<string | null>(null);
 
   useEffect(() => {
     let unsub: (() => void) | null = null;
@@ -369,6 +384,24 @@ function AgentsPane({
     }
   };
 
+  const startManage = (id: string, label: string) => {
+    setManagingId(id);
+    setRenameValue(label);
+  };
+
+  const saveRename = async (id: string) => {
+    const trimmed = renameValue.trim();
+    if (!trimmed) return;
+    await renameAccountProfile(id, trimmed);
+    setManagingId(null);
+  };
+
+  const confirmRemove = async (id: string, label: string) => {
+    if (!window.confirm(`Remove account "${label}"? This cannot be undone.`)) return;
+    await removeAccountProfile(id);
+    setManagingId(null);
+  };
+
   if (detail)
     return <AgentDetail agent={detail} onBack={() => setDetail(null)} onSwitch={setDetail} />;
 
@@ -377,88 +410,155 @@ function AgentsPane({
   const meta = AGENT_META[selectedAgent];
   const cliSpec = CLIS.find((c) => c.id === selectedAgent)!;
   const agentProfiles = profiles.filter((p) => p.agent === selectedAgent);
+  const apiKeyProfiles = agentProfiles.filter((p) => p.source === "env");
+  const oauthProfiles = agentProfiles.filter((p) => p.source === "vault");
   const providers = config?.providers ?? [];
 
-  const tabSubtitle = (agent: AgentCli) => {
-    if (agent === "claude" && providers.length > 0) return `${providers.length + 1} providers`;
-    return NATIVE_PROVIDERS[agent];
-  };
-
-  return (
-    <div>
-      <PaneHead title="Agents & API keys">
-        Configure the coding agents available in the spawn dialog. Keys are read from your host
-        environment and forwarded into running containers — CodeHub never stores them.
-      </PaneHead>
-
-      {/* ── Defaults for new sessions ────────────────────────────────── */}
-      <SectionHead label="Defaults for new sessions" />
-      <SettingRow
-        label="Default agent"
-        desc="Pre-selected in the spawn dialog (⌘N)."
-        control={<DefaultAgentSelect />}
-        live
-      />
-      <p style={{ margin: "8px 0 0", fontSize: 11.5, color: "var(--fg-2)" }}>
-        The controls below aren't wired yet — they arrive with per-agent permission settings.
-      </p>
-      <SettingRow
-        label="Auto-approve safe commands"
-        desc="Read-only operations (ls, cat, git status) run without prompting."
-        control={<Toggle on />}
-      />
-      <SettingRow
-        label="Approve writes"
-        desc="Always ask before edits, branch ops, or shell execution."
-        control={<Toggle on />}
-      />
-      <SettingRow
-        label="Cost budget per turn"
-        desc="Auto-pause when a turn exceeds this. 0 disables."
-        control={<InputStub value="$1.00" suffix="USD" />}
-      />
-      <SettingRow
-        label="Context budget"
-        desc="Stop loading more context once this fills."
-        control={<InputStub value="800k" suffix="tokens" />}
-        last
-      />
-
-      {/* ── Danger zone ──────────────────────────────────────────────── */}
-      <SectionHead label="Danger zone" tone="err" />
-      <div
-        className="ch-card"
-        style={{
-          padding: 14,
-          borderColor: "color-mix(in oklab, var(--err) 30%, var(--bd))",
-          background: "color-mix(in oklab, var(--err) 4%, var(--bg-2))",
-          marginBottom: 32,
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-          <div>
-            <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 2 }}>
-              Stop all running agents
+  const renderProfileRow = (
+    p: (typeof profiles)[number],
+    i: number,
+    list: typeof profiles,
+  ) => {
+    const hue = avatarHue(p.id);
+    const color = `oklch(0.55 0.12 ${hue})`;
+    const isManaging = managingId === p.id;
+    const restBg = i % 2 === 1 ? "color-mix(in oklab, var(--bg-1) 40%, var(--bg-2))" : "transparent";
+    return (
+      <div key={p.id}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 14,
+            padding: "12px 16px",
+            borderBottom:
+              i === list.length - 1 && !isManaging ? "none" : "1px solid var(--bd-soft)",
+            borderLeft: `3px solid color-mix(in oklab, ${color} 50%, var(--bd))`,
+            background: restBg,
+            transition: "background 0.12s ease",
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-hover)"; }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = restBg; }}
+        >
+          <div
+            style={{
+              width: 36,
+              height: 36,
+              borderRadius: "50%",
+              background: `color-mix(in oklab, ${color} 25%, var(--bg-3))`,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontSize: 12,
+              fontWeight: 600,
+              color,
+              flexShrink: 0,
+            }}
+          >
+            {avatarInitials(p.label)}
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 2 }}>
+              <span style={{ fontSize: 13, fontWeight: 500, color: "var(--fg-0)" }}>
+                {p.label}
+              </span>
+              {p.source === "vault" && (
+                <span className="mono" style={{ fontSize: 10.5, color: "var(--fg-3)" }}>
+                  keychain
+                </span>
+              )}
             </div>
-            <div style={{ fontSize: 11.5, color: "var(--fg-2)" }}>
-              SIGTERMs every session and persists their tmux scrollback.
-              {sessionCount > 0 ? ` ${sessionCount} running.` : " None running."}
+            <div className="mono" style={{ fontSize: 11, color: "var(--fg-2)" }}>
+              {p.source === "vault"
+                ? p.present
+                  ? "stored in keychain"
+                  : "missing from keychain"
+                : (p.varName ?? "API key")}
             </div>
           </div>
-          <span style={{ flex: 1 }} />
-          <Button variant="destructive" size="sm" onClick={stopAll} disabled={sessionCount === 0}>
-            Stop all
+          <span
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 5,
+              fontSize: 11.5,
+              color: p.present ? "var(--live)" : "var(--err)",
+              whiteSpace: "nowrap",
+            }}
+          >
+            <StatusDot status={p.present ? "live" : "err"} />
+            {p.present ? "Active" : "Missing"}
+          </span>
+          <Button
+            variant="outline"
+            size="xs"
+            onClick={() => (isManaging ? setManagingId(null) : startManage(p.id, p.label))}
+          >
+            {isManaging ? "Done" : "Manage"}
           </Button>
         </div>
+        {isManaging && (
+          <div
+            style={{
+              padding: "10px 16px 12px",
+              background: "var(--bg-1)",
+              borderBottom: i === list.length - 1 ? "none" : "1px solid var(--bd-soft)",
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+            }}
+          >
+            <label style={{ fontSize: 12, color: "var(--fg-2)", flexShrink: 0 }}>Name</label>
+            <input
+              type="text"
+              value={renameValue}
+              onChange={(e) => setRenameValue(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && void saveRename(p.id)}
+              style={{
+                flex: 1,
+                padding: "5px 10px",
+                border: "1px solid var(--bd)",
+                borderRadius: 6,
+                background: "var(--bg-0)",
+                color: "var(--fg-0)",
+                fontSize: 12.5,
+                fontFamily: "var(--sans)",
+                outline: "none",
+              }}
+            />
+            <Button
+              variant="outline"
+              size="xs"
+              onClick={() => void saveRename(p.id)}
+              disabled={!renameValue.trim() || renameValue.trim() === p.label}
+            >
+              Save
+            </Button>
+            <Button
+              variant="destructive"
+              size="xs"
+              onClick={() => void confirmRemove(p.id, p.label)}
+            >
+              Remove
+            </Button>
+          </div>
+        )}
       </div>
+    );
+  };
 
+  const compatiblePresets = COMPATIBLE_PROVIDERS[selectedAgent];
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, overflow: "hidden" }}>
       {/* ── Agent tab bar ────────────────────────────────────────────── */}
       <div
         style={{
           display: "flex",
           alignItems: "center",
           borderBottom: "1px solid var(--bd-soft)",
-          marginBottom: 28,
+          marginBottom: 24,
+          flexShrink: 0,
         }}
       >
         {CLIS.map((c) => {
@@ -472,7 +572,7 @@ function AgentsPane({
                 display: "flex",
                 alignItems: "center",
                 gap: 8,
-                padding: "12px 18px",
+                padding: "10px 16px",
                 border: "none",
                 cursor: "pointer",
                 background: "transparent",
@@ -491,48 +591,28 @@ function AgentsPane({
                 color={sel ? AGENT_META[c.id].accent : "var(--fg-3)"}
               />
               {c.label}
-              <span style={{ color: "var(--fg-3)", fontSize: 12 }}>· {tabSubtitle(c.id)}</span>
             </button>
           );
         })}
-        <button
-          type="button"
-          disabled
-          style={{
-            marginLeft: "auto",
-            display: "flex",
-            alignItems: "center",
-            gap: 5,
-            padding: "10px 14px",
-            border: "none",
-            cursor: "default",
-            background: "transparent",
-            color: "var(--fg-3)",
-            fontSize: 12.5,
-            fontFamily: "var(--sans)",
-            opacity: 0.5,
-          }}
-        >
-          {Ico.plus} Custom agent
-        </button>
       </div>
 
-      {/* ── Agent hero ───────────────────────────────────────────────── */}
+      {/* ── Agent hero (compact) ─────────────────────────────────────── */}
       <div
         style={{
           display: "flex",
-          alignItems: "flex-start",
-          gap: 18,
-          marginBottom: 32,
+          alignItems: "center",
+          gap: 14,
+          marginBottom: 24,
+          flexShrink: 0,
         }}
       >
         <button
           type="button"
           onClick={() => setDetail(selectedAgent)}
           style={{
-            width: 60,
-            height: 60,
-            borderRadius: 14,
+            width: 44,
+            height: 44,
+            borderRadius: 12,
             background: `color-mix(in oklab, ${meta.accent} 14%, var(--bg-1))`,
             border: `1px solid color-mix(in oklab, ${meta.accent} 30%, var(--bd))`,
             display: "flex",
@@ -543,20 +623,13 @@ function AgentsPane({
           }}
           title="View agent details"
         >
-          <span style={{ transform: "scale(2.4)" }}>
+          <span style={{ transform: "scale(1.8)" }}>
             <AgentGlyph agent={selectedAgent} size={14} color={meta.accent} />
           </span>
         </button>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
-            <span
-              style={{
-                fontSize: 22,
-                fontWeight: 600,
-                letterSpacing: "-0.01em",
-                color: "var(--fg-0)",
-              }}
-            >
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontSize: 17, fontWeight: 600, color: "var(--fg-0)" }}>
               {cliSpec.label}
             </span>
             {ver?.version && <Tag>v{ver.version}</Tag>}
@@ -565,22 +638,17 @@ function AgentsPane({
                 style={{
                   display: "inline-flex",
                   alignItems: "center",
-                  gap: 5,
-                  padding: "3px 10px",
+                  gap: 4,
+                  padding: "2px 8px",
                   borderRadius: 999,
-                  fontSize: 11,
+                  fontSize: 10.5,
                   fontWeight: 600,
-                  letterSpacing: "0.04em",
+                  letterSpacing: "0.03em",
                   textTransform: "uppercase",
                   background: key.present
-                    ? "color-mix(in oklab, var(--live) 15%, transparent)"
-                    : "color-mix(in oklab, var(--wait) 15%, transparent)",
+                    ? "color-mix(in oklab, var(--live) 12%, transparent)"
+                    : "color-mix(in oklab, var(--wait) 12%, transparent)",
                   color: key.present ? "var(--live)" : "var(--wait)",
-                  border: `1px solid ${
-                    key.present
-                      ? "color-mix(in oklab, var(--live) 30%, transparent)"
-                      : "color-mix(in oklab, var(--wait) 30%, transparent)"
-                  }`,
                 }}
               >
                 <StatusDot status={key.present ? "live" : "wait"} />
@@ -588,408 +656,448 @@ function AgentsPane({
               </span>
             )}
           </div>
-          <p
-            style={{
-              margin: 0,
-              fontSize: 13,
-              color: "var(--fg-2)",
-              lineHeight: 1.55,
-              maxWidth: 700,
-            }}
-          >
+          <p style={{ margin: "3px 0 0", fontSize: 12, color: "var(--fg-2)", lineHeight: 1.45 }}>
             {AGENT_DESCRIPTIONS[selectedAgent]}
           </p>
         </div>
-        <div style={{ flexShrink: 0 }}>
-          <RefreshVersionsButton />
-        </div>
+        <RefreshVersionsButton />
       </div>
 
-      {/* ── Accounts ─────────────────────────────────────────────────── */}
-      <SectionHead label={`Accounts · ${agentProfiles.length}`} />
-      {agentProfiles.length > 0 ? (
-        <div className="ch-card" style={{ padding: 0, marginBottom: 12 }}>
-          {agentProfiles.map((p, i) => {
-            const hue = avatarHue(p.id);
-            const color = `oklch(0.55 0.12 ${hue})`;
-            return (
-              <div
-                key={p.id}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 14,
-                  padding: "12px 16px",
-                  borderBottom:
-                    i === agentProfiles.length - 1 ? "none" : "1px solid var(--bd-soft)",
-                }}
-              >
-                <div
-                  style={{
-                    width: 36,
-                    height: 36,
-                    borderRadius: "50%",
-                    background: `color-mix(in oklab, ${color} 25%, var(--bg-3))`,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    fontSize: 12,
-                    fontWeight: 600,
-                    color,
-                    flexShrink: 0,
-                  }}
-                >
-                  {avatarInitials(p.label)}
-                </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 2 }}>
-                    <span style={{ fontSize: 13, fontWeight: 500, color: "var(--fg-0)" }}>
-                      {p.label}
-                    </span>
-                    <Tag>{p.agent}</Tag>
-                    {p.source === "vault" && (
-                      <span className="mono" style={{ fontSize: 10.5, color: "var(--fg-3)" }}>
-                        keychain
-                      </span>
-                    )}
-                  </div>
-                  <div className="mono" style={{ fontSize: 11, color: "var(--fg-2)" }}>
-                    {p.source === "vault"
-                      ? p.present
-                        ? "stored in keychain"
-                        : "missing from keychain"
-                      : (p.varName ?? "host env")}
-                  </div>
-                </div>
-                <span
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 5,
-                    fontSize: 11.5,
-                    color: p.present ? "var(--live)" : "var(--err)",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  <StatusDot status={p.present ? "live" : "err"} />
-                  {p.present ? "Active" : "Missing"}
-                </span>
-                <Button
-                  variant="outline"
-                  size="xs"
-                  onClick={() => void removeAccountProfile(p.id)}
-                  aria-label={`Manage ${p.label}`}
-                >
-                  Manage
-                </Button>
-              </div>
-            );
-          })}
-        </div>
-      ) : (
-        <div
-          className="ch-card"
-          style={{
-            padding: "20px 16px",
-            marginBottom: 12,
-            fontSize: 12.5,
-            color: "var(--fg-2)",
-            textAlign: "center",
-          }}
-        >
-          No accounts configured for {cliSpec.label}.
-        </div>
-      )}
-
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={loginBusy != null}
-          onClick={() => startLogin(selectedAgent, selectedAgent)}
-        >
-          {Ico.plus}
-          {loginBusy === selectedAgent ? "Signing in…" : `Sign in with ${cliSpec.alias}`}
-        </Button>
-        <Button variant="ghost" size="sm" onClick={() => setKeyDialog(selectedAgent)}>
-          Add API key
-        </Button>
-      </div>
-
-      {loginProgress && loginProgress.stage !== "success" && (
-        <div
-          className="ch-card mono"
-          style={{
-            padding: "10px 14px",
-            marginBottom: 10,
-            fontSize: 11.5,
-            color: loginProgress.stage === "error" ? "var(--err)" : "var(--fg-1)",
-            display: "flex",
-            flexDirection: "column",
-            gap: 6,
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            {loginProgress.stage === "starting" && (
-              <span style={{ color: "var(--fg-2)" }}>Starting...</span>
-            )}
-            {loginProgress.stage === "url" && (
-              <span>Browser opened — authenticate to continue</span>
-            )}
-            {loginProgress.stage === "device_code" && <span>Enter code in your browser:</span>}
-            {loginProgress.stage === "waiting" && (
-              <span style={{ color: "var(--fg-2)" }}>Waiting for authentication...</span>
-            )}
-            {loginProgress.stage === "error" && <span>{loginProgress.message}</span>}
-          </div>
-          {loginProgress.userCode && (
+      {/* ── Sections ─────────────────────────────────────────────── */}
+      <div
+        className="scroll"
+        style={{
+          flex: 1,
+          minHeight: 0,
+          overflow: "auto",
+          display: "flex",
+          flexDirection: "column",
+          gap: 16,
+          paddingBottom: 24,
+        }}
+      >
+        {/* ── Credentials ─────────────────────────────────────────── */}
+        <SectionHead label="Credentials" />
+        <div style={{ display: "flex", gap: 12 }}>
+          {/* ── API Keys ───────────────────────────────────────────── */}
+          <section
+            className="ch-card"
+            style={{
+              flex: 1,
+              display: "flex",
+              flexDirection: "column",
+              padding: 0,
+              overflow: "hidden",
+            }}
+          >
             <div
               style={{
-                padding: "6px 12px",
-                background: "var(--bg-0)",
-                border: "1px solid var(--bd)",
-                borderRadius: 6,
-                fontSize: 18,
-                fontWeight: 700,
-                letterSpacing: "0.15em",
-                color: "var(--fg-0)",
-                textAlign: "center",
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                padding: "8px 14px",
+                borderBottom: "1px solid var(--bd-soft)",
+                flexShrink: 0,
               }}
             >
-              {loginProgress.userCode}
+              <span style={{ fontSize: 12, fontWeight: 500, color: "var(--fg-0)" }}>API Keys</span>
+              <span className="mono" style={{ fontSize: 10.5, color: "var(--fg-3)" }}>
+                {apiKeyProfiles.length}
+              </span>
+              <span style={{ flex: 1 }} />
+              {apiKeyProfiles.length > 0 && (
+                <Button variant="ghost" size="xs" onClick={() => setKeyDialog(selectedAgent)}>
+                  {Ico.plus} Add key
+                </Button>
+              )}
             </div>
-          )}
-          {loginProgress.url && loginProgress.stage !== "error" && (
-            <div style={{ fontSize: 10.5, color: "var(--fg-3)" }}>{loginProgress.url}</div>
-          )}
-          {loginProgress.message && loginProgress.stage !== "error" && (
-            <div style={{ fontSize: 10.5, color: "var(--fg-2)" }}>{loginProgress.message}</div>
-          )}
-        </div>
-      )}
+            <div>
+              {apiKeyProfiles.length > 0 ? (
+                <div>
+                  {apiKeyProfiles.map((p, i) => renderProfileRow(p, i, apiKeyProfiles))}
+                </div>
+              ) : (
+                <AgentSectionEmpty
+                  message={`No API keys for ${cliSpec.label}`}
+                  actionLabel="Add API key"
+                  onAction={() => setKeyDialog(selectedAgent)}
+                />
+              )}
+            </div>
+          </section>
 
-      {loginProgress?.stage === "success" && (
-        <div
-          className="mono"
-          style={{
-            marginBottom: 10,
-            padding: "8px 12px",
-            borderRadius: 6,
-            background: "color-mix(in oklab, var(--live) 8%, var(--bg-2))",
-            border: "1px solid color-mix(in oklab, var(--live) 30%, var(--bd))",
-            fontSize: 11.5,
-            color: "var(--live)",
-          }}
-        >
-          {loginProgress.message ?? "Signed in successfully"}
-        </div>
-      )}
+          {/* ── OAuth Accounts ───────────────────────────────────────── */}
+          <section
+            className="ch-card"
+            style={{
+              flex: 1,
+              display: "flex",
+              flexDirection: "column",
+              padding: 0,
+              overflow: "hidden",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                padding: "8px 14px",
+                borderBottom: "1px solid var(--bd-soft)",
+                flexShrink: 0,
+              }}
+            >
+              <span style={{ fontSize: 12, fontWeight: 500, color: "var(--fg-0)" }}>
+                OAuth Accounts
+              </span>
+              <span className="mono" style={{ fontSize: 10.5, color: "var(--fg-3)" }}>
+                {oauthProfiles.length}
+              </span>
+              <span style={{ flex: 1 }} />
+              {oauthProfiles.length > 0 && (
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  disabled={loginBusy != null}
+                  onClick={() => startLogin(selectedAgent, selectedAgent)}
+                >
+                  {Ico.plus}
+                  {loginBusy === selectedAgent ? "Signing in…" : "Sign in"}
+                </Button>
+              )}
+            </div>
+          <div>
+            {oauthProfiles.length > 0 ? (
+              <div>
+                {oauthProfiles.map((p, i) => renderProfileRow(p, i, oauthProfiles))}
+              </div>
+            ) : (
+              <AgentSectionEmpty
+                message={`No OAuth accounts for ${cliSpec.label}`}
+                actionLabel={`Sign in with ${cliSpec.alias}`}
+                onAction={() => startLogin(selectedAgent, selectedAgent)}
+                disabled={loginBusy != null}
+                busy={loginBusy === selectedAgent}
+              />
+            )}
 
-      {loginError && !loginProgress && (
-        <div
-          className="mono"
-          style={{
-            marginBottom: 10,
-            padding: "8px 12px",
-            borderRadius: 6,
-            background: "color-mix(in oklab, var(--err) 8%, var(--bg-2))",
-            border: "1px solid color-mix(in oklab, var(--err) 30%, var(--bd))",
-            fontSize: 11.5,
-            color: "var(--err)",
-          }}
-        >
-          {loginError}
-        </div>
-      )}
+            {loginProgress && loginProgress.stage !== "success" && (
+              <div
+                className="mono"
+                style={{
+                  padding: "10px 14px",
+                  margin: "0 14px 10px",
+                  fontSize: 11.5,
+                  color: loginProgress.stage === "error" ? "var(--err)" : "var(--fg-1)",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 6,
+                  background: "var(--bg-2)",
+                  border: "1px solid var(--bd-soft)",
+                  borderRadius: 8,
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  {loginProgress.stage === "starting" && (
+                    <span style={{ color: "var(--fg-2)" }}>Starting...</span>
+                  )}
+                  {loginProgress.stage === "url" && (
+                    <span>Browser opened — authenticate to continue</span>
+                  )}
+                  {loginProgress.stage === "device_code" && <span>Enter code in your browser:</span>}
+                  {loginProgress.stage === "waiting" && (
+                    <span style={{ color: "var(--fg-2)" }}>Waiting for authentication...</span>
+                  )}
+                  {loginProgress.stage === "error" && <span>{loginProgress.message}</span>}
+                </div>
+                {loginProgress.userCode && (
+                  <div
+                    style={{
+                      padding: "6px 12px",
+                      background: "var(--bg-0)",
+                      border: "1px solid var(--bd)",
+                      borderRadius: 6,
+                      fontSize: 18,
+                      fontWeight: 700,
+                      letterSpacing: "0.15em",
+                      color: "var(--fg-0)",
+                      textAlign: "center",
+                    }}
+                  >
+                    {loginProgress.userCode}
+                  </div>
+                )}
+                {loginProgress.url && loginProgress.stage !== "error" && (
+                  <div style={{ fontSize: 10.5, color: "var(--fg-3)" }}>{loginProgress.url}</div>
+                )}
+                {loginProgress.message && loginProgress.stage !== "error" && (
+                  <div style={{ fontSize: 10.5, color: "var(--fg-2)" }}>{loginProgress.message}</div>
+                )}
+              </div>
+            )}
 
-      {/* ── Model Providers ──────────────────────────────────────────── */}
-      <SectionHead label={`Model Providers · ${providers.length + 1}`} />
-      <div className="ch-card" style={{ padding: 0, marginBottom: 12 }}>
-        {/* Native provider for selected agent */}
-        <div
+            {loginProgress?.stage === "success" && (
+              <div
+                className="mono"
+                style={{
+                  margin: "0 14px 10px",
+                  padding: "8px 12px",
+                  borderRadius: 6,
+                  background: "color-mix(in oklab, var(--live) 8%, var(--bg-2))",
+                  border: "1px solid color-mix(in oklab, var(--live) 30%, var(--bd))",
+                  fontSize: 11.5,
+                  color: "var(--live)",
+                }}
+              >
+                {loginProgress.message ?? "Signed in successfully"}
+              </div>
+            )}
+
+            {loginError && !loginProgress && (
+              <div
+                className="mono"
+                style={{
+                  margin: "0 14px 10px",
+                  padding: "8px 12px",
+                  borderRadius: 6,
+                  background: "color-mix(in oklab, var(--err) 8%, var(--bg-2))",
+                  border: "1px solid color-mix(in oklab, var(--err) 30%, var(--bd))",
+                  fontSize: 11.5,
+                  color: "var(--err)",
+                }}
+              >
+                {loginError}
+              </div>
+            )}
+          </div>
+        </section>
+        </div>
+
+        {/* ── Model Providers ────────────────────────────────────────── */}
+        <SectionHead label="Model Providers" />
+        <section
+          className="ch-card"
           style={{
+            flexShrink: 0,
             display: "flex",
-            alignItems: "center",
-            gap: 14,
-            padding: "12px 16px",
-            borderBottom: providers.length === 0 ? "none" : "1px solid var(--bd-soft)",
+            flexDirection: "column",
+            padding: 0,
+            overflow: "hidden",
           }}
         >
           <div
             style={{
-              width: 36,
-              height: 36,
-              borderRadius: "50%",
-              background: "var(--bg-3)",
               display: "flex",
               alignItems: "center",
-              justifyContent: "center",
-              fontSize: 14,
-              fontWeight: 600,
-              color: "var(--fg-1)",
+              gap: 10,
+              padding: "8px 14px",
+              borderBottom: "1px solid var(--bd-soft)",
               flexShrink: 0,
             }}
           >
-            {NATIVE_PROVIDERS[selectedAgent][0]}
+            <span className="mono" style={{ fontSize: 10.5, color: "var(--fg-3)" }}>
+              {providers.length + 1} configured
+            </span>
+            <span style={{ flex: 1 }} />
+            {compatiblePresets.length > 0 && (
+              <Button variant="ghost" size="xs" onClick={() => setProviderDialog({})}>
+                {Ico.plus} Add provider
+              </Button>
+            )}
           </div>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 2 }}>
-              <span style={{ fontSize: 13, fontWeight: 500, color: "var(--fg-0)" }}>
-                {NATIVE_PROVIDERS[selectedAgent]}
-              </span>
-              <Tag>default</Tag>
-            </div>
-            <div className="mono" style={{ fontSize: 11, color: "var(--fg-2)" }}>
-              Native · {key?.source === "vault" ? "keychain" : "env"}
-            </div>
-          </div>
-          <span
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 5,
-              fontSize: 11.5,
-              color: key?.present ? "var(--live)" : "var(--fg-2)",
-              whiteSpace: "nowrap",
-            }}
-          >
-            <StatusDot status={key?.present ? "live" : "idle"} />
-            {key?.present ? "Connected" : "Disconnected"}
-          </span>
-          <button
-            type="button"
-            style={{
-              padding: "4px 6px",
-              border: "1px solid var(--bd)",
-              borderRadius: 6,
-              background: "transparent",
-              color: "var(--fg-2)",
-              fontSize: 14,
-              cursor: "pointer",
-              lineHeight: 1,
-              display: "flex",
-              alignItems: "center",
-            }}
-          >
-            ···
-          </button>
-        </div>
-        {/* Custom providers */}
-        {providers.map((p, i) => {
-          const hue = avatarHue(p.name);
-          const color = `oklch(0.55 0.12 ${hue})`;
-          return (
+          <div>
+            {/* native provider row — left accent stripe marks it as the default */}
             <div
-              key={p.id}
               style={{
                 display: "flex",
                 alignItems: "center",
-                gap: 14,
-                padding: "12px 16px",
-                borderBottom: i === providers.length - 1 ? "none" : "1px solid var(--bd-soft)",
+                gap: 12,
+                padding: "10px 14px",
+                borderBottom: "1px solid var(--bd-soft)",
+                borderLeft: `3px solid ${meta.accent}`,
+                transition: "background 0.12s ease",
               }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-hover)"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
             >
               <div
                 style={{
-                  width: 36,
-                  height: 36,
-                  borderRadius: "50%",
-                  background: `color-mix(in oklab, ${color} 25%, var(--bg-3))`,
+                  width: 30,
+                  height: 30,
+                  borderRadius: 8,
+                  background: `color-mix(in oklab, ${meta.accent} 12%, var(--bg-3))`,
+                  border: `1px solid color-mix(in oklab, ${meta.accent} 25%, var(--bd))`,
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
-                  fontSize: 14,
+                  fontSize: 12,
                   fontWeight: 600,
-                  color,
+                  color: "var(--fg-0)",
                   flexShrink: 0,
                 }}
               >
-                {p.name[0]}
+                {NATIVE_PROVIDERS[selectedAgent][0]}
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 2 }}>
-                  <span style={{ fontSize: 13, fontWeight: 500, color: "var(--fg-0)" }}>
-                    {p.name}
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 1 }}>
+                  <span style={{ fontSize: 12.5, fontWeight: 500, color: "var(--fg-0)" }}>
+                    {NATIVE_PROVIDERS[selectedAgent]}
                   </span>
+                  <Tag>default</Tag>
                 </div>
-                <div className="mono" style={{ fontSize: 11, color: "var(--fg-2)" }}>
-                  {p.kind}
-                  {p.endpoint ? ` · ${p.endpoint}` : ""}
+                <div className="mono" style={{ fontSize: 10.5, color: "var(--fg-2)" }}>
+                  Native · keychain
                 </div>
               </div>
-              {p.models.length > 0 && (
-                <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                  {p.models.slice(0, 3).map((m) => (
-                    <span
-                      key={m}
-                      className="mono"
-                      style={{
-                        padding: "2px 8px",
-                        borderRadius: 4,
-                        border: "1px solid var(--bd)",
-                        background: "var(--bg-1)",
-                        fontSize: 10.5,
-                        color: "var(--fg-1)",
-                      }}
-                    >
-                      {m}
-                    </span>
-                  ))}
-                </div>
-              )}
               <span
                 style={{
                   display: "inline-flex",
                   alignItems: "center",
-                  gap: 5,
-                  fontSize: 11.5,
-                  color: p.enabled ? "var(--live)" : "var(--fg-2)",
+                  gap: 4,
+                  fontSize: 11,
+                  color: key?.present ? "var(--live)" : "var(--fg-3)",
                   whiteSpace: "nowrap",
                 }}
               >
-                <StatusDot status={p.enabled ? "live" : "idle"} />
-                {p.enabled ? "Connected" : "Disabled"}
-              </span>
-              <span
-                style={{ color: "var(--fg-3)", fontSize: 16, cursor: "pointer", lineHeight: 1 }}
-              >
-                ···
+                <StatusDot status={key?.present ? "live" : "idle"} />
+                {key?.present ? "Connected" : "Disconnected"}
               </span>
             </div>
-          );
-        })}
-      </div>
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          flexWrap: "wrap",
-          marginBottom: 32,
-        }}
-      >
-        <Button variant="outline" size="sm" disabled>
-          {Ico.plus} Add provider
-        </Button>
-        {["OpenAI-compatible", "AWS Bedrock", "Vertex AI", "Ollama"].map((preset) => (
-          <span
-            key={preset}
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 5,
-              padding: "6px 12px",
-              borderRadius: 999,
-              border: "1px solid var(--bd)",
-              background: "var(--bg-2)",
-              color: "var(--fg-2)",
-              fontSize: 11.5,
-              opacity: 0.6,
-            }}
-          >
-            {preset}
-          </span>
-        ))}
+            {/* custom provider rows */}
+            {providers.map((p, i) => {
+              const hue = avatarHue(p.name);
+              const color = `oklch(0.55 0.12 ${hue})`;
+              const isManagingProvider = managingProviderId === p.id;
+              return (
+                <div key={p.id}>
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 12,
+                      padding: "10px 14px",
+                      borderBottom: (i === providers.length - 1 && !isManagingProvider) ? "none" : "1px solid var(--bd-soft)",
+                      borderLeft: `3px solid color-mix(in oklab, ${color} 50%, var(--bd))`,
+                      background: i % 2 === 0 ? "color-mix(in oklab, var(--bg-1) 40%, var(--bg-2))" : "transparent",
+                      transition: "background 0.12s ease",
+                    }}
+                    onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-hover)"; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = i % 2 === 0 ? "color-mix(in oklab, var(--bg-1) 40%, var(--bg-2))" : "transparent"; }}
+                  >
+                    <div
+                      style={{
+                        width: 30,
+                        height: 30,
+                        borderRadius: 8,
+                        background: `color-mix(in oklab, ${color} 25%, var(--bg-3))`,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        fontSize: 12,
+                        fontWeight: 600,
+                        color,
+                        flexShrink: 0,
+                      }}
+                    >
+                      {p.name[0]}
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <span style={{ fontSize: 12.5, fontWeight: 500, color: "var(--fg-0)" }}>
+                        {p.name}
+                      </span>
+                      <div className="mono" style={{ fontSize: 10.5, color: "var(--fg-2)" }}>
+                        {p.kind}
+                        {p.endpoint ? ` · ${p.endpoint}` : ""}
+                      </div>
+                    </div>
+                    {p.models.length > 0 && (
+                      <div style={{ display: "flex", gap: 3, flexWrap: "wrap" }}>
+                        {p.models.slice(0, 3).map((m) => (
+                          <span
+                            key={m}
+                            className="mono"
+                            style={{
+                              padding: "1px 6px",
+                              borderRadius: 3,
+                              border: "1px solid var(--bd)",
+                              background: "var(--bg-1)",
+                              fontSize: 10,
+                              color: "var(--fg-1)",
+                            }}
+                          >
+                            {m}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    <Switch
+                      checked={p.enabled}
+                      onCheckedChange={async (checked) => {
+                        const list = await ipc.updateProvider(p.id, undefined, undefined, checked);
+                        useStore.setState((s) => ({ config: s.config ? { ...s.config, providers: list } : s.config }));
+                      }}
+                    />
+                    <Button
+                      variant="outline"
+                      size="xs"
+                      onClick={() => isManagingProvider ? setManagingProviderId(null) : setManagingProviderId(p.id)}
+                    >
+                      {isManagingProvider ? "Done" : "Manage"}
+                    </Button>
+                  </div>
+                  {isManagingProvider && (
+                    <div
+                      style={{
+                        padding: "10px 16px 12px",
+                        background: "var(--bg-1)",
+                        borderBottom: i === providers.length - 1 ? "none" : "1px solid var(--bd-soft)",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 10,
+                      }}
+                    >
+                      <Button
+                        variant="outline"
+                        size="xs"
+                        onClick={() => { setProviderDialog({ editing: p }); setManagingProviderId(null); }}
+                      >
+                        Edit
+                      </Button>
+                      <span style={{ flex: 1 }} />
+                      <Button
+                        variant="destructive"
+                        size="xs"
+                        onClick={async () => {
+                          if (!window.confirm(`Remove provider "${p.name}"?`)) return;
+                          const list = await ipc.removeProvider(p.id);
+                          useStore.setState((s) => ({ config: s.config ? { ...s.config, providers: list } : s.config }));
+                          setManagingProviderId(null);
+                        }}
+                      >
+                        Remove
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+            {compatiblePresets.length === 0 && (
+              <div
+                className="mono"
+                style={{
+                  fontSize: 10.5,
+                  color: "var(--fg-3)",
+                  padding: "10px 14px",
+                }}
+              >
+                Custom providers not yet supported for {cliSpec.label}.
+              </div>
+            )}
+            {compatiblePresets.length > 0 && providers.length === 0 && (
+              <ProviderEmptyHint onAdd={() => setProviderDialog({})} />
+            )}
+          </div>
+        </section>
       </div>
 
       {keyDialog && (
@@ -1008,6 +1116,362 @@ function AgentsPane({
           onDone={handleDialogDone}
         />
       )}
+      {providerDialog && (
+        <ProviderDialog
+          editing={providerDialog.editing}
+          agent={selectedAgent}
+          onClose={() => setProviderDialog(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+function AgentSectionEmpty({
+  message,
+  actionLabel,
+  onAction,
+  disabled,
+  busy,
+}: {
+  message: string;
+  actionLabel: string;
+  onAction: () => void;
+  disabled?: boolean;
+  busy?: boolean;
+}) {
+  return (
+    <div style={{ padding: 10 }}>
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => onAction()}
+        style={{
+          width: "100%",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 6,
+          padding: "18px 16px",
+          border: "1px dashed var(--bd)",
+          borderRadius: 8,
+          background: "transparent",
+          cursor: disabled ? "default" : "pointer",
+          color: "var(--fg-3)",
+          fontFamily: "var(--sans)",
+          fontSize: 12,
+          transition: "border-color 0.15s ease, background 0.15s ease",
+        }}
+        onMouseEnter={(e) => {
+          if (!disabled) {
+            e.currentTarget.style.borderColor = "var(--fg-2)";
+            e.currentTarget.style.background = "var(--bg-hover)";
+          }
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.borderColor = "var(--bd)";
+          e.currentTarget.style.background = "transparent";
+        }}
+      >
+        <span style={{ fontSize: 11.5, color: "var(--fg-3)" }}>{message}</span>
+        <span
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 4,
+            fontSize: 12,
+            fontWeight: 500,
+            color: "var(--fg-2)",
+          }}
+        >
+          {Ico.plus} {busy ? "Working…" : actionLabel}
+        </span>
+      </button>
+    </div>
+  );
+}
+
+function ProviderEmptyHint({ onAdd }: { onAdd: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onAdd}
+      style={{
+        width: "100%",
+        padding: "14px 16px",
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
+        border: "none",
+        background: "transparent",
+        cursor: "pointer",
+        fontFamily: "var(--sans)",
+        transition: "background 0.12s ease",
+      }}
+      onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-hover)"; }}
+      onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+    >
+      <span style={{
+        width: 30, height: 30, borderRadius: 8,
+        border: "1px dashed var(--bd)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        fontSize: 14, color: "var(--fg-3)", flexShrink: 0,
+      }}>
+        {Ico.plus}
+      </span>
+      <span style={{ fontSize: 12, color: "var(--fg-2)", textAlign: "left" }}>
+        Add a provider — Bedrock, Vertex AI, MiniMax, or any OpenAI-compatible endpoint
+      </span>
+    </button>
+  );
+}
+
+function ProviderDialog({
+  editing,
+  onClose,
+}: {
+  editing?: { id: string; name: string; kind: string; endpoint: string | null; models: string[]; enabled: boolean };
+  agent?: AgentCli;
+  onClose: () => void;
+}) {
+  const [name, setName] = useState(editing?.name ?? "");
+  const [kind, setKind] = useState(editing?.kind ?? "openai-compatible");
+  const [endpoint, setEndpoint] = useState(editing?.endpoint ?? "");
+  const [modelsStr, setModelsStr] = useState(editing?.models.join(", ") ?? "");
+  const [saving, setSaving] = useState(false);
+  const [selectedPreset, setSelectedPreset] = useState<number | null>(null);
+
+  const applyPreset = (idx: number) => {
+    const p = PROVIDER_PRESETS[idx];
+    setSelectedPreset(idx);
+    setName(p.name);
+    setKind(p.kind);
+    setEndpoint(p.baseUrl);
+    setModelsStr(p.models.join(", "));
+  };
+
+  const handleSave = async () => {
+    if (!name.trim()) return;
+    setSaving(true);
+    try {
+      const models = modelsStr.split(",").map((s) => s.trim()).filter(Boolean);
+      let list;
+      if (editing) {
+        list = await ipc.updateProvider(editing.id, name.trim(), endpoint.trim() || undefined, undefined, models);
+      } else {
+        list = await ipc.addProvider(name.trim(), kind, endpoint.trim() || undefined, undefined, models);
+      }
+      useStore.setState((s) => ({ config: s.config ? { ...s.config, providers: list } : s.config }));
+      onClose();
+    } catch (e) {
+      console.error("provider save failed", e);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const inputStyle: CSSProperties = {
+    width: "100%",
+    padding: "7px 10px",
+    border: "1px solid var(--bd)",
+    borderRadius: 6,
+    background: "var(--bg-0)",
+    color: "var(--fg-0)",
+    fontSize: 12.5,
+    fontFamily: "var(--sans)",
+    outline: "none",
+  };
+
+  return (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 9999,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        background: "rgba(0,0,0,0.5)",
+        backdropFilter: "blur(4px)",
+      }}
+      onClick={(e) => e.target === e.currentTarget && onClose()}
+    >
+      <div
+        style={{
+          width: 480,
+          background: "var(--bg-2)",
+          border: "1px solid var(--bd)",
+          borderRadius: 12,
+          boxShadow: "var(--shadow-3)",
+          overflow: "hidden",
+        }}
+      >
+        <div
+          style={{
+            padding: "16px 20px 12px",
+            borderBottom: "1px solid var(--bd-soft)",
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+          }}
+        >
+          <span style={{ fontSize: 15, fontWeight: 600, color: "var(--fg-0)", flex: 1 }}>
+            {editing ? "Edit provider" : "Add model provider"}
+          </span>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{
+              border: "none",
+              background: "transparent",
+              color: "var(--fg-2)",
+              fontSize: 18,
+              cursor: "pointer",
+              padding: "2px 6px",
+            }}
+          >
+            ×
+          </button>
+        </div>
+
+        <div style={{ padding: "16px 20px", display: "flex", flexDirection: "column", gap: 14 }}>
+          {!editing && (
+            <div>
+              <label className="lbl" style={{ display: "block", marginBottom: 8, fontSize: 10.5 }}>
+                Quick start
+              </label>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {PROVIDER_PRESETS.map((p, i) => (
+                  <button
+                    key={p.name}
+                    type="button"
+                    onClick={() => applyPreset(i)}
+                    style={{
+                      padding: "6px 12px",
+                      borderRadius: 6,
+                      border: selectedPreset === i
+                        ? "1px solid var(--pri)"
+                        : "1px solid var(--bd)",
+                      background: selectedPreset === i
+                        ? "var(--pri-dim)"
+                        : "var(--bg-3)",
+                      color: selectedPreset === i ? "var(--fg-0)" : "var(--fg-1)",
+                      fontSize: 12,
+                      fontFamily: "var(--sans)",
+                      cursor: "pointer",
+                      transition: "border-color 0.12s ease, background 0.12s ease",
+                    }}
+                  >
+                    {p.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div>
+            <label style={{ display: "block", fontSize: 12, color: "var(--fg-1)", marginBottom: 4 }}>
+              Name
+            </label>
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="e.g. MiniMax Production"
+              style={inputStyle}
+            />
+          </div>
+
+          <div>
+            <label style={{ display: "block", fontSize: 12, color: "var(--fg-1)", marginBottom: 4 }}>
+              Type
+            </label>
+            <select
+              className="mono"
+              value={kind}
+              onChange={(e) => setKind(e.target.value)}
+              style={{
+                ...inputStyle,
+                fontFamily: "var(--mono)",
+              }}
+            >
+              <option value="anthropic-compatible">Anthropic-compatible</option>
+              <option value="openai-compatible">OpenAI-compatible</option>
+              <option value="bedrock">AWS Bedrock</option>
+              <option value="vertex">Vertex AI</option>
+              <option value="azure">Azure OpenAI</option>
+            </select>
+          </div>
+
+          <div>
+            <label style={{ display: "block", fontSize: 12, color: "var(--fg-1)", marginBottom: 4 }}>
+              Endpoint URL
+            </label>
+            <input
+              type="text"
+              value={endpoint}
+              onChange={(e) => setEndpoint(e.target.value)}
+              placeholder="https://api.example.com/v1"
+              style={inputStyle}
+            />
+            <div className="mono" style={{ fontSize: 10.5, color: "var(--fg-3)", marginTop: 4 }}>
+              {selectedPreset != null && PROVIDER_PRESETS[selectedPreset]?.baseUrl
+                ? "Pre-filled from preset"
+                : "Leave empty for managed services (Bedrock, Vertex)."}
+            </div>
+          </div>
+
+          {selectedPreset != null && PROVIDER_PRESETS[selectedPreset]?.note && (
+            <div
+              style={{
+                padding: "8px 12px",
+                borderRadius: 6,
+                background: "color-mix(in oklab, var(--pri) 6%, var(--bg-0))",
+                border: "1px solid color-mix(in oklab, var(--pri) 20%, var(--bd))",
+                fontSize: 11.5,
+                color: "var(--fg-1)",
+                lineHeight: 1.45,
+              }}
+            >
+              {PROVIDER_PRESETS[selectedPreset].note}
+            </div>
+          )}
+
+          <div>
+            <label style={{ display: "block", fontSize: 12, color: "var(--fg-1)", marginBottom: 4 }}>
+              Models
+            </label>
+            <input
+              type="text"
+              value={modelsStr}
+              onChange={(e) => setModelsStr(e.target.value)}
+              placeholder="model-1, model-2"
+              style={inputStyle}
+            />
+            <div className="mono" style={{ fontSize: 10.5, color: "var(--fg-3)", marginTop: 4 }}>
+              Comma-separated model IDs available from this provider.
+            </div>
+          </div>
+        </div>
+
+        <div
+          style={{
+            padding: "12px 20px 16px",
+            borderTop: "1px solid var(--bd-soft)",
+            display: "flex",
+            justifyContent: "flex-end",
+            gap: 8,
+          }}
+        >
+          <Button variant="outline" size="sm" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button size="sm" disabled={!name.trim() || saving} onClick={() => void handleSave()}>
+            {saving ? "Saving…" : editing ? "Save changes" : "Add provider"}
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1072,7 +1536,7 @@ const PLATFORM_MATRIX: MatrixRow[] = [
   { name: "Command palette · ⌘K", d: "full", w: "full" },
   { name: "Session detail · diff inspector", d: "full", w: "full" },
   { name: "Resume library · past sessions", d: "full", w: "full" },
-  { name: "Dashboard · Usage · Settings", d: "full", w: "full" },
+  { name: "Dashboard · Settings", d: "full", w: "full" },
 
   { group: "Container runtime" },
   {
@@ -1146,10 +1610,10 @@ const PLATFORM_MATRIX: MatrixRow[] = [
 
   { group: "Storage & security" },
   {
-    name: "API keys forwarded from host env",
+    name: "Credentials via keychain (API key + OAuth)",
     d: "full",
     w: "server",
-    note: "Desktop reads host env vars · web stores secrets server-side",
+    note: "Desktop stores in OS keychain · web stores secrets server-side",
   },
   {
     name: "Multiple OS users / profiles",
@@ -2502,37 +2966,11 @@ function LiveToggle({ field, disabled }: { field: BoolSettingKey; disabled?: boo
   const on = useStore((s) => Boolean(s.config?.[field]));
   const updateConfig = useStore((s) => s.updateConfig);
   return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={on}
+    <Switch
+      checked={on}
+      onCheckedChange={(checked) => void updateConfig({ [field]: checked } as Partial<AppSettings>)}
       disabled={disabled}
-      onClick={() => void updateConfig({ [field]: !on } as Partial<AppSettings>)}
-      style={{
-        width: 32,
-        height: 18,
-        borderRadius: 999,
-        background: on ? "var(--fg-0)" : "var(--bg-3)",
-        border: `1px solid ${on ? "var(--fg-0)" : "var(--bd-strong)"}`,
-        padding: 0,
-        cursor: disabled ? "default" : "pointer",
-        opacity: disabled ? 0.45 : 1,
-        position: "relative",
-      }}
-    >
-      <span
-        style={{
-          position: "absolute",
-          top: 1,
-          left: on ? 16 : 1,
-          width: 14,
-          height: 14,
-          borderRadius: "50%",
-          background: on ? "var(--bg-0)" : "var(--fg-1)",
-          transition: "left .15s",
-        }}
-      />
-    </button>
+    />
   );
 }
 
@@ -2613,30 +3051,6 @@ function RefreshVersionsButton() {
   );
 }
 
-// Agent dropdown bound to the default-agent setting (pre-selects the launcher).
-function DefaultAgentSelect() {
-  const value = useStore((s) => s.config?.defaultAgent ?? "claude");
-  const updateConfig = useStore((s) => s.updateConfig);
-  return (
-    <Select value={value} onValueChange={(v) => void updateConfig({ defaultAgent: v as Cli })}>
-      <SelectTrigger style={{ width: 180, gap: 8 }}>
-        <AgentGlyph agent={value} size={11} color={`var(--a-${value})`} />
-        <SelectValue />
-      </SelectTrigger>
-      <SelectContent>
-        {CLIS.map((c) => (
-          <SelectItem key={c.id} value={c.id}>
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-              <AgentGlyph agent={c.id} size={11} color={AGENT_META[c.id].accent} />
-              {c.label}
-            </span>
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
-  );
-}
-
 function SectionHead({ label, tone }: { label: string; tone?: "err" }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "24px 0 12px" }}>
@@ -2693,59 +3107,3 @@ function SettingRow({
   );
 }
 
-// Minimal presentational controls matching the design's monochrome style.
-// Real wiring (to the Tier-2 config store) lands when these panes go live.
-function Toggle({ on }: { on?: boolean }) {
-  return (
-    <span
-      style={{
-        width: 32,
-        height: 18,
-        borderRadius: 999,
-        background: on ? "var(--fg-0)" : "var(--bg-3)",
-        border: `1px solid ${on ? "var(--fg-0)" : "var(--bd-strong)"}`,
-        display: "inline-flex",
-        alignItems: "center",
-        padding: "0 2px",
-        cursor: "pointer",
-        position: "relative",
-      }}
-    >
-      <span
-        style={{
-          position: "absolute",
-          top: 1,
-          left: on ? 16 : 1,
-          width: 14,
-          height: 14,
-          borderRadius: "50%",
-          background: on ? "var(--bg-0)" : "var(--fg-1)",
-          transition: "left .15s",
-        }}
-      />
-    </span>
-  );
-}
-
-function InputStub({ value, suffix }: { value: string; suffix: string }) {
-  return (
-    <div
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 6,
-        padding: "6px 10px",
-        border: "1px solid var(--bd)",
-        borderRadius: 6,
-        background: "var(--bg-1)",
-        fontFamily: "var(--mono)",
-        fontSize: 12,
-        minWidth: 140,
-      }}
-    >
-      <span style={{ color: "var(--fg-0)" }}>{value}</span>
-      <span style={{ flex: 1 }} />
-      <span style={{ color: "var(--fg-3)", fontSize: 11 }}>{suffix}</span>
-    </div>
-  );
-}

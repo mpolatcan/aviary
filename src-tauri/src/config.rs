@@ -502,6 +502,23 @@ impl ConfigStore {
         next.account_profiles.retain(|p| p.id != id);
         self.set(next)
     }
+
+    /// Rename an account profile's label. Returns error if the profile doesn't
+    /// exist or the label is empty.
+    pub fn rename_account_profile(&self, id: &str, label: &str) -> Result<Settings, String> {
+        let label = label.trim();
+        if label.is_empty() {
+            return Err("label must not be empty".into());
+        }
+        let mut next = self.get();
+        let profile = next
+            .account_profiles
+            .iter_mut()
+            .find(|p| p.id == id)
+            .ok_or_else(|| format!("no profile with id {id}"))?;
+        profile.label = label.to_string();
+        self.set(next)
+    }
 }
 
 /// Cap on the MRU workspace-recents list.

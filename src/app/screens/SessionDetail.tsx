@@ -20,6 +20,7 @@
  *    never a faked success.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Input } from "../ui/input";
 import { DiffBody, SplitDiffBody, diffCounts, parseDiff } from "../components/hub/DiffBody";
 import { HubTabs } from "../components/hub/HubTabs";
 import { AgentGlyph } from "../components/primitives/AgentGlyph";
@@ -508,14 +509,13 @@ export function SessionDetail({ session }: { session: string }) {
                 borderBottom: "1px solid var(--bd-soft)",
               }}
             >
-              <input
-                className="mono"
+              <Input
+                className="mono h-auto flex-1 min-w-0 rounded-md px-2.5 py-1 text-xs"
                 // biome-ignore lint/a11y/noAutofocus: commit box is opened by an explicit user action
                 autoFocus
                 value={commitMsg}
                 onChange={(e) => setCommitMsg(e.target.value)}
                 placeholder="Commit message…"
-                style={fieldStyle}
               />
               <FooterBtn onClick={() => void doCommit()} disabled={busy || !commitMsg.trim()} pri>
                 Commit
@@ -540,22 +540,20 @@ export function SessionDetail({ session }: { session: string }) {
                 borderBottom: "1px solid var(--bd-soft)",
               }}
             >
-              <input
-                className="mono"
+              <Input
+                className="mono h-auto rounded-md px-2.5 py-1 text-xs"
                 // biome-ignore lint/a11y/noAutofocus: PR form is opened by an explicit user action
                 autoFocus
                 value={prTitle}
                 onChange={(e) => setPrTitle(e.target.value)}
                 placeholder="PR title…"
-                style={fieldStyle}
               />
               <div style={{ display: "flex", gap: 8 }}>
-                <input
-                  className="mono"
+                <Input
+                  className="mono h-auto flex-1 min-w-0 rounded-md px-2.5 py-1 text-xs"
                   value={prBody}
                   onChange={(e) => setPrBody(e.target.value)}
                   placeholder="PR description (optional)…"
-                  style={fieldStyle}
                 />
                 <FooterBtn onClick={() => void doOpenPr()} disabled={busy || !prTitle.trim()} pri>
                   Open PR
@@ -749,17 +747,6 @@ function fmtMem(used: number, limit: number): string {
   const gib = (n: number) => (n / 1024 ** 3).toFixed(1);
   return limit > 0 ? `${gib(used)}/${gib(limit)} GiB` : `${gib(used)} GiB`;
 }
-
-const fieldStyle: React.CSSProperties = {
-  flex: 1,
-  minWidth: 0,
-  background: "var(--bg-0)",
-  border: "1px solid var(--bd-soft)",
-  borderRadius: 6,
-  color: "var(--fg-0)",
-  padding: "5px 9px",
-  fontSize: 12,
-};
 
 function Metric({ label, value }: { label: string; value: string }) {
   return (

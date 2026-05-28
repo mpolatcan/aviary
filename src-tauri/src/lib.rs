@@ -8,7 +8,7 @@ pub mod config;
 #[cfg(feature = "devserver")]
 pub mod devserver;
 pub mod docker;
-/// Agent-event hooks subsystem (§7, COMPLETION_PLAN.md).
+/// Agent-event hooks subsystem.
 pub mod events;
 // Native macOS Dynamic Island companion. On other platforms the companion stays
 // a WebviewWindow (see open_companion below).
@@ -174,8 +174,61 @@ async fn docker_info(state: tauri::State<'_, AppState>) -> Result<lifecycle::Doc
     Ok(state.manager.docker_info().await)
 }
 
+/// Detect which container runtimes are installed (Docker Desktop / OrbStack) and
+/// whether the daemon socket is reachable. Backs the first-run empty-state hero:
+/// "Start Docker" / "Start OrbStack" vs "Install a container runtime".
+#[tauri::command]
+async fn detect_docker_runtime(
+    state: tauri::State<'_, AppState>,
+) -> Result<DockerRuntimeDetection, String> {
+    let mut installed = Vec::new();
+    if std::path::Path::new("/Applications/Docker.app").exists() {
+        installed.push("docker".to_string());
+    }
+    if std::path::Path::new("/Applications/OrbStack.app").exists() {
+        installed.push("orbstack".to_string());
+    }
+    let daemon_running = state.manager.docker_info().await.reachable;
+    Ok(DockerRuntimeDetection {
+        installed,
+        daemon_running,
+    })
+}
+
+/// Open a container runtime app (Docker Desktop or OrbStack) so its daemon
+/// starts. macOS only (`open -a`); on other platforms returns an error nudging
+/// the user to start the daemon manually.
+#[tauri::command]
+async fn start_docker_app(runtime: String) -> Result<(), String> {
+    let app_name = match runtime.as_str() {
+        "docker" => "Docker",
+        "orbstack" => "OrbStack",
+        _ => return Err(format!("unknown runtime: {runtime}")),
+    };
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .args(["-a", app_name])
+            .spawn()
+            .map_err(|e| format!("failed to open {app_name}: {e}"))?;
+        Ok(())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Err(format!(
+            "auto-start not supported on this platform — start {app_name} manually"
+        ))
+    }
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+pub struct DockerRuntimeDetection {
+    pub installed: Vec<String>,
+    pub daemon_running: bool,
+}
+
 /// Presence-only auth status per CLI. Reports booleans + env var names; never
-/// the secret values (see BACKEND_PLAN.md / lifecycle::agent_key_status).
+/// the secret values (see lifecycle::agent_key_status).
 #[tauri::command]
 fn agent_key_status() -> Result<HashMap<String, KeyStatus>, String> {
     Ok(lifecycle::agent_key_status())
@@ -432,10 +485,10 @@ async fn recreate_runtime(
 // working. `build_account_profile` stays here — it bridges `Cli` + `docker`
 // validation with the config type, so it belongs in the glue layer.
 
-// ── Phase-0 completion contract (COMPLETION_PLAN.md) ────────────────────────
+// ── Phase-0 completion contract ────────────────────────
 // The response structs live in `types.rs` and are re-exported from `crate::` above
 // so devserver.rs can continue to import them from `crate::`. The commands below
-// now have real implementations (the BE track fills them per COMPLETION_PLAN.md).
+// now have real implementations.
 
 /// All stored account profiles + live presence status.
 #[tauri::command]
@@ -580,6 +633,17 @@ fn remove_account_profile(
     // Delete from vault if it was vault-backed (no-op if env-backed).
     let _ = state.vault.delete(&id);
     let next = state.config.remove_account_profile(&id)?;
+    Ok(profile_statuses(next.account_profiles, Some(&state.vault)))
+}
+
+/// Rename an account profile's label. Returns the full updated list + presence.
+#[tauri::command]
+fn rename_account_profile(
+    id: String,
+    label: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<AccountProfileStatus>, String> {
+    let next = state.config.rename_account_profile(&id, &label)?;
     Ok(profile_statuses(next.account_profiles, Some(&state.vault)))
 }
 
@@ -2165,6 +2229,8 @@ pub fn run() {
             container_stop,
             container_restart,
             docker_info,
+            detect_docker_runtime,
+            start_docker_app,
             app_info,
             host_stats,
             runtime_versions,
@@ -2181,6 +2247,7 @@ pub fn run() {
             list_account_profiles,
             add_account_profile,
             remove_account_profile,
+            rename_account_profile,
             agent_key_status,
             agent_versions,
             container_stats,

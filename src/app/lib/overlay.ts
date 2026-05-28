@@ -37,10 +37,10 @@ interface OverlayState {
   // template). A modal over the Welcome list; creates a saved workspace + opens
   // its first agent. Lives here so a keyboard handler can open it directly.
   newWorkspace: boolean;
-  // Right-side activity rail visibility (design main-hub-a reveal/collapse).
-  // Session-local UI state: when hidden, App.tsx renders the slim reveal strip
-  // in its place rather than unmounting the rest of the hub.
-  activityRail: boolean;
+  // File preview panel — path of the file being previewed on the right side,
+  // or null when closed. Set from the FilesBrowser listing; the panel renders
+  // in HubView as a right-side sibling (independent of DiffViewer).
+  filePreview: string | null;
   // Focus mode (design hub-states HubStateFocus): the active group's focused pane
   // is maximized; its siblings collapse to a "Minimized · N" side strip. Esc (or
   // the strip's "Show all") exits. Only meaningful when the group has 2+ panes;
@@ -65,7 +65,7 @@ interface OverlayState {
   setResumeSide: (side: "left" | "right") => void;
   setAbout: (open: boolean) => void;
   setNewWorkspace: (open: boolean) => void;
-  setActivityRail: (open: boolean) => void;
+  setFilePreview: (path: string | null) => void;
   setFocusMode: (on: boolean) => void;
   setDragSession: (session: string | null) => void;
   togglePalette: () => void;
@@ -82,19 +82,22 @@ export const useOverlay = create<OverlayState>((set) => ({
   resumeSide: "right",
   about: false,
   newWorkspace: false,
-  activityRail: true,
+  filePreview: null,
   focusMode: false,
   dragSession: null,
   setPalette: (palette) => set({ palette }),
   setShortcuts: (shortcuts) => set({ shortcuts }),
-  setDiff: (diff) => set({ diff }),
+  // Diff + FilePreview share the right dock — opening one closes the other so
+  // they can't stack alongside Files and crush the terminal grid to slivers.
+  setDiff: (diff) => set(diff !== null ? { diff, filePreview: null } : { diff }),
   setFiles: (files) => set({ files }),
   setShell: (shell) => set({ shell }),
   setResume: (resume) => set({ resume }),
   setResumeSide: (resumeSide) => set({ resumeSide }),
   setAbout: (about) => set({ about }),
   setNewWorkspace: (newWorkspace) => set({ newWorkspace }),
-  setActivityRail: (activityRail) => set({ activityRail }),
+  setFilePreview: (filePreview) =>
+    set(filePreview !== null ? { filePreview, diff: null } : { filePreview }),
   setFocusMode: (focusMode) => set({ focusMode }),
   setDragSession: (dragSession) => set({ dragSession }),
   // Opening one overlay closes the other so they never stack.

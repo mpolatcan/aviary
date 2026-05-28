@@ -5,8 +5,8 @@
  *
  * Real data: container name / state / image / id (container_status), docker
  * version (docker_info), the live attached sessions (sessionMeta), the fixed
- * /workspace mount, and host-env credential forwarding (agent_key_status,
- * presence-only). Resource gauges (cpu/mem/net/disk) and the live log stream are
+ * /workspace mount, and credential presence (agent_key_status). Resource gauges
+ * (cpu/mem/net/disk) and the live log stream are
  * polled from real container_stats / container_logs. Nothing is fabricated.
  */
 import { AgentGlyph } from "@/app/components/primitives/AgentGlyph";
@@ -17,14 +17,13 @@ import { StatusDot } from "@/app/components/primitives/StatusDot";
 import type { StatusKey } from "@/app/components/primitives/StatusDot";
 import { Tag } from "@/app/components/primitives/Tag";
 import { Ico } from "@/app/components/primitives/icons";
-import { CLIS, MODE_BY_ID, SPEC_BY_CLI } from "@/app/lib/catalog";
+import { MODE_BY_ID, SPEC_BY_CLI } from "@/app/lib/catalog";
 import {
   type Cli,
   type ContainerState,
   type ContainerStats,
   type ImageInfo,
   type MountInfo,
-  type ProcessInfo,
   type RuntimeHealth,
   type WorkspaceContainer,
   ipc,
@@ -66,7 +65,6 @@ function deriveNetRate(history: ContainerStats[]): number | null {
 
 export function ContainerInspector() {
   const dockerInfo = useStore((s) => s.dockerInfo);
-  const keyStatus = useStore((s) => s.keyStatus);
   const sessionMeta = useStore((s) => s.sessionMeta);
   const sessionActivity = useStore((s) => s.sessionActivity);
   const pendingPrompts = useStore((s) => s.pendingPrompts);
@@ -276,29 +274,6 @@ export function ContainerInspector() {
     };
   }, [running, selected]);
 
-  // Processes via `docker top`, polled while running + mounted (~3s). Same
-  // one-shot contract as stats/logs; `null` while down / pre-first-read → honest
-  // placeholder rather than an empty table.
-  const [procs, setProcs] = useState<ProcessInfo[] | null>(null);
-  useEffect(() => {
-    if (!running) {
-      setProcs(null);
-      return;
-    }
-    let alive = true;
-    const tick = () => {
-      ipc
-        .containerTop(selected ?? undefined)
-        .then((p) => alive && setProcs(p))
-        .catch(() => alive && setProcs(null));
-    };
-    tick();
-    const h = setInterval(tick, 3000);
-    return () => {
-      alive = false;
-      clearInterval(h);
-    };
-  }, [running, selected]);
 
   const open = (session: string) => {
     focusSession(session);
@@ -438,7 +413,7 @@ export function ContainerInspector() {
         {/* list — one card per per-workspace container */}
         <div
           style={{
-            flex: "0 0 380px",
+            flex: "0 0 320px",
             borderRight: "1px solid var(--bd-soft)",
             display: "flex",
             flexDirection: "column",
@@ -521,9 +496,9 @@ export function ContainerInspector() {
         </div>
 
         {/* detail */}
-        <div className="scroll" style={{ flex: 1, overflow: "auto", padding: 22 }}>
+        <div className="scroll" style={{ flex: 1, overflow: "auto", padding: "18px 22px", display: "flex", flexDirection: "column" }}>
           {/* hero */}
-          <div style={{ display: "flex", alignItems: "flex-start", gap: 14, marginBottom: 18 }}>
+          <div style={{ display: "flex", alignItems: "flex-start", gap: 14, marginBottom: 14 }}>
             <div
               style={{
                 width: 44,
@@ -590,7 +565,7 @@ export function ContainerInspector() {
               display: "grid",
               gridTemplateColumns: "repeat(4, 1fr)",
               gap: 10,
-              marginBottom: 18,
+              marginBottom: 14,
             }}
           >
             <GaugeCard
@@ -625,7 +600,7 @@ export function ContainerInspector() {
               display: "grid",
               gridTemplateColumns: "1fr 1fr",
               gap: 12,
-              marginBottom: 18,
+              marginBottom: 14,
             }}
           >
             <div className="ch-card" style={{ padding: 14 }}>
@@ -751,68 +726,8 @@ export function ContainerInspector() {
             </div>
           </div>
 
-          {/* runtime image detail — real `docker image inspect` */}
-          <ImageCard image={imageInfo} />
-
-          {/* forwarded credentials — presence only, never values */}
-          <div className="ch-card" style={{ padding: 0, marginBottom: 18 }}>
-            <div
-              style={{
-                padding: "10px 14px",
-                borderBottom: "1px solid var(--bd-soft)",
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-              }}
-            >
-              <span className="lbl">Forwarded credentials</span>
-              <span className="mono" style={{ fontSize: 10.5, color: "var(--fg-3)" }}>
-                from host environment · values never read
-              </span>
-            </div>
-            <div style={{ padding: 12, display: "flex", flexDirection: "column", gap: 4 }}>
-              {CLIS.map((c) => {
-                const ks = keyStatus?.[c.id];
-                return (
-                  <CredRow
-                    key={c.id}
-                    cli={c.id}
-                    label={c.label}
-                    present={ks?.present ?? false}
-                    varName={ks?.varName ?? null}
-                  />
-                );
-              })}
-            </div>
-          </div>
-
-          {/* processes — `docker top`, polled by container_top (~3s). */}
-          <div className="ch-card" style={{ padding: 0, marginBottom: 18 }}>
-            <div
-              style={{
-                padding: "10px 14px",
-                borderBottom: "1px solid var(--bd-soft)",
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-              }}
-            >
-              <span className="lbl">Processes</span>
-              <span className="mono" style={{ fontSize: 10.5, color: "var(--fg-3)" }}>
-                docker top {name}
-              </span>
-              <span style={{ flex: 1 }} />
-              {procs && procs.length > 0 && (
-                <span className="mono tnum" style={{ fontSize: 10, color: "var(--fg-3)" }}>
-                  {procs.length}
-                </span>
-              )}
-            </div>
-            <ProcessTable procs={procs} running={running} />
-          </div>
-
           {/* logs — tail of `docker logs`, polled by container_logs (~4s). */}
-          <div className="ch-card" style={{ padding: 0 }}>
+          <div className="ch-card" style={{ padding: 0, flex: 1, minHeight: 120, display: "flex", flexDirection: "column" }}>
             <div
               style={{
                 padding: "10px 14px",
@@ -877,132 +792,60 @@ function fmtUptime(rfc3339: string): string | null {
   return `${Math.floor(s / 86400)}d`;
 }
 
-// Strip the `sha256:` prefix and shorten a digest/id to 12 hex chars, the way
-// `docker images` displays them. Returns null untouched so callers em-dash.
-function shortSha(s: string | null): string | null {
-  if (!s) return null;
-  const hex = s.startsWith("sha256:") ? s.slice("sha256:".length) : s;
-  return hex.length > 12 ? hex.slice(0, 12) : hex;
-}
-
-// The runtime image's identity from `docker image inspect` — all real, each
-// field em-dashed when absent (e.g. a locally-built image has no repo digest).
-function ImageCard({ image }: { image: ImageInfo | null }) {
-  const dash = "—";
-  const created = image?.created ? image.created.replace("T", " ").slice(0, 19) : dash;
-  return (
-    <div className="ch-card" style={{ padding: 14, marginBottom: 18, minWidth: 0 }}>
-      <div className="lbl" style={{ marginBottom: 10 }}>
-        Image
-      </div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px 24px" }}>
-        <ImageKv k="Tag" v={image?.tag ?? dash} />
-        <ImageKv k="Size" v={image?.size != null ? fmtBytes(image.size) : dash} />
-        <ImageKv k="Digest" v={shortSha(image?.digest ?? null) ?? dash} />
-        <ImageKv k="Created" v={created} />
-        <ImageKv k="Image ID" v={shortSha(image?.id ?? null) ?? dash} />
-        <ImageKv k="Platform" v={image?.os && image?.arch ? `${image.os}/${image.arch}` : dash} />
-      </div>
-    </div>
-  );
-}
-
-// One mono key/value row for the Image card; value right-aligned + ellipsized so
-// a long tag/digest can't widen its grid track.
-function ImageKv({ k, v }: { k: string; v: string }) {
-  return (
-    <div style={{ display: "flex", alignItems: "baseline", gap: 10, minWidth: 0 }}>
-      <span style={{ fontSize: 11.5, color: "var(--fg-2)", flexShrink: 0 }}>{k}</span>
-      <span style={{ flex: 1, borderBottom: "1px dotted var(--bd-soft)", minWidth: 8 }} />
-      <span
-        className="mono tnum"
-        style={{
-          fontSize: 11,
-          color: "var(--fg-1)",
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap",
-          minWidth: 0,
-        }}
-        title={v}
-      >
-        {v}
-      </span>
-    </div>
-  );
-}
-
-// One metric. `value === null` → em-dash + hatched bar (no reading yet / runtime
-// down). With a value: shows it (+ optional `sub`), and a proportional bar when
-// `fill` (0-100) is given — CPU/memory have a meaningful ratio; net/disk don't,
-// so they render value-only.
 function GaugeCard({
   label,
   value,
   sub,
-  fill,
   spark,
 }: {
   label: string;
   value?: string | null;
   sub?: string;
   fill?: number | null;
-  // Real per-poll history for this metric (newest last). A line is drawn once
-  // ≥2 samples exist; before that the card falls back to the fill/flat bar so it
-  // never invents a curve from a single point.
   spark?: number[];
 }) {
   const hasSpark = !!spark && spark.length >= 2;
   return (
     <div
       className="ch-card"
-      style={{ padding: 12, display: "flex", flexDirection: "column", gap: 4 }}
+      style={{
+        padding: 0,
+        display: "flex",
+        alignItems: "stretch",
+        overflow: "hidden",
+        minHeight: 56,
+      }}
     >
-      <div className="lbl" style={{ fontSize: 10 }}>
-        {label}
-      </div>
-      <div style={{ display: "flex", alignItems: "baseline", gap: 5, flexWrap: "wrap" }}>
+      <div style={{ padding: "10px 12px", display: "flex", flexDirection: "column", justifyContent: "center", flexShrink: 0, minWidth: 80, gap: 1 }}>
+        <div className="lbl" style={{ fontSize: 9.5 }}>{label}</div>
         <span
           className="mono tnum"
-          style={{ fontSize: 18, color: value ? "var(--fg-0)" : "var(--fg-3)", fontWeight: 500 }}
+          style={{ fontSize: 16, color: value ? "var(--fg-0)" : "var(--fg-3)", fontWeight: 500, lineHeight: 1.1 }}
         >
           {value ?? "—"}
         </span>
         {value && sub && (
-          <span className="mono tnum" style={{ fontSize: 11, color: "var(--fg-3)" }}>
+          <span className="mono tnum" style={{ fontSize: 10, color: "var(--fg-3)", lineHeight: 1.2 }}>
             {sub}
           </span>
         )}
       </div>
-      {hasSpark ? (
-        // Real trend line over the rolling window. Width 100% via a flexed wrapper
-        // so it tracks the responsive grid track; height matches the old bar.
-        <div style={{ height: 20, width: "100%" }}>
-          <Spark data={spark} w={150} h={20} color="var(--live)" fill />
-        </div>
-      ) : value && typeof fill === "number" ? (
-        <div style={{ height: 20, borderRadius: 4, background: "var(--bg-3)", overflow: "hidden" }}>
+      <div style={{ flex: 1, minWidth: 0, position: "relative" }}>
+        {hasSpark ? (
+          <Spark data={spark} w={200} h={56} color="var(--live)" fill responsive />
+        ) : (
           <div
             style={{
+              width: "100%",
               height: "100%",
-              width: `${Math.max(2, Math.min(100, fill))}%`,
-              background: "var(--live)",
-              opacity: 0.55,
+              background: value
+                ? "var(--bg-3)"
+                : "repeating-linear-gradient(135deg, var(--bg-3) 0 4px, transparent 4px 8px)",
+              opacity: value ? 0.3 : 0.25,
             }}
           />
-        </div>
-      ) : (
-        <div
-          style={{
-            height: 20,
-            borderRadius: 4,
-            background: value
-              ? "var(--bg-3)"
-              : "repeating-linear-gradient(45deg, var(--bg-3) 0 6px, transparent 6px 12px)",
-            opacity: value ? 1 : 0.5,
-          }}
-        />
-      )}
+        )}
+      </div>
     </div>
   );
 }
@@ -1032,22 +875,25 @@ function LogPanel({
     return (
       <div
         style={{
-          padding: "28px 14px",
-          textAlign: "center",
+          flex: 1,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
           fontFamily: "var(--mono)",
           fontSize: 11.5,
           color: "var(--fg-3)",
           lineHeight: 1.6,
+          textAlign: "center",
         }}
       >
         {running ? (
           "Reading container log…"
         ) : (
-          <>
+          <span>
             Container is not running.
             <br />
             Start it to tail <span style={{ color: "var(--fg-1)" }}>docker logs {name}</span>.
-          </>
+          </span>
         )}
       </div>
     );
@@ -1057,7 +903,7 @@ function LogPanel({
     return (
       <div
         className="mono"
-        style={{ padding: "28px 14px", textAlign: "center", fontSize: 11.5, color: "var(--fg-3)" }}
+        style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11.5, color: "var(--fg-3)" }}
       >
         No log output yet.
       </div>
@@ -1069,7 +915,7 @@ function LogPanel({
       ref={ref}
       className="scroll"
       style={{
-        maxHeight: 280,
+        flex: 1,
         overflow: "auto",
         padding: "10px 14px",
         fontFamily: "var(--mono)",
@@ -1083,78 +929,6 @@ function LogPanel({
       {lines.map((line, i) => (
         // biome-ignore lint/suspicious/noArrayIndexKey: log lines have no stable id; a refreshed tail is a full replace, not a reorder.
         <div key={i}>{line || " "}</div>
-      ))}
-    </div>
-  );
-}
-
-// Process list from `docker top`. `procs === null` → honest placeholder (down /
-// pre-first read); empty array → "no processes"; otherwise a compact table.
-// Command is the wide column (truncates); PID/user/time stay narrow + tabular.
-function ProcessTable({
-  procs,
-  running,
-}: {
-  procs: ProcessInfo[] | null;
-  running: boolean;
-}) {
-  if (procs === null) {
-    return (
-      <div
-        className="mono"
-        style={{ padding: "28px 14px", textAlign: "center", fontSize: 11.5, color: "var(--fg-3)" }}
-      >
-        {running ? "Reading processes…" : "Container is not running."}
-      </div>
-    );
-  }
-  if (procs.length === 0) {
-    return (
-      <div
-        className="mono"
-        style={{ padding: "28px 14px", textAlign: "center", fontSize: 11.5, color: "var(--fg-3)" }}
-      >
-        No processes reported.
-      </div>
-    );
-  }
-  return (
-    <div className="scroll" style={{ maxHeight: 280, overflow: "auto" }}>
-      {procs.map((p) => (
-        <div
-          key={`${p.pid}-${p.command}`}
-          style={{
-            display: "flex",
-            alignItems: "baseline",
-            gap: 10,
-            padding: "5px 14px",
-            fontFamily: "var(--mono)",
-            fontSize: 11.5,
-          }}
-        >
-          <span className="tnum" style={{ width: 52, flexShrink: 0, color: "var(--fg-2)" }}>
-            {p.pid}
-          </span>
-          <span style={{ width: 72, flexShrink: 0, color: "var(--fg-3)" }}>{p.user || "—"}</span>
-          {p.time && (
-            <span className="tnum" style={{ width: 64, flexShrink: 0, color: "var(--fg-3)" }}>
-              {p.time}
-            </span>
-          )}
-          <span
-            title={p.command}
-            style={{
-              color: "var(--fg-1)",
-              flex: 1,
-              minWidth: 0,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {p.command}
-          </span>
-        </div>
       ))}
     </div>
   );
@@ -1200,39 +974,6 @@ function Mount({
       <span style={{ color: "var(--fg-3)" }}>→</span>
       <span style={{ color: "var(--fg-1)", flexShrink: 0 }}>{container}</span>
       <Tag color={mode === "rw" ? "var(--live)" : "var(--fg-2)"}>{mode}</Tag>
-    </div>
-  );
-}
-
-function CredRow({
-  cli,
-  label,
-  present,
-  varName,
-}: {
-  cli: Cli;
-  label: string;
-  present: boolean;
-  varName: string | null;
-}) {
-  return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 8,
-        padding: "5px 6px",
-        borderRadius: 4,
-        fontFamily: "var(--mono)",
-        fontSize: 11.5,
-      }}
-    >
-      <AgentGlyph agent={cli} size={11} color={`var(--a-${cli})`} />
-      <span style={{ color: "var(--fg-1)", minWidth: 110 }}>{label}</span>
-      <span style={{ color: present ? "var(--fg-1)" : "var(--fg-3)", flex: 1, minWidth: 0 }}>
-        {present ? (varName ?? "set") : "not set"}
-      </span>
-      <StatusDot status={present ? "live" : "off"} />
     </div>
   );
 }
@@ -1328,9 +1069,17 @@ function RuntimeControls({
 // (selectable); the active one gets an accent border. Stats are passed in
 // (null → em-dash) rather than fetched here so each card stays a pure render
 // of data the parent already owns.
+// Fallback label for a container with no matching SAVED workspace (an orphan
+// from a prior run). Append the key suffix so it stays distinct from the live
+// "Workspace N" — otherwise two ws-N containers collide on the same bare label.
 function labelWorkspaceKey(key: string) {
-  const m = /^ws-(\d+)-/.exec(key);
-  return m ? `Workspace ${m[1]}` : truncateMiddle(key, 24);
+  const m = /^ws-(\d+)-(.+)/.exec(key);
+  if (m) {
+    const suffix = m[2].length > 8 ? m[2].slice(-8) : m[2];
+    return `Workspace ${m[1]} · ${suffix}`;
+  }
+  const plain = /^ws-(\d+)$/.exec(key);
+  return plain ? `Workspace ${plain[1]}` : truncateMiddle(key, 24);
 }
 
 function compactContainerName(name: string, key?: string) {
@@ -1410,7 +1159,7 @@ function ContainerCard({
         }
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
         <StatusDot status={dot} pulse={dot === "live"} />
         <span
           className="mono"
@@ -1434,32 +1183,21 @@ function ContainerCard({
       <div
         className="mono"
         style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 5,
-          minWidth: 0,
           fontSize: 10.5,
           color: "var(--fg-2)",
-          marginBottom: 5,
+          marginBottom: 4,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
         }}
       >
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 3, minWidth: 0 }}>
-          {Ico.branch}
-          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {labelWorkspaceKey(containerKey)}
-          </span>
-        </span>
-        <span style={{ color: "var(--fg-3)" }}>·</span>
-        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {compactName}
-        </span>
+        {compactName}
       </div>
       <div
         style={{
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          marginTop: 6,
         }}
       >
         <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
@@ -1480,7 +1218,7 @@ function ContainerCard({
           )}
         </div>
         <span
-          className="mono"
+          className="mono tnum"
           style={{ fontSize: 10.5, color: "var(--fg-3)", whiteSpace: "nowrap" }}
         >
           {stats
@@ -1491,7 +1229,7 @@ function ContainerCard({
       <div
         className="mono"
         style={{
-          marginTop: 5,
+          marginTop: 4,
           fontSize: 9.5,
           color: "var(--fg-3)",
           overflow: "hidden",

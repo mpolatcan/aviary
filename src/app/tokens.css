@@ -586,6 +586,19 @@
   background: var(--fg-3);
 }
 
+/* ---- Command palette ---------------------------------------------------- */
+[cmdk-item][data-selected="true"]::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 2px;
+  height: 16px;
+  border-radius: 2px;
+  background: var(--fg-0);
+}
+
 /* Workspace sidebar row hover */
 .ws-side-row {
   transition: border-color 0.12s ease, background 0.12s ease;
@@ -649,7 +662,6 @@ select.mono {
 .ctx-row:focus-visible,
 .ws-card:focus-visible,
 .tmpl-card:focus-visible,
-.ch-activity-rail-reveal:focus-visible,
 .rail-file:focus-visible,
 .ch-tab:focus-visible,
 .ws-side-row:focus-visible {

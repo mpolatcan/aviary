@@ -57,7 +57,7 @@ pub struct LifecycleParts {
 
 // Host auth env vars each CLI can authenticate from, in priority order. Keys are
 // read from the host environment and forwarded into the runtime container —
-// CodeHub never stores them (see BACKEND_PLAN.md). The empty-state / settings
+// CodeHub never stores them. The empty-state / settings
 // "key status" reports presence only and must NEVER surface the value.
 const CLAUDE_VARS: &[&str] = &["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"];
 const CODEX_VARS: &[&str] = &["OPENAI_API_KEY"];

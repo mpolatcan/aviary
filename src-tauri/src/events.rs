@@ -1,4 +1,4 @@
-//! Agent-event hooks subsystem (§7, COMPLETION_PLAN.md).
+//! Agent-event hooks subsystem.
 //!
 //! Each agent appends structured events to `/tmp/codehub/events/<session>.jsonl`
 //! via the hook scripts baked into the runtime image. This module owns:

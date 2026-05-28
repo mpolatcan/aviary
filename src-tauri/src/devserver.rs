@@ -203,6 +203,8 @@ pub async fn serve() {
         .route("/container-stop", post(container_stop))
         .route("/container-restart", post(container_restart))
         .route("/docker-info", get(docker_info))
+        .route("/detect-docker-runtime", get(detect_docker_runtime))
+        .route("/start-docker-app", post(start_docker_app))
         .route("/app-info", get(app_info))
         .route("/host-stats", get(host_stats))
         .route("/runtime-versions", get(runtime_versions))
@@ -223,7 +225,10 @@ pub async fn serve() {
             "/account-profiles",
             get(list_account_profiles).post(add_account_profile),
         )
-        .route("/account-profiles/:id", delete(remove_account_profile))
+        .route(
+            "/account-profiles/:id",
+            delete(remove_account_profile).patch(rename_account_profile),
+        )
         .route("/agent-key-status", get(agent_key_status))
         .route("/agent-versions", get(agent_versions))
         .route("/container-stats", get(container_stats))
@@ -361,6 +366,41 @@ async fn container_restart(
 
 async fn docker_info(State(st): State<AppState>) -> impl IntoResponse {
     Json(st.manager.docker_info().await)
+}
+
+async fn detect_docker_runtime(State(st): State<AppState>) -> impl IntoResponse {
+    let mut installed = Vec::new();
+    if std::path::Path::new("/Applications/Docker.app").exists() {
+        installed.push("docker".to_string());
+    }
+    if std::path::Path::new("/Applications/OrbStack.app").exists() {
+        installed.push("orbstack".to_string());
+    }
+    let daemon_running = st.manager.docker_info().await.reachable;
+    Json(crate::DockerRuntimeDetection {
+        installed,
+        daemon_running,
+    })
+}
+
+#[derive(Deserialize)]
+struct StartDockerAppBody {
+    runtime: String,
+}
+
+async fn start_docker_app(
+    Json(body): Json<StartDockerAppBody>,
+) -> Result<impl IntoResponse, ApiError> {
+    let app_name = match body.runtime.as_str() {
+        "docker" => "Docker",
+        "orbstack" => "OrbStack",
+        _ => return Err(err(format!("unknown runtime: {}", body.runtime))),
+    };
+    std::process::Command::new("open")
+        .args(["-a", app_name])
+        .spawn()
+        .map_err(|e| err(format!("failed to open {app_name}: {e}")))?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn app_info() -> impl IntoResponse {
@@ -526,6 +566,23 @@ async fn remove_account_profile(
     Path(id): Path<String>,
 ) -> Result<impl IntoResponse, ApiError> {
     let next = st.config.remove_account_profile(&id).map_err(err)?;
+    Ok(Json(crate::profile_statuses(next.account_profiles, None)))
+}
+
+#[derive(Deserialize)]
+struct RenameProfileBody {
+    label: String,
+}
+
+async fn rename_account_profile(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<RenameProfileBody>,
+) -> Result<impl IntoResponse, ApiError> {
+    let next = st
+        .config
+        .rename_account_profile(&id, &body.label)
+        .map_err(err)?;
     Ok(Json(crate::profile_statuses(next.account_profiles, None)))
 }
 

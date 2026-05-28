@@ -13,6 +13,8 @@ import type {
   ContainerStats,
   ContainerStatus,
   DockerInfo,
+  DockerRuntimeDetection,
+  WorkspaceContainer,
   GitStatus,
   GithubRepo,
   GithubStatus,
@@ -57,7 +59,7 @@ import {
 // drawer over the hub (useOverlay.resume). Integrations is no longer a view
 // either — it's a Settings pane (settingsSection === "integrations"), reached by
 // deep-linking into Settings.
-export type HubView = "hub" | "dashboard" | "containers" | "settings" | "usage";
+export type HubView = "hub" | "dashboard" | "containers" | "settings";
 
 interface CodeHubState {
   workspaces: Workspace[];
@@ -98,23 +100,25 @@ interface CodeHubState {
   // container_git_status independently. Null while down / before first read.
   gitStatus: GitStatus | null;
 
-  // Tier-1 reads (BACKEND_PLAN.md), fetched once the runtime is reachable.
+  // Tier-1 reads, fetched once the runtime is reachable.
   // Presence/version metadata only — never secret values.
   dockerInfo: DockerInfo | null;
+  dockerRuntime: DockerRuntimeDetection | null;
   keyStatus: Record<AgentCli, KeyStatus> | null;
   agentVersions: Record<AgentCli, AgentVersion> | null;
+  workspaceContainers: WorkspaceContainer[] | null;
 
   // Persisted UI preferences (settings.json). Null until the first load resolves;
   // the Settings screen reads + writes it through updateConfig.
   config: AppSettings | null;
 
   // Tier-2 workspace picker: configured-vs-mounted /workspace + needs-recreate.
-  // Null until first load. Tier-3 account profiles (label-only, with live host-env
+  // Null until first load. Tier-3 account profiles (label-only, with live
   // presence), loaded for the Settings + spawn dialog account picker.
   workspaceInfo: WorkspaceInfo | null;
   accountProfiles: AccountProfileStatus[];
 
-  // ── Phase-0 completion contract (COMPLETION_PLAN.md) ──────────────────────
+  // ── Phase-0 completion contract ──────────────────────
   // New slices for the parallel fleet. Backend fns are stubs (honest-empty)
   // until the BE track lands, so these stay empty/null until then. NOT wired
   // into bootstrap polling here — the fleet wires each load where it's used.
@@ -157,6 +161,7 @@ interface CodeHubState {
   setContainerStats: (s: ContainerStats | null) => void;
   setGitStatus: (g: GitStatus | null) => void;
   ensureDockedShell: () => Promise<string | null>;
+  createExtraShell: () => Promise<string | null>;
   newPlate: (
     cli: Cli,
     mode: Mode,
@@ -241,6 +246,7 @@ interface CodeHubState {
     source?: "env" | "vault",
   ) => Promise<void>;
   removeAccountProfile: (id: string) => Promise<void>;
+  renameAccountProfile: (id: string, label: string) => Promise<void>;
 
   // Phase-0 completion contract load actions (best-effort, mirror the existing
   // load* pattern). Each catches its own failure so it can't block callers.
@@ -318,6 +324,8 @@ export const useStore = create<CodeHubState>((set, get) => {
       containerKey,
     };
     set((s) => ({ sessionMeta: { ...s.sessionMeta, [name]: meta } }));
+    // Pin the transcript id to the session name so a restart can recover it.
+    if (claudeId) persistClaudeId(name, claudeId);
   };
 
   const destroySessionRecord = async (name: string, containerKey?: string) => {
@@ -328,6 +336,7 @@ export const useStore = create<CodeHubState>((set, get) => {
       console.warn(`kill_session(${name}) failed:`, e);
     }
     await registry.destroyPane(name);
+    forgetClaudeId(name);
     set((s) => {
       const sessionMeta = { ...s.sessionMeta };
       delete sessionMeta[name];
@@ -363,7 +372,9 @@ export const useStore = create<CodeHubState>((set, get) => {
     containerStats: null,
     gitStatus: null,
     dockerInfo: null,
+    dockerRuntime: null,
     keyStatus: null,
+    workspaceContainers: null,
     agentVersions: null,
     config: null,
     workspaceInfo: null,
@@ -501,6 +512,26 @@ export const useStore = create<CodeHubState>((set, get) => {
 
       pendingUtilityShells.set(ws.containerKey, create);
       return create;
+    },
+
+    createExtraShell: async () => {
+      if (!isRunning()) return null;
+      const ws = get().workspaces.find((w) => w.id === get().activeWorkspaceId);
+      if (!ws) return null;
+      const name = uniqueName("shell");
+      await ipc.createSession(
+        name,
+        "shell",
+        "standard",
+        aliasFor("shell", get().sessionCounter),
+        undefined,
+        undefined,
+        undefined,
+        ws.containerKey,
+      );
+      await registry.spawnPane(name, ws.containerKey);
+      registerMeta(name, "shell", "standard", ws.id, ws.activeGroupId, ws.containerKey);
+      return name;
     },
 
     newPlate: async (cli, mode, resume, initialPrompt, account, workspaceMeta) => {
@@ -1068,6 +1099,14 @@ export const useStore = create<CodeHubState>((set, get) => {
       }
     },
 
+    renameAccountProfile: async (id, label) => {
+      try {
+        set({ accountProfiles: await ipc.renameAccountProfile(id, label) });
+      } catch (e) {
+        set({ error: `rename account failed: ${e}` });
+      }
+    },
+
     // ── Phase-0 completion contract load actions ───────────────────────────
     // Backend is a stub until the BE track lands, so these resolve to empty/
     // null; they exist now so the parallel fleet's screens can wire them.
@@ -1183,6 +1222,46 @@ function removeWorkspace(get: Get, set: Set, id: string) {
   });
 }
 
+// Claude's transcript id is pinned via `--session-id` on create, but a restart
+// adopts the still-running tmux session without knowing that id (it was minted
+// in the prior process). Persist {sessionName: claudeId} so a restore can
+// recover it and read live usage — otherwise restored Claude panes show "—".
+const CLAUDE_ID_KEY = "codehub.claudeIds";
+
+function readClaudeIds(): Record<string, string> {
+  try {
+    return JSON.parse(localStorage.getItem(CLAUDE_ID_KEY) ?? "{}");
+  } catch {
+    return {};
+  }
+}
+
+function persistClaudeId(name: string, claudeId: string): void {
+  try {
+    const m = readClaudeIds();
+    m[name] = claudeId;
+    localStorage.setItem(CLAUDE_ID_KEY, JSON.stringify(m));
+  } catch {
+    // localStorage unavailable — usage just won't survive a restart this session.
+  }
+}
+
+function forgetClaudeId(name: string): void {
+  try {
+    const m = readClaudeIds();
+    if (name in m) {
+      delete m[name];
+      localStorage.setItem(CLAUDE_ID_KEY, JSON.stringify(m));
+    }
+  } catch {
+    // ignore
+  }
+}
+
+function recallClaudeId(name: string): string | undefined {
+  return readClaudeIds()[name];
+}
+
 async function bootstrap(
   get: Get,
   set: Set,
@@ -1196,13 +1275,14 @@ async function bootstrap(
     claudeId?: string,
   ) => void,
 ) {
-  // Tier-1 reads (BACKEND_PLAN.md): daemon info, per-CLI version + key presence.
-  // Best-effort and independent of session bootstrap — a failure must not block
-  // session restore, so each is caught on its own.
-  void ipc
-    .dockerInfo()
-    .then((dockerInfo) => set({ dockerInfo }))
-    .catch((e) => console.warn("docker_info failed", e));
+  // Tier-1 reads: daemon info, per-CLI version + key presence.
+  // dockerInfo, dockerRuntime, workspaceContainers are loaded eagerly in
+  // initLifecycle (they don't need a running container). Refresh them here too
+  // so bootstrap picks up any state that changed between app-load and the
+  // lifecycle event arriving.
+  void ipc.dockerInfo().then((dockerInfo) => set({ dockerInfo })).catch(() => {});
+  void ipc.detectDockerRuntime().then((dockerRuntime) => set({ dockerRuntime })).catch(() => {});
+  void ipc.listWorkspaceContainers().then((wc) => set({ workspaceContainers: wc })).catch(() => {});
   void ipc
     .agentKeyStatus()
     .then((keyStatus) => set({ keyStatus }))
@@ -1212,7 +1292,7 @@ async function bootstrap(
     .then((agentVersions) => set({ agentVersions }))
     .catch((e) => console.warn("agent_versions failed", e));
   // Tier-2/Tier-3: workspace mount reconciliation + account profiles (label-only,
-  // with live host-env presence). Independent best-effort reads.
+  // with live presence). Independent best-effort reads.
   void get().loadWorkspaceInfo();
   void get().loadAccountProfiles();
 
@@ -1290,7 +1370,10 @@ async function bootstrap(
           (["claude", "codex", "antigravity", "shell"] as Cli[]).find((c) =>
             s.name.startsWith(c),
           ) ?? "claude";
-        registerMeta(s.name, cli, "standard", ws.id, group.id, containerKey);
+        // Recover the persisted transcript id so restored Claude panes show live
+        // usage instead of "—" (it was minted with --session-id last run).
+        const claudeId = cli === "claude" ? recallClaudeId(s.name) : undefined;
+        registerMeta(s.name, cli, "standard", ws.id, group.id, containerKey, claudeId);
       }
     }
     // "Reopen last workspace" (default on): re-select the tab whose session was
@@ -1317,8 +1400,24 @@ export async function initLifecycle(): Promise<void> {
   if (lifecycleStarted) return;
   lifecycleStarted = true;
   const { setStatus, setError, loadConfig } = useStore.getState();
+  const set = useStore.setState;
   // UI prefs don't depend on the container, so load them eagerly at app start.
   void loadConfig();
+  // Docker status + runtime detection + workspace containers are independent of
+  // the lifecycle event — load eagerly so the empty-state hero renders correctly
+  // on first paint (not after the lifecycle event arrives).
+  void ipc
+    .dockerInfo()
+    .then((dockerInfo) => set({ dockerInfo }))
+    .catch((e) => console.warn("docker_info failed", e));
+  void ipc
+    .detectDockerRuntime()
+    .then((dockerRuntime) => set({ dockerRuntime }))
+    .catch((e) => console.warn("detect_docker_runtime failed", e));
+  void ipc
+    .listWorkspaceContainers()
+    .then((workspaceContainers) => set({ workspaceContainers }))
+    .catch((e) => console.warn("list_workspace_containers failed", e));
   void onLifecycle(setStatus);
   void onLifecycleError(setError);
   // No initial containerStatus() call — there's no default container to query.

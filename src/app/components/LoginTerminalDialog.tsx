@@ -9,6 +9,7 @@ import "@xterm/xterm/css/xterm.css";
 import { ipc } from "@/app/lib/ipc";
 import { useEffect, useRef, useState } from "react";
 import { type UnlistenFn, listen } from "../../app/lib/bridge";
+import { Button } from "../ui/button";
 
 const TERM_THEME = {
   background: "#08090b",
@@ -239,22 +240,9 @@ export function LoginTerminalDialog({
                   : "error"}
           </span>
           <span style={{ flex: 1 }} />
-          <button
-            type="button"
-            onClick={dismiss}
-            style={{
-              background: "none",
-              border: "none",
-              cursor: "pointer",
-              color: "var(--fg-2)",
-              fontSize: 18,
-              lineHeight: 1,
-              padding: "0 2px",
-            }}
-            aria-label="Close"
-          >
+          <Button variant="ghost" size="icon-xs" onClick={() => void dismiss()} aria-label="Close">
             ×
-          </button>
+          </Button>
         </div>
 
         {/* terminal */}
@@ -307,39 +295,15 @@ export function LoginTerminalDialog({
           )}
 
           {status === "done" && (
-            <button
-              type="button"
-              onClick={() => onDone("captured")}
-              style={{
-                padding: "5px 14px",
-                borderRadius: 6,
-                border: "1px solid var(--bd)",
-                background: "var(--bg-2)",
-                color: "var(--fg-0)",
-                fontSize: 12,
-                cursor: "pointer",
-              }}
-            >
+            <Button variant="outline" size="sm" onClick={() => onDone("captured")}>
               Close
-            </button>
+            </Button>
           )}
 
           {(status === "error" || status === "running" || status === "connecting") && (
-            <button
-              type="button"
-              onClick={dismiss}
-              style={{
-                padding: "5px 14px",
-                borderRadius: 6,
-                border: "1px solid var(--bd)",
-                background: "transparent",
-                color: "var(--fg-2)",
-                fontSize: 12,
-                cursor: "pointer",
-              }}
-            >
+            <Button variant="ghost" size="sm" onClick={() => void dismiss()}>
               Cancel
-            </button>
+            </Button>
           )}
         </div>
       </div>

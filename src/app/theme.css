@@ -1,5 +1,10 @@
 @import "tailwindcss";
 
+/* Class-based dark mode: CodeHub uses .dark (default) and .gray (mid-dark) as
+   dark themes, .light as the light theme. Tailwind v4 defaults dark: to
+   prefers-color-scheme which ignores our class toggle — override it. */
+@custom-variant dark (&:is(.dark *, .gray *));
+
 /* Fonts → Tailwind utilities (font-mono / font-sans). Static stacks (Tailwind's
    @theme requires literal values, not var()): the design uses Geist for sans
    prose and Geist Mono for mono/data, JetBrains Mono as the mono fallback.
@@ -48,6 +53,7 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-ring-offset: var(--background);
 
   /* chrome aliases → design tokens */
   --color-bg: var(--bg-1);

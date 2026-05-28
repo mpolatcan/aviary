@@ -36,5 +36,5 @@ export function accountProfileSubtitle(profile: AccountProfileStatus): string {
   if (profile.source === "vault") {
     return `keychain · ${profile.present ? "stored" : "missing"}`;
   }
-  return `${profile.varName ?? "env"} · ${profile.present ? "present" : "missing"}`;
+  return `API key · ${profile.present ? "stored" : "missing"}`;
 }

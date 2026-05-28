@@ -7,7 +7,7 @@ src-tauri/gen
 .env.local
 *.log
 
-# playwright-cli session artifacts
+# playwright-cli session artifacts + verification screenshots (see .claude/rules/testing.md)
 .playwright-cli/
 
 # Claude Code agent worktrees (transient sub-agent scratch)

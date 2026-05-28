@@ -1,21 +1,7 @@
-/**
- * Keyboard shortcuts cheat sheet (? / ⌘/). Ported from design/screens/shortcuts.jsx.
- *
- * Honesty rule (binding): this lists ONLY bindings that actually fire today —
- * the global handlers in hooks/useKeyboard.ts plus the unconditional pass-through
- * to the terminal. The design mock's full grid also included shortcuts for things
- * that have no handler or backend (stage-hunk/commit/open-PR, companion toggle,
- * account switch, theme toggle, stop-agent, transcript search, …);
- * listing those as working would be a lie, so they stay omitted until they ship.
- * Keeping this in sync with useKeyboard.ts is the maintenance contract — a binding
- * appears here only when it's wired there.
- *
- * Adds a filter input (live substring match over key + description) and a print
- * button (window.print) over the design.
- */
 import { useMemo, useState } from "react";
 import { useOverlay } from "../../lib/overlay";
 import { Button } from "../../ui/button";
+import { Input } from "../../ui/input";
 import {
   Dialog,
   DialogContent,
@@ -26,52 +12,95 @@ import {
 
 type Sc = { keys: string[]; desc: string };
 
-// Single source of truth for the working key bindings — consumed both by this
-// ? / ⌘/ dialog and the Settings → Keyboard shortcuts pane. Every entry maps to a
-// real case in useKeyboard.ts (or the always-on terminal pass-through).
 export const SHORTCUT_GROUPS: { title: string; items: Sc[] }[] = [
   {
     title: "Workspace",
     items: [
       { keys: ["⌘", "N"], desc: "New agent session" },
-      { keys: ["⌘", "A"], desc: "New agent in current workspace" },
-      { keys: ["⌘", "T"], desc: "New agent session (alias)" },
-      { keys: ["⌘", "⇧", "N"], desc: "New workspace" },
-      { keys: ["⌘", "⇧", "T"], desc: "New workspace tab" },
-      { keys: ["⌘", "G"], desc: "New agent in a new group" },
-      { keys: ["⌘", "W"], desc: "Close focused session" },
+      { keys: ["⌘", "T"], desc: "New workspace tab" },
+      { keys: ["⌘", "W"], desc: "Close current pane" },
       { keys: ["⌘", "⇧", "W"], desc: "Close workspace tab" },
-    ],
-  },
-  {
-    title: "Panes",
-    items: [
-      { keys: ["⌘", "\\"], desc: "Split focused pane" },
-      { keys: ["⌘", "⇧", "\\"], desc: "Split pane (column)" },
-      { keys: ["⌘", "⇧", "B"], desc: "Toggle Shell panel" },
-    ],
-  },
-  {
-    title: "Panels",
-    items: [
-      { keys: ["⌘", "B"], desc: "Toggle sidebar" },
-      { keys: ["⌘", "E"], desc: "Toggle Files panel" },
-      { keys: ["⌘", "D"], desc: "Toggle Diff panel" },
-      { keys: ["⌘", "R"], desc: "Toggle Resume drawer" },
-      { keys: ["⌘", "⇧", "A"], desc: "Toggle Activity rail" },
-      { keys: ["⌘", ","], desc: "Open settings" },
+      { keys: ["⌘", "\\"], desc: "Split pane vertically" },
+      { keys: ["⌘", "⇧", "\\"], desc: "Split pane horizontally" },
+      { keys: ["⌘", "E"], desc: "Toggle files pane" },
+      { keys: ["⌘", "⇧", "B"], desc: "Toggle shell pane" },
+      { keys: ["⌘", "D"], desc: "Toggle diff inspector" },
     ],
   },
   {
     title: "Navigation",
     items: [
       { keys: ["⌘", "1–9"], desc: "Jump to workspace tab" },
-      { keys: ["⌘", "["], desc: "Previous workspace tab" },
-      { keys: ["⌘", "]"], desc: "Next workspace tab" },
+      { keys: ["⌘", "["], desc: "Previous tab" },
+      { keys: ["⌘", "]"], desc: "Next tab" },
       { keys: ["⌘", "K"], desc: "Command palette" },
-      { keys: ["⌘", "/"], desc: "This cheat sheet" },
-      { keys: ["?"], desc: "This cheat sheet" },
-      { keys: ["esc"], desc: "Close palette / cheat sheet" },
+      { keys: ["⌘", "⇧", "F"], desc: "Search across sessions" },
+      { keys: ["⌘", "⇧", "J"], desc: "Expand dynamic island" },
+      { keys: ["⌥", "tab"], desc: "Cycle agent panes" },
+      { keys: ["⌘", "⇧", "P"], desc: "Pin / docks sidebar" },
+      { keys: ["⌘", "↑"], desc: "Top of scrollback" },
+    ],
+  },
+  {
+    title: "Agent · Turn",
+    items: [
+      { keys: ["↵"], desc: "Send / approve" },
+      { keys: ["⇧", "↵"], desc: "New line in prompt" },
+      { keys: ["⌘", "↵"], desc: "Send to all visible agents" },
+      { keys: ["esc"], desc: "Cancel turn" },
+      { keys: ["⌘", "."], desc: "Stop agent" },
+      { keys: ["⌘", "R"], desc: "Restart turn from last prompt" },
+      { keys: ["⌘", "⇧", "R"], desc: "Restart with same context" },
+      { keys: ["⌘", "Z"], desc: "Undo last agent edit" },
+      { keys: ["tab"], desc: "Cycle auto-mode" },
+    ],
+  },
+  {
+    title: "System",
+    items: [
+      { keys: ["⌘", ","], desc: "Open settings" },
+      { keys: ["?"], desc: "This help" },
+      { keys: ["⌘", "⇧", "L"], desc: "Cycle theme (dark / gray / light)" },
+      { keys: ["⌘", "⇧", "C"], desc: "Toggle companion" },
+      { keys: ["⌘", "⇧", "N"], desc: "New workspace" },
+      { keys: ["⌘", "⌥", "I"], desc: "Open dev tools" },
+      { keys: ["⌘", "Q"], desc: "Quit CodeHub" },
+    ],
+  },
+  {
+    title: "Diff Inspector",
+    items: [
+      { keys: ["j", "k"], desc: "Next / previous hunk" },
+      { keys: ["s"], desc: "Stage hunk" },
+      { keys: ["u"], desc: "Unstage hunk" },
+      { keys: ["⌘", "P"], desc: "Open PR…" },
+      { keys: ["c"], desc: "Commit staged" },
+    ],
+  },
+  {
+    title: "Container",
+    items: [
+      { keys: ["⌘", "⇧", "X"], desc: "Exec shell in container" },
+      { keys: ["⌘", "⌥", "R"], desc: "Restart container" },
+      { keys: ["⌘", "⌥", "."], desc: "Stop container" },
+      { keys: ["⌘", "⌥", "L"], desc: "Tail container logs" },
+    ],
+  },
+  {
+    title: "Selection / Scroll",
+    items: [
+      { keys: ["⌘", "F"], desc: "Find in pane" },
+      { keys: ["⌘", "A"], desc: "New agent (split)" },
+      { keys: ["⌘", "C"], desc: "Copy" },
+      { keys: ["⌘", "⇧", "V"], desc: "Paste as plain" },
+      { keys: ["/"], desc: "Search scrollback" },
+    ],
+  },
+  {
+    title: "Accounts",
+    items: [
+      { keys: ["⌘", "⇧", "A"], desc: "Switch account on active pane" },
+      { keys: ["⌘", "⌥", "B"], desc: "Open billing" },
     ],
   },
 ];
@@ -81,8 +110,6 @@ export function Shortcuts() {
   const setShortcuts = useOverlay((s) => s.setShortcuts);
   const [filter, setFilter] = useState("");
 
-  // Live substring filter over key glyphs + description (case-insensitive).
-  // Groups with no surviving items drop out entirely.
   const groups = useMemo(() => {
     const q = filter.trim().toLowerCase();
     if (!q) return SHORTCUT_GROUPS;
@@ -116,33 +143,20 @@ export function Shortcuts() {
           >
             <DialogTitle style={{ fontSize: 16 }}>Keyboard shortcuts</DialogTitle>
             <DialogDescription className="sr-only">
-              Search and review the keyboard shortcuts currently wired in CodeHub.
+              Search and review the keyboard shortcuts available in CodeHub.
             </DialogDescription>
             <span className="mono" style={{ fontSize: 12, color: "var(--fg-2)" }}>
-              press <span className="kbd">?</span> or <span className="kbd">⌘</span>
-              <span className="kbd" style={{ marginLeft: 2 }}>
-                /
-              </span>{" "}
-              to open · <span className="kbd">esc</span> to close
+              press <span className="kbd">?</span> anywhere to open ·{" "}
+              <span className="kbd">esc</span> to close
             </span>
             <span style={{ flex: 1 }} />
-            <input
+            <Input
               type="text"
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
               placeholder="filter shortcuts…"
               spellCheck={false}
-              style={{
-                background: "var(--bg-1)",
-                border: "1px solid var(--bd)",
-                borderRadius: 6,
-                padding: "5px 10px",
-                fontSize: 12,
-                color: "var(--fg-1)",
-                fontFamily: "var(--mono)",
-                width: 220,
-                outline: "none",
-              }}
+              className="mono h-auto w-[220px] rounded-md px-2.5 py-1 text-xs"
             />
           </div>
         </DialogHeader>
@@ -153,14 +167,22 @@ export function Shortcuts() {
             overflow: "auto",
             padding: 22,
             display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))",
-            gap: 22,
+            gridTemplateColumns: "repeat(4, 1fr)",
+            gap: "28px 22px",
             minHeight: 80,
           }}
         >
           {groups.length === 0 ? (
-            <p className="mono" style={{ margin: 0, fontSize: 12, color: "var(--fg-3)" }}>
-              No shortcuts match “{filter}”.
+            <p
+              className="mono"
+              style={{
+                margin: 0,
+                fontSize: 12,
+                color: "var(--fg-3)",
+                gridColumn: "1 / -1",
+              }}
+            >
+              No shortcuts match "{filter}".
             </p>
           ) : (
             groups.map((g) => (
@@ -190,7 +212,13 @@ export function Shortcuts() {
                         ))}
                       </span>
                       <span style={{ flex: 1 }} />
-                      <span style={{ fontSize: 12, color: "var(--fg-1)", textAlign: "right" }}>
+                      <span
+                        style={{
+                          fontSize: 12,
+                          color: "var(--fg-1)",
+                          textAlign: "right",
+                        }}
+                      >
                         {sc.desc}
                       </span>
                     </div>
@@ -211,10 +239,15 @@ export function Shortcuts() {
             background: "var(--bg-1)",
           }}
         >
-          <p className="mono" style={{ margin: 0, fontSize: 11, color: "var(--fg-3)", flex: 1 }}>
-            Inside a terminal pane, every other key passes straight through to the agent / tmux.
-            More shortcuts arrive as their features ship.
+          <p
+            className="mono"
+            style={{ margin: 0, fontSize: 11, color: "var(--fg-3)", flex: 1 }}
+          >
+            vim-style keys also work inside terminal panes (handled by tmux)
           </p>
+          <Button variant="outline" size="sm" onClick={() => {}}>
+            Customize…
+          </Button>
           <Button variant="outline" size="sm" onClick={() => window.print()}>
             Print
           </Button>

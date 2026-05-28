@@ -3,13 +3,9 @@
  *
  * Two real surfaces, both FACTUAL and presence-only for any credential:
  *
- *  1. GitHub (COMPLETION_PLAN decision 6) — the PAT is a HOST ENV VAR, surfaced
- *     PRESENCE-ONLY. `github_status` reports connected/not + the env var NAME,
- *     plus (when the token is reachable) login / scopes / token-expiry from the
- *     GitHub API. The token VALUE is never read, returned, rendered, or stored;
- *     there is no secret input field and no rotate/disconnect write path (a host
- *     env var is owned by the shell, not by CodeHub). When not connected, the
- *     card is INSTRUCTIONAL — it names the env var to export, never a secret box.
+ *  1. GitHub — presence-only credential check. `github_status` reports
+ *     connected/not, plus (when reachable) login / scopes / token-expiry from
+ *     the GitHub API. The token VALUE is never read, returned, or rendered.
  *     The visible repo list comes from `github_repos`.
  *
  *  2. Claude config (claude_integrations) — the runtime's signed-in account
@@ -43,8 +39,8 @@ export function IntegrationsPane() {
   const state = status?.state ?? "missing";
   const running = state === "running";
 
-  // GitHub is independent of the runtime container (it's a host env var + the
-  // GitHub API), so it loads regardless of container state. Presence-only.
+  // GitHub is independent of the runtime container, so it loads regardless
+  // of container state. Presence-only.
   const githubStatus = useStore((s) => s.githubStatus);
   const githubRepos = useStore((s) => s.githubRepos);
   const loadGithubStatus = useStore((s) => s.loadGithubStatus);
@@ -96,16 +92,16 @@ export function IntegrationsPane() {
       </h1>
       <p style={{ margin: "0 0 28px", color: "var(--fg-2)", fontSize: 13 }}>
         Connect external services so agents can read context and act on your behalf. Connections are
-        surfaced presence-only — no credential value is read or stored. GitHub auth is a host env
-        var; the Claude account + MCP config is read from the runtime container.
+        surfaced presence-only — no credential value is read or stored. GitHub uses a keychain-backed
+        token; the Claude account + MCP config is read from the runtime container.
       </p>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 24, maxWidth: 760 }}>
-        {/* GitHub — host env var, presence-only */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+        {/* GitHub — presence-only */}
         <section>
           <SectionHead label="Source control" />
           <GitHubCard status={githubStatus} repos={githubRepos} />
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 8 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 8, marginTop: 8 }}>
             <SoonRow name="GitLab" desc="Self-hosted or saas.gitlab.com" />
             <SoonRow name="Bitbucket" desc="Cloud + Data Center" />
             <SoonRow name="Gitea" desc="Self-hosted" />
@@ -116,7 +112,7 @@ export function IntegrationsPane() {
         {/* Other categories — no data source yet, honestly "Coming soon" */}
         <section>
           <SectionHead label="Project trackers" />
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 8 }}>
             <SoonRow name="Linear" desc="Read issues, comment, transition status" />
             <SoonRow name="Jira" desc="Atlassian cloud + server" />
             <SoonRow name="Notion" desc="Read docs, append to pages" />
@@ -126,7 +122,7 @@ export function IntegrationsPane() {
 
         <section>
           <SectionHead label="Observability" />
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 8 }}>
             <SoonRow name="Sentry" desc="Pipe runtime errors back to the agent for triage" />
             <SoonRow name="Datadog" desc="Logs, traces, metrics" />
             <SoonRow name="Honeycomb" desc="Distributed traces" />
@@ -150,11 +146,9 @@ export function IntegrationsPane() {
   );
 }
 
-// GitHub featured card. Two faithful modes:
-//  - connected: green status, env-var-NAME tag, login/expiry line, scope chips
-//    (only those the API actually reported), and the visible repo list.
-//  - not connected: instructional — names the env var to export. No secret box,
-//    no rotate/disconnect (a host env var is owned by the shell).
+// GitHub featured card. Two modes:
+//  - connected: green status, login/expiry line, scope chips, repo list.
+//  - not connected: instructional — directs to Settings to add a token.
 function GitHubCard({
   status,
   repos,
@@ -244,8 +238,8 @@ function GitHubCard({
                   status?.tokenExpiry ? `token expires ${fmtExpiry(status.tokenExpiry)}` : null,
                 ]
                   .filter(Boolean)
-                  .join(" · ") || "host token present"
-              : `set the ${varName} host env var to connect`}
+                  .join(" · ") || "token active"
+              : "not connected — choose a method below"}
           </div>
         </div>
       </div>

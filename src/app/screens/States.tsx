@@ -258,12 +258,7 @@ export function CrashPane({
         </div>
       )}
       <div style={{ display: "flex", gap: 6, marginTop: "auto" }}>
-        <Button
-          variant="success"
-          size="sm"
-          style={{ flex: 1, justifyContent: "center" }}
-          onClick={onRestart}
-        >
+        <Button size="sm" style={{ flex: 1, justifyContent: "center" }} onClick={onRestart}>
           {restartLabel}
         </Button>
         <Button variant="outline" size="sm" onClick={onLogs}>

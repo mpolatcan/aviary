@@ -54,6 +54,10 @@ async function httpInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
       return jsend("POST", `/container-restart${wsq}`) as Promise<T>;
     case "docker_info":
       return jget("/docker-info") as Promise<T>;
+    case "detect_docker_runtime":
+      return jget("/detect-docker-runtime") as Promise<T>;
+    case "start_docker_app":
+      return jsend("POST", `/start-docker-app`, { runtime: args.runtime }) as Promise<T>;
     case "agent_key_status":
       return jget("/agent-key-status") as Promise<T>;
     case "agent_versions":
@@ -122,7 +126,7 @@ async function httpInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
       return jget(`/workspace-info${wsq}`) as Promise<T>;
     case "recreate_runtime":
       return jsend("POST", `/recreate-runtime${wsq}`) as Promise<T>;
-    // Account profiles (env-backed or vault-backed).
+    // Account profiles (keychain-backed).
     case "list_account_profiles":
       return jget("/account-profiles") as Promise<T>;
     case "add_account_profile":
@@ -136,6 +140,12 @@ async function httpInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
       return jsend(
         "DELETE",
         `/account-profiles/${encodeURIComponent(String(args.id))}`,
+      ) as Promise<T>;
+    case "rename_account_profile":
+      return jsend(
+        "PATCH",
+        `/account-profiles/${encodeURIComponent(String(args.id))}`,
+        { label: args.label },
       ) as Promise<T>;
     // Vault: OS-keychain ops — Tauri-only, degrade to no-op in browser mode.
     case "vault_store_key":

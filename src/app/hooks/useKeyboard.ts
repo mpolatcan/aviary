@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { groupKey, splitKey, useLauncher } from "../lib/launcher";
 import { useOverlay } from "../lib/overlay";
 import { confirmCloseRunningSession, confirmCloseWorkspace, useStore } from "../lib/store";
-import { type SplitDir, activeGroup, workspaceLeaves, workspaceTitle } from "../lib/tree";
+import { type SplitDir, activeGroup } from "../lib/tree";
 
 // Split the focused pane along its longer visible axis — wider panes split into
 // a row (side-by-side), taller ones into a column. Compares the leaf's dataset
@@ -28,7 +28,6 @@ export function autoSplitDir(session: string): SplitDir {
 //   ⌘/Ctrl D  — toggle the all-changes Diff viewer
 //   ⌘B        — collapse/expand the sidebar (design AppSidebar rail)
 //   ⌘⇧B       — toggle the Shell docked panel
-//   ⌘⇧A       — collapse/expand the Activity rail
 //   ⌘G        — spawn a new agent into a fresh group (design SpawnPlacementMenu)
 //   ⌘/Ctrl R  — toggle the Resume drawer (docked over the hub)
 //   ⌘/Ctrl ,  — settings
@@ -167,18 +166,13 @@ export function useKeyboard() {
           break;
         case "a":
           e.preventDefault();
-          // ⌘A is the in-workspace new-agent shortcut from the design handoff.
-          // When there is no focused pane, fall back to the same fresh-tab path
-          // as ⌘N so the command is always productive.
           if (!e.shiftKey) {
             if (focused) {
               launcher.open(splitKey(focused), { dir: "row", session: focused });
             } else {
               launcher.open("newtab");
             }
-            return;
           }
-          overlay.setActivityRail(!overlay.activityRail);
           break;
         case "g": {
           // ⌘G — spawn a new agent into a fresh group of the active workspace.

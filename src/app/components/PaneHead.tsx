@@ -6,7 +6,9 @@ import { StatusBadge } from "../components/primitives/StatusBadge";
 import { Ico } from "../components/primitives/icons";
 import { fmtTokens, useSessionUsage } from "../hooks/useSessionUsage";
 import { MODE_BY_ID, SPEC_BY_CLI } from "../lib/catalog";
+import { useOverlay } from "../lib/overlay";
 import { confirmCloseRunningSession, useStore } from "../lib/store";
+import { leavesList } from "../lib/tree";
 
 // Pane header, visually aligned with design/screens/main-hub-a.jsx:
 // index + colored pane title + compact selector chip + expand/more/close, with
@@ -31,10 +33,20 @@ export function PaneHead({
   const focused = useStore((s) =>
     s.workspaces.some((w) => w.groups.some((g) => g.focused === session)),
   );
+  const siblings = useStore((s) => {
+    for (const w of s.workspaces)
+      for (const g of w.groups) {
+        const ls = leavesList(g.root);
+        if (ls.includes(session)) return ls.length;
+      }
+    return 1;
+  });
   const awaiting = useStore((s) => s.pendingPrompts.some((p) => p.session === session));
   const closeSession = useStore((s) => s.closeSession);
   const renameSession = useStore((s) => s.renameSession);
-  const openDetail = useStore((s) => s.openDetail);
+  const focusSession = useStore((s) => s.focusSession);
+  const focusMode = useOverlay((s) => s.focusMode);
+  const setFocusMode = useOverlay((s) => s.setFocusMode);
   const [editing, setEditing] = useState(false);
 
   const claudeId = activity?.claudeId ?? (meta?.cli === "claude" ? meta.claudeId : undefined);
@@ -48,6 +60,8 @@ export function PaneHead({
   const version = meta.cli === "shell" ? null : (agentVersions?.[meta.cli]?.version ?? null);
   const working = activity?.state === "working";
   const statusText = awaiting ? "Awaiting input" : working ? "Working" : "Idle";
+  const canMax = siblings > 1;
+  const isMax = focusMode && focused && canMax;
 
   return (
     <div
@@ -177,14 +191,21 @@ export function PaneHead({
         <span style={{ flex: 1 }} />
 
         <IconBtn
-          title="Open session detail"
+          title={isMax ? "Restore split" : canMax ? "Maximize pane" : "Maximize — split first"}
+          active={isMax}
+          disabled={!canMax}
           style={{ width: 22, height: 22 }}
           onClick={(e) => {
             e.stopPropagation();
-            openDetail(session);
+            if (isMax) {
+              setFocusMode(false);
+            } else {
+              focusSession(session);
+              setFocusMode(true);
+            }
           }}
         >
-          {Ico.expand}
+          {isMax ? Ico.grid : Ico.expand}
         </IconBtn>
         <IconBtn
           title="More actions — right-click pane for split, copy, fullscreen…"

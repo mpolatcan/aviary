@@ -5,7 +5,7 @@
   "tsx": true,
   "tailwind": {
     "config": "",
-    "css": "src/app/tokens.css",
+    "css": "src/app/theme.css",
     "baseColor": "neutral",
     "cssVariables": true,
     "prefix": ""
@@ -16,5 +16,6 @@
     "ui": "@/app/ui",
     "lib": "@/app/lib",
     "hooks": "@/app/hooks"
-  }
+  },
+  "iconLibrary": "lucide"
 }

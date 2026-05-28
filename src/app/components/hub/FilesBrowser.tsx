@@ -6,7 +6,9 @@ import { Ico } from "../../components/primitives/icons";
 import { slideLeft } from "../../hooks/useSlideIn";
 import { fmtBytes, joinPath as join, orderEntries as order } from "../../lib/fs";
 import { type FileEntry, ipc } from "../../lib/ipc";
+import { useOverlay } from "../../lib/overlay";
 import { activeWorkspace, useStore } from "../../lib/store";
+import { Input } from "../../ui/input";
 
 // Browses the runtime container's /workspace, one directory at a time
 // (container_list_dir → `find -maxdepth 1`), with a read-only preview of a
@@ -26,15 +28,11 @@ const ROOT = "/workspace";
 const WIDTH = 256;
 
 export function FilesBrowser({ onClose }: { onClose: () => void }) {
-  // Current directory, its listing (null = loading, [] = empty/error), and the
-  // selected file's path + contents (null content = loading).
   const [cwd, setCwd] = useState(ROOT);
   const [entries, setEntries] = useState<FileEntry[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [file, setFile] = useState<string | null>(null);
-  const [body, setBody] = useState<string | null>(null);
   const [query, setQuery] = useState("");
-  // Browse the active workspace's container.
+  const setFilePreview = useOverlay((s) => s.setFilePreview);
   const containerKey = useStore((s) => activeWorkspace(s)?.containerKey);
 
   // Load the listing whenever the directory (or active container) changes.
@@ -56,28 +54,12 @@ export function FilesBrowser({ onClose }: { onClose: () => void }) {
     };
   }, [cwd, containerKey]);
 
-  // Load a file's preview when one is selected.
-  useEffect(() => {
-    if (file === null) return;
-    let alive = true;
-    setBody(null);
-    ipc
-      .containerReadFile(file, containerKey)
-      .then((b) => alive && setBody(b))
-      .catch((e) => alive && setBody(`(could not read file: ${e})`));
-    return () => {
-      alive = false;
-    };
-  }, [file, containerKey]);
-
   const enter = (e: FileEntry) => {
     if (e.kind === "dir") {
-      setFile(null);
-      setBody(null);
       setQuery("");
       setCwd(join(cwd, e.name));
     } else if (e.kind === "file") {
-      setFile(join(cwd, e.name));
+      setFilePreview(join(cwd, e.name));
     }
   };
 
@@ -120,132 +102,42 @@ export function FilesBrowser({ onClose }: { onClose: () => void }) {
         </IconBtn>
       </div>
 
-      {/* When previewing a file the listing is hidden, so the filter only makes
-          sense in listing mode. */}
-      {file === null && (
-        <>
-          <div style={{ padding: "8px 10px 0" }}>
-            <input
-              className="mono"
-              placeholder="filter by name…"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={(e) => e.key === "Escape" && setQuery("")}
-              style={{
-                width: "100%",
-                padding: "4px 8px",
-                borderRadius: 5,
-                border: "1px solid var(--bd-soft)",
-                background: "var(--bg-0)",
-                color: "var(--fg-0)",
-                fontSize: 11.5,
-                outline: "none",
-              }}
+      <div style={{ padding: "8px 10px 0" }}>
+        <Input
+          className="mono h-auto rounded-[5px] px-2 py-1 text-[11.5px]"
+          placeholder="filter by name…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => e.key === "Escape" && setQuery("")}
+        />
+      </div>
+      <div style={{ padding: "8px 10px 6px" }}>
+        <Crumbs
+          cwd={cwd}
+          onNav={(p) => {
+            setQuery("");
+            setCwd(p);
+          }}
+        />
+      </div>
+      <div className="scroll" style={{ flex: 1, overflow: "auto", padding: "0 8px 8px" }}>
+        {entries === null ? (
+          <Note>Reading {cwd}…</Note>
+        ) : err ? (
+          <Note>{err}</Note>
+        ) : rows.length === 0 ? (
+          <Note>{q ? "No files match the filter." : "Empty directory."}</Note>
+        ) : (
+          rows.map((e) => (
+            <EntryRow
+              key={e.name}
+              entry={e}
+              active={false}
+              onClick={() => enter(e)}
             />
-          </div>
-          <div style={{ padding: "8px 10px 6px" }}>
-            <Crumbs
-              cwd={cwd}
-              onNav={(p) => {
-                setFile(null);
-                setBody(null);
-                setQuery("");
-                setCwd(p);
-              }}
-            />
-          </div>
-          <div className="scroll" style={{ flex: 1, overflow: "auto", padding: "0 8px 8px" }}>
-            {entries === null ? (
-              <Note>Reading {cwd}…</Note>
-            ) : err ? (
-              <Note>{err}</Note>
-            ) : rows.length === 0 ? (
-              <Note>{q ? "No files match the filter." : "Empty directory."}</Note>
-            ) : (
-              rows.map((e) => (
-                <EntryRow
-                  key={e.name}
-                  entry={e}
-                  active={file === join(cwd, e.name)}
-                  onClick={() => enter(e)}
-                />
-              ))
-            )}
-          </div>
-        </>
-      )}
-
-      {/* File preview — replaces the listing in the same column; a back row
-          returns to the directory. */}
-      {file !== null && (
-        <>
-          <button
-            type="button"
-            onClick={() => {
-              setFile(null);
-              setBody(null);
-            }}
-            className="rail-file mono"
-            title="Back to listing"
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              width: "100%",
-              padding: "7px 10px",
-              border: "none",
-              borderBottom: "1px solid var(--bd-soft)",
-              background: "var(--bg-1)",
-              color: "var(--fg-1)",
-              cursor: "pointer",
-              fontSize: 11.5,
-              textAlign: "left",
-            }}
-          >
-            <span style={{ transform: "rotate(180deg)", display: "inline-flex" }}>
-              {Ico.arrowR}
-            </span>
-            <span
-              style={{
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-                flex: 1,
-              }}
-            >
-              {file.slice(cwd.length + 1)}
-            </span>
-          </button>
-          <div
-            className="scroll"
-            style={{
-              flex: 1,
-              minWidth: 0,
-              overflow: "auto",
-              fontFamily: "var(--mono)",
-              fontSize: 11.5,
-              lineHeight: 1.55,
-              background: "var(--bg-0)",
-            }}
-          >
-            {body === null ? (
-              <Note>Reading file…</Note>
-            ) : (
-              <pre
-                style={{
-                  margin: 0,
-                  padding: "10px 12px",
-                  whiteSpace: "pre-wrap",
-                  wordBreak: "break-word",
-                  color: "var(--fg-1)",
-                }}
-              >
-                {body || "(empty file)"}
-              </pre>
-            )}
-          </div>
-        </>
-      )}
+          ))
+        )}
+      </div>
       <div
         style={{
           padding: "7px 10px",

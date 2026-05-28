@@ -1,5 +1,5 @@
 /**
- * EmptyState — first-run / no-sessions hero. Ported from design/screens/empty-state.jsx.
+ * EmptyState — first-run / no-sessions hero.
  *
  * Two exports:
  *  - `EmptyHero` — just the hero column. Used inside the live Hub shell (App.tsx),
@@ -7,22 +7,21 @@
  *  - `EmptyState` — hero + a standalone aside, for the dev screen preview
  *    (#/__screens) where there is no surrounding shell.
  *
- * Data is real when the runtime is up: the docker pill reads docker_info, the
- * agent cards read agent_versions + agent_key_status, and the checklist derives
- * from those (Tier-1 IPC, BACKEND_PLAN.md). Before the runtime reports in, the
- * fields fall back to neutral placeholders.
- *
- * Copy note: keys are forwarded from the host environment, not an OS keychain.
+ * Design philosophy: agent-first, not setup-first. The hero leads with the value
+ * prop and "New workspace" CTA, then shows agent cards as the primary content.
+ * Docker status and API keys are guidance, not a gate — each surfaces inline
+ * where it's relevant (Docker as an actionable banner, keys on agent cards).
  */
 import { AGENT_META, AgentGlyph, type AgentId } from "@/app/components/primitives/AgentGlyph";
 import { Logo } from "@/app/components/primitives/Logo";
-import { StatusDot } from "@/app/components/primitives/StatusDot";
 import { Ico } from "@/app/components/primitives/icons";
 import { CLIS } from "@/app/lib/catalog";
 import type { AgentCli, Cli } from "@/app/lib/ipc";
+import { ipc } from "@/app/lib/ipc";
 import { useOverlay } from "@/app/lib/overlay";
-import { type HubView, useStore } from "@/app/lib/store";
+import { useStore } from "@/app/lib/store";
 import { Button } from "@/app/ui/button";
+import { useCallback, useState } from "react";
 
 export interface EmptyStateProps {
   onNew?: (cli?: Cli) => void;
@@ -37,30 +36,42 @@ const AGENT_DESC: Record<AgentCli, string> = {
     "Multi-step automations and longer-running analyses. Built for profiling and multi-tool tasks.",
 };
 
+const RUNTIME_LABELS: Record<string, string> = {
+  docker: "Docker Desktop",
+  orbstack: "OrbStack",
+};
+
 export function EmptyHero({ onNew }: EmptyStateProps) {
   const dockerInfo = useStore((s) => s.dockerInfo);
+  const dockerRuntime = useStore((s) => s.dockerRuntime);
   const keyStatus = useStore((s) => s.keyStatus);
-  const agentVersions = useStore((s) => s.agentVersions);
   const status = useStore((s) => s.status);
-  const startRuntime = useStore((s) => s.startRuntime);
   const setView = useStore((s) => s.setView);
   const setSettingsSection = useStore((s) => s.setSettingsSection);
   const openWizard = useOverlay((s) => s.setNewWorkspace);
+
+  const [starting, setStarting] = useState<string | null>(null);
+
+  const daemonUp = dockerInfo?.reachable || status?.state === "running";
+  const installed = dockerRuntime?.installed ?? [];
+  const nothingInstalled = installed.length === 0 && dockerRuntime !== null;
+
   const goToKeys = () => {
     setSettingsSection("agents");
     setView("settings");
   };
 
-  const daemonUp = dockerInfo?.reachable ?? status?.state === "running";
-  const state = status?.state;
-  const canStart = daemonUp && (state === "stopped" || state === "missing");
-  const starting = state === "starting";
-
-  const setupDone =
-    (daemonUp ? 1 : 0) +
-    (keyStatus?.claude?.present ? 1 : 0) +
-    (keyStatus?.codex?.present ? 1 : 0) +
-    (keyStatus?.antigravity?.present ? 1 : 0);
+  const handleStartRuntime = useCallback(
+    async (runtime: string) => {
+      setStarting(runtime);
+      try {
+        await ipc.startDockerApp(runtime);
+      } catch (e) {
+        console.warn("start_docker_app failed", e);
+      }
+    },
+    [],
+  );
 
   return (
     <main
@@ -99,33 +110,35 @@ export function EmptyHero({ onNew }: EmptyStateProps) {
         <div style={{ maxWidth: 880, width: "100%" }}>
           {/* hero header */}
           <div style={{ textAlign: "center", marginBottom: 28 }}>
-            <div
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 8,
-                padding: "4px 10px",
-                border: "1px solid var(--bd)",
-                borderRadius: 999,
-                fontSize: 11,
-                color: "var(--fg-2)",
-                fontFamily: "var(--mono)",
-                marginBottom: 18,
-              }}
-            >
-              <span
+            {dockerInfo !== null && (
+              <div
                 style={{
-                  width: 5,
-                  height: 5,
-                  borderRadius: "50%",
-                  background: daemonUp ? "var(--live)" : "var(--wait)",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 8,
+                  padding: "4px 10px",
+                  border: "1px solid var(--bd)",
+                  borderRadius: 999,
+                  fontSize: 11,
+                  color: "var(--fg-2)",
+                  fontFamily: "var(--mono)",
+                  marginBottom: 18,
                 }}
-              />
-              {daemonUp ? "docker daemon connected" : "waiting for docker daemon"}
-              {dockerInfo?.version && (
-                <span style={{ color: "var(--fg-3)" }}>· {dockerInfo.version}</span>
-              )}
-            </div>
+              >
+                <span
+                  style={{
+                    width: 5,
+                    height: 5,
+                    borderRadius: "50%",
+                    background: daemonUp ? "var(--live)" : "var(--wait)",
+                  }}
+                />
+                {daemonUp ? "docker daemon connected" : "waiting for docker daemon"}
+                {dockerInfo?.version && (
+                  <span style={{ color: "var(--fg-3)" }}>· {dockerInfo.version}</span>
+                )}
+              </div>
+            )}
             <h1
               style={{
                 margin: 0,
@@ -150,7 +163,7 @@ export function EmptyHero({ onNew }: EmptyStateProps) {
               }}
             >
               Each session spawns a fresh tmux in a per-workspace container — your repo is mounted
-              and your API keys are forwarded from the host.
+              and credentials are stored securely in your OS keychain.
             </p>
             <div style={{ marginTop: 16 }}>
               <Button onClick={() => openWizard(true)}>
@@ -162,102 +175,19 @@ export function EmptyHero({ onNew }: EmptyStateProps) {
             </div>
           </div>
 
-          {(canStart || starting) && (
-            <div
-              className="ch-card"
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 14,
-                padding: "12px 16px",
-                marginBottom: 16,
-                borderColor: "color-mix(in oklab, var(--wait) 35%, var(--bd))",
-                background: "color-mix(in oklab, var(--wait) 5%, var(--bg-2))",
-              }}
-            >
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 13, fontWeight: 500, color: "var(--fg-0)" }}>
-                  {starting ? "Runtime is starting…" : "Runtime is stopped"}
-                </div>
-                <div style={{ fontSize: 11.5, color: "var(--fg-2)" }}>
-                  {starting
-                    ? "Agents become available once it's running."
-                    : "Start the workspace container to launch agents."}
-                </div>
-              </div>
-              <Button size="sm" disabled={starting} onClick={() => void startRuntime()}>
-                {starting ? "Starting…" : "Start runtime"}
-              </Button>
-            </div>
+          {/* Docker not running banner — only when we've checked and daemon is down */}
+          {dockerInfo !== null && !daemonUp && (
+            <DockerBanner
+              installed={installed}
+              nothingInstalled={nothingInstalled}
+              starting={starting}
+              onStart={handleStartRuntime}
+            />
           )}
 
-          {/* setup checklist — above agent cards for first-run discoverability */}
-          <div className="ch-card" style={{ padding: 16, marginBottom: 20 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
-              <span className="lbl">Setup · {setupDone} of 4</span>
-              <div
-                style={{
-                  flex: 1,
-                  maxWidth: 220,
-                  height: 4,
-                  borderRadius: 999,
-                  background: "var(--bg-3)",
-                  overflow: "hidden",
-                }}
-              >
-                <div
-                  style={{
-                    width: `${(setupDone / 4) * 100}%`,
-                    height: "100%",
-                    background: "var(--live)",
-                    transition: "width .2s ease",
-                  }}
-                />
-              </div>
-            </div>
-            <ChecklistItem
-              done={daemonUp}
-              label="Docker daemon connected"
-              sub={daemonUp ? "runtime reachable" : "start Docker Desktop"}
-            />
-            <ChecklistItem
-              done={keyStatus?.claude?.present ?? false}
-              label="Claude Code key"
-              sub={
-                keyStatus?.claude?.present
-                  ? `${keyStatus.claude.varName} present`
-                  : "Set CLAUDE_CODE_OAUTH_TOKEN in your host environment."
-              }
-              action={keyStatus?.claude?.present ? undefined : "How to"}
-              onAction={goToKeys}
-            />
-            <ChecklistItem
-              done={keyStatus?.codex?.present ?? false}
-              label="OpenAI key for Codex"
-              sub={
-                keyStatus?.codex?.present
-                  ? `${keyStatus.codex.varName} present`
-                  : "Set OPENAI_API_KEY in your host environment."
-              }
-              action={keyStatus?.codex?.present ? undefined : "How to"}
-              onAction={goToKeys}
-            />
-            <ChecklistItem
-              done={keyStatus?.antigravity?.present ?? false}
-              label="Google API key for Antigravity"
-              sub={
-                keyStatus?.antigravity?.present
-                  ? `${keyStatus.antigravity.varName} present`
-                  : "Set GOOGLE_API_KEY to enable the Antigravity agent."
-              }
-              action={keyStatus?.antigravity?.present ? undefined : "How to"}
-              onAction={goToKeys}
-            />
-          </div>
-
-          {/* agent cards */}
+          {/* agent cards — primary content */}
           <div className="lbl" style={{ marginBottom: 10 }}>
-            Agents
+            Choose an agent to get started
           </div>
           <div
             style={{
@@ -273,15 +203,139 @@ export function EmptyHero({ onNew }: EmptyStateProps) {
                 agent={c.id}
                 name={c.label}
                 desc={AGENT_DESC[c.id]}
-                version={agentVersions?.[c.id]?.version ?? "—"}
                 keySet={keyStatus?.[c.id]?.present ?? false}
                 onStart={() => onNew?.(c.id)}
+                onSetupKey={goToKeys}
               />
             ))}
           </div>
         </div>
       </div>
     </main>
+  );
+}
+
+function DockerBanner({
+  installed,
+  nothingInstalled,
+  starting,
+  onStart,
+}: {
+  installed: string[];
+  nothingInstalled: boolean;
+  starting: string | null;
+  onStart: (runtime: string) => void;
+}) {
+  if (nothingInstalled) {
+    return (
+      <div
+        className="ch-card"
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 14,
+          padding: "14px 16px",
+          marginBottom: 20,
+          borderColor: "color-mix(in oklab, var(--err) 30%, var(--bd))",
+          background: "color-mix(in oklab, var(--err) 4%, var(--bg-2))",
+        }}
+      >
+        <div
+          style={{
+            width: 32,
+            height: 32,
+            borderRadius: 8,
+            background: "color-mix(in oklab, var(--err) 12%, var(--bg-1))",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            flexShrink: 0,
+            color: "var(--err)",
+          }}
+        >
+          {Ico.container}
+        </div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 13, fontWeight: 500, color: "var(--fg-0)" }}>
+            No container runtime found
+          </div>
+          <div style={{ fontSize: 11.5, color: "var(--fg-2)", lineHeight: 1.45 }}>
+            Install{" "}
+            <a
+              href="https://www.docker.com/products/docker-desktop/"
+              target="_blank"
+              rel="noreferrer"
+              style={{ color: "var(--pri)", textDecoration: "none" }}
+            >
+              Docker Desktop
+            </a>{" "}
+            or{" "}
+            <a
+              href="https://orbstack.dev"
+              target="_blank"
+              rel="noreferrer"
+              style={{ color: "var(--pri)", textDecoration: "none" }}
+            >
+              OrbStack
+            </a>{" "}
+            to run containers.
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="ch-card"
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 14,
+        padding: "14px 16px",
+        marginBottom: 20,
+        borderColor: "color-mix(in oklab, var(--wait) 35%, var(--bd))",
+        background: "color-mix(in oklab, var(--wait) 5%, var(--bg-2))",
+      }}
+    >
+      <div
+        style={{
+          width: 32,
+          height: 32,
+          borderRadius: 8,
+          background: "color-mix(in oklab, var(--wait) 12%, var(--bg-1))",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          flexShrink: 0,
+          color: "var(--wait)",
+        }}
+      >
+        {Ico.container}
+      </div>
+      <div style={{ flex: 1 }}>
+        <div style={{ fontSize: 13, fontWeight: 500, color: "var(--fg-0)" }}>
+          Container runtime is not running
+        </div>
+        <div style={{ fontSize: 11.5, color: "var(--fg-2)" }}>
+          Start {installed.length === 1 ? RUNTIME_LABELS[installed[0]] : "a runtime"} to launch
+          agents.
+        </div>
+      </div>
+      <div style={{ display: "flex", gap: 8 }}>
+        {installed.map((rt) => (
+          <Button
+            key={rt}
+            size="sm"
+            variant={installed.length > 1 ? "outline" : "default"}
+            disabled={starting !== null}
+            onClick={() => onStart(rt)}
+          >
+            {starting === rt ? "Starting..." : `Start ${RUNTIME_LABELS[rt] ?? rt}`}
+          </Button>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -343,24 +397,23 @@ function AgentCard({
   agent,
   name,
   desc,
-  version,
   keySet,
   onStart,
+  onSetupKey,
 }: {
   agent: AgentId;
   name: string;
   desc: string;
-  version: string;
   keySet?: boolean;
   onStart?: () => void;
+  onSetupKey?: () => void;
 }) {
   const meta = AGENT_META[agent];
   return (
     <button
       type="button"
       className="ch-card-interactive"
-      disabled={!keySet}
-      onClick={keySet ? onStart : undefined}
+      onClick={keySet ? onStart : onSetupKey}
       style={{
         padding: 16,
         borderRadius: 10,
@@ -370,7 +423,7 @@ function AgentCard({
         flexDirection: "column",
         gap: 8,
         position: "relative",
-        cursor: keySet ? "pointer" : "default",
+        cursor: "pointer",
         color: "inherit",
         font: "inherit",
         textAlign: "left",
@@ -398,9 +451,6 @@ function AgentCard({
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
             <span style={{ fontSize: 14, fontWeight: 600, color: "var(--fg-0)" }}>{name}</span>
-            <span className="mono" style={{ fontSize: 10, color: "var(--fg-3)" }}>
-              {version}
-            </span>
           </div>
         </div>
       </div>
@@ -420,72 +470,18 @@ function AgentCard({
         </div>
       ) : (
         <div
+          className="mono"
           style={{
+            fontSize: 11,
+            color: "var(--fg-3)",
             display: "flex",
             alignItems: "center",
-            gap: 6,
-            color: "var(--wait)",
-            fontSize: 11,
+            gap: 4,
           }}
         >
-          <StatusDot status="wait" /> Add API key to enable
+          Set up API key {Ico.arrowR}
         </div>
       )}
     </button>
-  );
-}
-
-function ChecklistItem({
-  done,
-  label,
-  sub,
-  action,
-  onAction,
-}: {
-  done?: boolean;
-  label: string;
-  sub: string;
-  action?: string;
-  onAction?: () => void;
-}) {
-  return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 12,
-        padding: "7px 0",
-        borderTop: "1px solid var(--bd-soft)",
-      }}
-    >
-      <span
-        style={{
-          width: 18,
-          height: 18,
-          borderRadius: "50%",
-          border: `1.5px solid ${done ? "var(--live)" : "var(--bd-strong)"}`,
-          background: done ? "var(--live)" : "transparent",
-          color: done ? "var(--bg-0)" : "var(--fg-3)",
-          display: "inline-flex",
-          alignItems: "center",
-          justifyContent: "center",
-          fontSize: 10,
-          flexShrink: 0,
-        }}
-      >
-        {done && Ico.check}
-      </span>
-      <div style={{ flex: 1 }}>
-        <div style={{ fontSize: 12.5, color: done ? "var(--fg-1)" : "var(--fg-0)" }}>{label}</div>
-        <div className="mono" style={{ fontSize: 11, color: "var(--fg-3)" }}>
-          {sub}
-        </div>
-      </div>
-      {action && (
-        <Button variant="outline" size="xs" onClick={onAction}>
-          {action}
-        </Button>
-      )}
-    </div>
   );
 }

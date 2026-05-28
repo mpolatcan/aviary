@@ -32,7 +32,7 @@ import { SessionDetail } from "@/app/screens/SessionDetail";
 import { Settings } from "@/app/screens/Settings";
 import { SpawnDialog } from "@/app/screens/SpawnDialog";
 import StatesGallery from "@/app/screens/States";
-import { Usage } from "@/app/screens/Usage";
+
 import { Welcome } from "@/app/screens/Welcome";
 import { useEffect, useState } from "react";
 
@@ -48,11 +48,9 @@ type ScreenKey =
   | "about"
   | "dashboard"
   | "workspaces"
-  | "usage"
   | "settings"
   | "settings-agents"
   | "settings-integrations"
-  | "settings-repos"
   | "settings-platform"
   | "settings-notifications"
   | "live-activities"
@@ -74,11 +72,9 @@ const SCREENS: { key: ScreenKey; label: string; title: string }[] = [
   { key: "about", label: "About", title: "codehub · about" },
   { key: "dashboard", label: "Dashboard", title: "codehub · dashboard" },
   { key: "workspaces", label: "Workspaces", title: "codehub · workspaces · runtime" },
-  { key: "usage", label: "Usage", title: "codehub · usage" },
   { key: "settings", label: "Settings", title: "codehub · settings" },
   { key: "settings-agents", label: "Agents", title: "codehub · settings · agents" },
   { key: "settings-integrations", label: "Integrations", title: "codehub · integrations" },
-  { key: "settings-repos", label: "Repositories", title: "codehub · repositories" },
   { key: "settings-platform", label: "Platform", title: "codehub · platform" },
   { key: "settings-notifications", label: "Notifications", title: "codehub · notifications" },
   { key: "live-activities", label: "Live activities", title: "codehub · live activities" },
@@ -108,7 +104,6 @@ function currentScreen(): ScreenKey {
 function previewNav(screen: ScreenKey): { view: HubView; settingsSection?: string } {
   if (screen === "dashboard") return { view: "dashboard" };
   if (screen === "workspaces") return { view: "containers" };
-  if (screen === "usage") return { view: "usage" };
   if (screen === "agent-settings") return { view: "settings", settingsSection: "agents" };
   if (screen.startsWith("settings-")) {
     return { view: "settings", settingsSection: screen.replace("settings-", "") };
@@ -125,11 +120,9 @@ function usesAppSidebar(screen: ScreenKey): boolean {
     "spawn",
     "dashboard",
     "workspaces",
-    "usage",
     "settings",
     "settings-agents",
     "settings-integrations",
-    "settings-repos",
     "settings-platform",
     "settings-notifications",
     "agent-settings",
@@ -277,7 +270,7 @@ function PreviewBody({ screen }: { screen: ScreenKey }) {
   if (screen === "welcome") return <Welcome />;
   if (screen === "dashboard") return <Dashboard />;
   if (screen === "workspaces") return <ContainerInspector />;
-  if (screen === "usage") return <Usage />;
+
   if (screen === "states") return <StatesGallery />;
   if (screen === "live-activities") return <LiveActivities />;
   if (screen === "companion") return <Companion />;
@@ -317,7 +310,6 @@ function SettingsPreview({
   return (
     <Settings
       key={`${section}:${initialAgentDetail ?? "list"}`}
-      onStopAll={() => {}}
       initialAgentDetail={initialAgentDetail}
     />
   );

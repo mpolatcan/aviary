@@ -447,7 +447,6 @@ export default function PrimitivesGallery() {
                 label: "Library",
                 items: [
                   { key: "resume", label: "Resume" },
-                  { key: "usage", label: "Usage" },
                 ],
               },
             ]}

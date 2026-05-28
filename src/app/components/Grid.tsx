@@ -35,9 +35,6 @@ export function Grid({ ws }: { ws: Workspace }) {
 // (groupKey ctx), so the spawn lands here rather than in a new tab.
 function EmptyGroup({ ws, group }: { ws: Workspace; group: Group }) {
   const open = useLauncher((s) => s.open);
-  const setFiles = useOverlay((s) => s.setFiles);
-  const setShell = useOverlay((s) => s.setShell);
-  const setDiff = useOverlay((s) => s.setDiff);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const spawn = (cli: "claude" | "codex" | "antigravity") => {
     setMenu(null);
@@ -69,10 +66,6 @@ function EmptyGroup({ ws, group }: { ws: Workspace; group: Group }) {
       kbd: "⌘3",
       onClick: () => spawn("antigravity"),
     },
-    { label: "—", onClick: () => {} },
-    { icon: Ico.files, label: "Show Files", onClick: () => setFiles(true) },
-    { icon: Ico.terminal, label: "Show Shell", onClick: () => setShell(true) },
-    { icon: Ico.diff, label: "Show Diff", onClick: () => setDiff("") },
     { label: "—", onClick: () => {} },
     { icon: Ico.plus, label: "More agents", onClick: openMore },
   ];
@@ -115,7 +108,7 @@ function EmptyGroup({ ws, group }: { ws: Workspace; group: Group }) {
           <span style={{ fontSize: 15, color: "var(--fg-0)", fontWeight: 500 }}>Empty group</span>
         </div>
         <div style={{ fontSize: 12, color: "var(--fg-2)", textAlign: "center", maxWidth: 384 }}>
-          Add an agent or utility pane to {group.name}. Right-click anywhere to see all options.
+          Add an agent to {group.name}. Right-click anywhere to see all options.
         </div>
       </div>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "center" }}>
@@ -139,19 +132,6 @@ function EmptyGroup({ ws, group }: { ws: Workspace; group: Group }) {
           />
           Antigravity
           <span className="kbd">⌘3</span>
-        </button>
-        <div className="vr" style={{ height: 24, alignSelf: "center" }} />
-        <button type="button" className="btn sm" onClick={() => setFiles(true)}>
-          {Ico.files}
-          Files
-        </button>
-        <button type="button" className="btn sm" onClick={() => setShell(true)}>
-          {Ico.terminal}
-          Shell
-        </button>
-        <button type="button" className="btn sm" onClick={() => setDiff("")}>
-          {Ico.diff}
-          Diff
         </button>
       </div>
       <button type="button" onClick={openMore} className="btn ghost sm">

@@ -34,7 +34,6 @@ const DEFAULT_GROUPS: SidebarNavGroup[] = [
     label: "Library",
     items: [
       { key: "resume", label: "Resume" },
-      { key: "usage", label: "Usage" },
     ],
   },
   {
