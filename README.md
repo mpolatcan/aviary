@@ -92,16 +92,17 @@ sequenceDiagram
 
 ## Using it
 
-- **Workspaces** — the welcome screen lists saved workspaces (name, directory, last-opened time) with search/filter. Each runs in its own container (`codehub-ws-<key>`) with repos mounted under `/workspace/<repo-name>`. Create new workspaces via the `+` tab button or ⌘⇧N — the 3-step wizard picks repos (local folders + GitHub), container resources (CPU/memory), and the first agent.
-- **New agent** — the "New agent" button (⌘A) in the action bar spawns an agent into the current workspace. Choose agent (Claude Code / Codex / Antigravity), permission mode, and placement (split / new tab / new group).
+- **Workspaces** — the launcher (⌘T or the `+` tab button) lists saved workspaces (name, directory, last-opened time) with search/filter, plus recent/resume entries. Each runs in its own container (`codehub-ws-<key>`) with repos mounted under `/workspace/<repo-name>`. The launcher's **Blank workspace** card opens a 3-step wizard that picks repos (local folders + GitHub), container resources (CPU/memory), and the first agent.
+- **New agent** — ⌘N (or the action-bar "New agent" button) drops a *configuring* pane into the current workspace: a card to pick the agent (Claude Code / Codex / Antigravity), permission mode, repo (mounted under `/workspace`) and account, then spawn. ⌘⇧N spawns into a fresh group instead of the active one.
 - **Permission modes** — *Standard* (agent asks first), *Auto* (auto-accepts edits, still sandboxed), *YOLO* (skips all approvals; the container is the boundary). Antigravity is Standard-only until its flags are verified.
 - **Splits** — split any pane (its head controls, or ⌘\) into a binary tree; drag the divider to resize. Groups organize splits; each tab holds one or more groups.
-- **Hub panels** — a Files browser (⌘E), a workspace Diff viewer (⌘D), and a Resume drawer (⌘R) of past Claude/Codex sessions, docked beside the panes.
+- **Color & rename** — click the identity dot on any pane head, group tab, or workspace tab to recolor it; double-click the title to rename. Colors and names persist across reloads.
+- **Hub panels** — a Files browser (⌘E), a workspace Diff viewer (⌘D), a Shell panel (⌘J), a Details/metrics panel (⌘I), and a Resume drawer (action-bar button) of past Claude/Codex sessions, docked beside the panes.
 - **Command palette** (⌘K) — jump to a view, focus a running session, spawn an agent, or open a recent/connected repo.
-- **Views** — Hub, Dashboard, Workspaces (container inspector), Usage (token/cost rollup from session transcripts), Settings (agents · runtime · integrations · appearance · keyboard shortcuts). Three themes: dark, gray, light.
+- **Views** — Hub, Dashboard, Workspaces (container manager), Usage (token/cost rollup from session transcripts), Settings (agents · runtime · integrations · appearance · keyboard shortcuts). Three themes: dark, gray, light.
 - **GitHub integration** — connect a PAT or sign in via OAuth in Settings → Integrations. Browse repos, see scopes and permissions. Repos appear in the workspace wizard for cloning.
 - **Companion** — an always-on-top monitor window mirroring live agent status (working / awaiting input / done / failed) with inline approve/deny. On macOS a native notch "dynamic island" variant exists (experimental).
-- **Keyboard** — ⌘N new agent · ⌘⇧N new workspace · ⌘⇧T new workspace tab · ⌘A add agent (split) · ⌘W close focused · ⌘⇧W close workspace · ⌘\ split · ⌘⇧\ split column · ⌘⇧B shell · ⌘E files · ⌘D diff · ⌘R resume · ⌘1–9 jump tab · ⌘K palette · ⌘/ shortcuts.
+- **Keyboard** — ⌘T launcher (new/recent/resume workspace) · ⌘N new agent · ⌘⇧N new agent in a new group · ⌘W close pane · ⌘⇧W close workspace · ⌘\ split (⌘⇧\ opposite axis) · ⌘E files · ⌘D diff · ⌘J shell · ⌘I details · ⌘B sidebar · ⌘1–9 jump to tab · ⌘[ / ⌘] prev/next tab · ⌘K palette · ⌘, settings · ⌘⇧L cycle theme · ⌘/ or ? shortcuts · ⌘⇧J companion. ⌘R is intentionally left free for webview reload.
 
 ## Runtime image
 
