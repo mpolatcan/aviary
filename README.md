@@ -180,10 +180,9 @@ configured in `src-tauri/tauri.conf.json`.
 
 ## Roadmap
 
-- [ ] Multiple bind mounts per workspace (frontend ready, backend `lifecycle.rs` needs multi `-v` flags)
-- [ ] Git clone inside container for GitHub repos (`docker exec git clone`)
-- [ ] Container resource limits enforcement (`--cpus`, `--memory` flags in `lifecycle.rs`)
-- [ ] Native OS notifications when an agent finishes
+- [ ] Multiple bind mounts per workspace (frontend ready; backend `lifecycle.rs` still uses a single `/workspace` bind)
 - [ ] Auto-update via Tauri updater plugin
 - [ ] App icon set
 - [ ] Code-split the frontend bundle
+
+Shipped since the first roadmap: per-container resource limits (`nano_cpus`/`memory` in `lifecycle.rs`), in-container `git clone` for GitHub repos, and native OS notifications on agent await/finish (`tauri-plugin-notification`).

@@ -3,12 +3,15 @@
 // complete) or the user closes the dialog, the credential is captured and the
 // container is cleaned up. This dialog is self-contained: it manages its own
 // xterm instance independent of the hub pane registry.
+import { CanvasAddon } from "@xterm/addon-canvas";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { ipc } from "@/app/lib/ipc";
 import { useEffect, useRef, useState } from "react";
+import { installBlockGlyphOverlay } from "../../app/lib/block-glyph-overlay";
 import { type UnlistenFn, listen } from "../../app/lib/bridge";
+import { createPtyOutputNormalizer } from "../../app/lib/pty-output";
 import { Button } from "../ui/button";
 
 const TERM_THEME = {
@@ -121,10 +124,13 @@ export function LoginTerminalDialog({
     if (!el) return;
 
     const term = new Terminal({
-      fontFamily: '"Geist Mono", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace',
+      fontFamily: '"JetBrainsMono Terminal", Menlo, monospace',
       fontSize: 13,
-      fontWeight: 400,
+      fontWeight: 600,
+      fontWeightBold: 600,
       lineHeight: 1.25,
+      letterSpacing: 0,
+      customGlyphs: true,
       cursorBlink: true,
       cursorStyle: "block",
       allowProposedApi: true,
@@ -132,7 +138,9 @@ export function LoginTerminalDialog({
       theme: TERM_THEME,
     });
     const fit = new FitAddon();
+    const canvas = new CanvasAddon();
     term.loadAddon(fit);
+    term.loadAddon(canvas);
     term.open(el);
     const ta = el.querySelector("textarea");
     if (ta) {
@@ -142,34 +150,87 @@ export function LoginTerminalDialog({
       ta.setAttribute("spellcheck", "false");
       ta.setAttribute("name", `term-${Math.random().toString(36).slice(2)}`);
     }
-    fit.fit();
     termRef.current = term;
     fitRef.current = fit;
-
-    const ro = new ResizeObserver(() => fit.fit());
-    ro.observe(el);
+    const blockOverlay = installBlockGlyphOverlay(term, el);
+    const normalizeOutput = createPtyOutputNormalizer();
 
     let alive = true;
+    let fitFrame: number | null = null;
+    let writeQueue = Promise.resolve();
+    let lastSentCols = term.cols;
+    let lastSentRows = term.rows;
+
+    const enqueueWrite = (data: string) => {
+      writeQueue = writeQueue
+        .catch(() => {})
+        .then(
+          () =>
+            new Promise<void>((resolve) => {
+              if (!alive) {
+                resolve();
+                return;
+              }
+              try {
+                term.write(data, resolve);
+              } catch {
+                resolve();
+              }
+            }),
+        );
+    };
+
+    const sendResizeIfChanged = (cols = term.cols, rows = term.rows) => {
+      const paneId = paneIdRef.current;
+      if (!alive || !paneId || cols < 1 || rows < 1) return;
+      if (cols === lastSentCols && rows === lastSentRows) return;
+      lastSentCols = cols;
+      lastSentRows = rows;
+      void ipc.ptyResize(paneId, cols, rows);
+    };
+
+    const scheduleFit = () => {
+      if (fitFrame !== null) return;
+      fitFrame = requestAnimationFrame(() => {
+        fitFrame = null;
+        if (!alive) return;
+        const rect = el.getBoundingClientRect();
+        if (rect.width < 1 || rect.height < 1) return;
+        try {
+          fit.fit();
+          sendResizeIfChanged();
+        } catch {
+          // Dialog mount/close can briefly leave the surface without a size.
+        }
+      });
+    };
+
+    const ro = new ResizeObserver(scheduleFit);
+    ro.observe(el);
+    scheduleFit();
+
     (async () => {
       try {
         const paneId = await ipc.attachSession(sessionName, term.cols, term.rows, workspace);
         if (!alive) return;
         paneIdRef.current = paneId;
+        lastSentCols = term.cols;
+        lastSentRows = term.rows;
         setStatus("running");
 
         term.onData((data) => {
           void ipc.ptyWrite(paneId, data);
         });
         term.onResize(({ cols, rows }) => {
-          void ipc.ptyResize(paneId, cols, rows);
+          sendResizeIfChanged(cols, rows);
         });
 
         unlistenDataRef.current = await listen<string>(`pty://data/${paneId}`, (e) => {
-          term.write(e.payload);
+          enqueueWrite(normalizeOutput(e.payload));
         });
 
         unlistenExitRef.current = await listen<number>(`pty://exit/${paneId}`, () => {
-          term.write("\r\n\x1b[38;2;106;111;121m\x1b[3m  · session ended ·\x1b[0m\r\n");
+          enqueueWrite("\r\n\x1b[38;2;106;111;121m\x1b[3m  · session ended ·\x1b[0m\r\n");
           // Auto-capture when the login session exits.
           void capture();
         });
@@ -182,9 +243,14 @@ export function LoginTerminalDialog({
 
     return () => {
       alive = false;
+      if (fitFrame !== null) {
+        cancelAnimationFrame(fitFrame);
+        fitFrame = null;
+      }
       ro.disconnect();
       unlistenDataRef.current?.();
       unlistenExitRef.current?.();
+      blockOverlay.dispose();
       term.dispose();
     };
   }, []);
@@ -255,6 +321,7 @@ export function LoginTerminalDialog({
           }}
         >
           <div
+            className="login-term-surface"
             ref={containerRef}
             style={{
               position: "absolute",

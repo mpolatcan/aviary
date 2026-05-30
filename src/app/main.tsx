@@ -2,6 +2,7 @@ import { StrictMode, Suspense, lazy } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
 import { applyTheme, getStoredTheme } from "./lib/theme";
+import "./fonts.css";
 import "./theme.css";
 import "./tokens.css";
 import "./panes.css";

@@ -1,8 +1,10 @@
+import { CanvasAddon } from "@xterm/addon-canvas";
 import { FitAddon } from "@xterm/addon-fit";
-import { WebglAddon } from "@xterm/addon-webgl";
-import { Terminal } from "@xterm/xterm";
+import { type IDisposable, Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
+import { installBlockGlyphOverlay } from "./app/lib/block-glyph-overlay";
 import { type UnlistenFn, invoke, listen } from "./app/lib/bridge";
+import { createPtyOutputNormalizer } from "./app/lib/pty-output";
 
 export interface Pane {
   sessionName: string;
@@ -10,16 +12,22 @@ export interface Pane {
   el: HTMLDivElement;
   term: Terminal;
   fit: FitAddon;
+  writeQueue: Promise<void>;
+  fitFrame: number | null;
+  lastSentCols: number;
+  lastSentRows: number;
+  disposed: boolean;
+  blockOverlay?: IDisposable;
   unlistenData?: UnlistenFn;
   unlistenExit?: UnlistenFn;
 }
 
+const BG = "#08090b"; // pane surface (--bg-0); also TERM_THEME.background
+
 // Terminal theme — mirrors the design tokens (tokens.css). xterm needs literal
-// hex (no CSS vars / oklch), so the ANSI palette is the sRGB conversion of the
-// design accents: green=--live, amber=--wait, red=--err, blue=--a-codex,
-// cyan=--a-antigravity. Surface = --bg-0, text = --fg-1.
+// hex (no CSS vars / oklch). Surface = --bg-0, text = --fg-1.
 const TERM_THEME = {
-  background: "#08090b",
+  background: BG,
   foreground: "#aeb2bb",
   cursor: "#6fda75",
   cursorAccent: "#08090b",
@@ -45,15 +53,45 @@ const TERM_THEME = {
   brightWhite: "#ecedf0",
 };
 
-// Geist Mono loads async from Google Fonts (display=swap). If xterm measures the
-// character cell at term.open() before the font is available, it sizes to the
-// FALLBACK metrics and never re-measures — every glyph then mis-aligns. Gate
-// pane creation on the mono font so the first measurement is correct. Resolves
-// once at module load, then awaits are instant.
+// Terminal typeface = self-hosted JetBrains Mono SemiBold (fonts.css), NOT the
+// app chrome's Geist Mono. Gate pane creation on the font — if xterm measures the
+// cell at term.open() before it loads, it sizes to fallback metrics and never
+// re-measures, mis-aligning every glyph. Resolves once at module load, then awaits
+// are instant.
 const MONO_READY: Promise<unknown> =
   typeof document !== "undefined" && "fonts" in document
-    ? document.fonts.load('400 13px "Geist Mono"').catch(() => {})
+    ? Promise.all([
+        document.fonts.load('600 13px "JetBrainsMono Terminal"'),
+        document.fonts.load('italic 600 13px "JetBrainsMono Terminal"'),
+      ]).catch(() => {})
     : Promise.resolve();
+
+function enqueueWrite(pane: Pane, data: string) {
+  pane.writeQueue = pane.writeQueue
+    .catch(() => {})
+    .then(
+      () =>
+        new Promise<void>((resolve) => {
+          if (pane.disposed) {
+            resolve();
+            return;
+          }
+          try {
+            pane.term.write(data, resolve);
+          } catch {
+            resolve();
+          }
+        }),
+    );
+}
+
+function sendResizeIfChanged(pane: Pane, cols = pane.term.cols, rows = pane.term.rows) {
+  if (pane.disposed || cols < 1 || rows < 1) return;
+  if (cols === pane.lastSentCols && rows === pane.lastSentRows) return;
+  pane.lastSentCols = cols;
+  pane.lastSentRows = rows;
+  invoke("pty_resize", { paneId: pane.paneId, cols, rows }).catch(console.error);
+}
 
 // The pane's xterm surface is created once, parked in `stash`, and then moved
 // between split-tree leaf bodies on every layout render. xterm keeps its
@@ -75,11 +113,15 @@ export async function createPane(
   stash.appendChild(el);
 
   const term = new Terminal({
-    fontFamily: '"Geist Mono", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace',
+    fontFamily: '"JetBrainsMono Terminal", Menlo, monospace',
     fontSize,
-    fontWeight: 400,
+    fontWeight: 600,
+    fontWeightBold: 600,
     lineHeight: 1.25,
     letterSpacing: 0,
+    // Let the canvas renderer draw box/block glyphs geometrically instead of
+    // relying on WebKit font fallback for U+2580-U+259F.
+    customGlyphs: true,
     cursorBlink: true,
     cursorStyle: "block",
     allowProposedApi: true,
@@ -88,7 +130,9 @@ export async function createPane(
   });
 
   const fit = new FitAddon();
+  const canvas = new CanvasAddon();
   term.loadAddon(fit);
+  term.loadAddon(canvas);
   term.open(el);
   // Kill browser autocomplete on xterm's internal textarea. Some browsers
   // ignore autocomplete="off" on well-known field names, so we randomize the
@@ -102,31 +146,10 @@ export async function createPane(
     ta.setAttribute("name", `term-${Math.random().toString(36).slice(2)}`);
   }
 
-  // GPU-accelerated WebGL renderer. Crisper and cheaper than the DOM renderer
-  // (which flows glyphs inside <span>s, so sub-pixel advance/cell drift fragments
-  // TUI boxes). WKWebView CAN drop the GL context (GPU pressure, sleep/wake), so
-  // we RECOVER on loss: dispose the dead addon and load a fresh one next frame —
-  // the pane repaints instead of blanking. (We do NOT fall back to DOM, which is
-  // permanent and mis-aligns; and the old "crashes on pane close" was actually a
-  // Rules-of-Hooks bug in SessionRow, not the renderer — see CLAUDE.md.) If the
-  // surface is gone (pane closed → el detached) we don't reload.
-  const loadWebgl = () => {
-    try {
-      const addon = new WebglAddon();
-      addon.onContextLoss(() => {
-        addon.dispose();
-        requestAnimationFrame(() => {
-          if (el.isConnected) loadWebgl();
-        });
-      });
-      term.loadAddon(addon);
-    } catch {
-      // WebGL unavailable — xterm falls back to the DOM renderer automatically.
-    }
-  };
-  loadWebgl();
-
-  requestAnimationFrame(() => fit.fit());
+  // Use xterm's canvas renderer in WKWebView. The DOM renderer delegates block
+  // elements to WebKit fonts and can paint Claude's logo as thin strokes; the
+  // canvas renderer honors `customGlyphs` and draws those cells itself. Avoid the
+  // WebGL addon: its glyph atlas has clipped U+2580-U+259F in this webview.
 
   const paneId: string = await invoke("attach_session", {
     name: sessionName,
@@ -135,14 +158,27 @@ export async function createPane(
     workspace,
   });
 
-  const pane: Pane = { sessionName, paneId, el, term, fit };
+  const pane: Pane = {
+    sessionName,
+    paneId,
+    el,
+    term,
+    fit,
+    writeQueue: Promise.resolve(),
+    fitFrame: null,
+    lastSentCols: term.cols,
+    lastSentRows: term.rows,
+    disposed: false,
+  };
+  pane.blockOverlay = installBlockGlyphOverlay(term, el);
+  const normalizeOutput = createPtyOutputNormalizer();
 
   pane.unlistenData = await listen<string>(`pty://data/${paneId}`, (e) => {
-    term.write(e.payload);
+    enqueueWrite(pane, normalizeOutput(e.payload));
   });
 
   pane.unlistenExit = await listen<number>(`pty://exit/${paneId}`, () => {
-    term.write("\r\n\x1b[38;2;106;111;121m\x1b[3m  · session ended ·\x1b[0m\r\n");
+    enqueueWrite(pane, "\r\n\x1b[38;2;106;111;121m\x1b[3m  · session ended ·\x1b[0m\r\n");
   });
 
   term.onData((data) => {
@@ -150,15 +186,23 @@ export async function createPane(
   });
 
   term.onResize(({ cols, rows }) => {
-    invoke("pty_resize", { paneId, cols, rows }).catch(console.error);
+    sendResizeIfChanged(pane, cols, rows);
   });
+
+  fitPane(pane);
 
   return pane;
 }
 
 export async function destroyPane(pane: Pane) {
+  pane.disposed = true;
+  if (pane.fitFrame !== null) {
+    cancelAnimationFrame(pane.fitFrame);
+    pane.fitFrame = null;
+  }
   pane.unlistenData?.();
   pane.unlistenExit?.();
+  pane.blockOverlay?.dispose();
   await invoke("detach_session", { paneId: pane.paneId }).catch(console.error);
   pane.term.dispose();
   pane.el.remove();
@@ -167,12 +211,19 @@ export async function destroyPane(pane: Pane) {
 // Re-measure and reflow a pane to its current container. Cheap to call after
 // any layout change (split, resize, tab switch).
 export function fitPane(pane: Pane) {
-  if (!pane.el.isConnected) return;
-  try {
-    pane.fit.fit();
-  } catch {
-    // Container momentarily zero-sized during reflow — next tick will retry.
-  }
+  if (pane.disposed || !pane.el.isConnected || pane.fitFrame !== null) return;
+  pane.fitFrame = requestAnimationFrame(() => {
+    pane.fitFrame = null;
+    if (pane.disposed || !pane.el.isConnected) return;
+    const rect = pane.el.getBoundingClientRect();
+    if (rect.width < 1 || rect.height < 1) return;
+    try {
+      pane.fit.fit();
+      sendResizeIfChanged(pane);
+    } catch {
+      // Container momentarily zero-sized during reflow — next tick will retry.
+    }
+  });
 }
 
 export function focusPane(pane: Pane) {

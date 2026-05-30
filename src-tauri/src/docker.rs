@@ -1237,12 +1237,15 @@ unset secret {src}
                     tty: Some(true),
                     cmd: Some(vec![
                         "tmux".into(),
+                        "-u".into(),
                         "attach-session".into(),
                         "-t".into(),
                         session.into(),
                     ]),
                     env: Some(vec![
                         "TERM=xterm-256color".into(),
+                        "LANG=C.UTF-8".into(),
+                        "LC_ALL=C.UTF-8".into(),
                         "TMUX_TMPDIR=/tmp/codehub".into(),
                     ]),
                     ..Default::default()

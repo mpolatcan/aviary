@@ -177,7 +177,12 @@ export function PaneHead({
             <Tip text="Double-click to rename">
               <span
                 className="mono ch-rename"
-                style={{ fontSize: 13, color: titleColor, fontWeight: 500 }}
+                style={{
+                  fontFamily: '"JetBrainsMono Terminal", Menlo, monospace',
+                  fontSize: 13,
+                  color: titleColor,
+                  fontWeight: 600,
+                }}
                 onDoubleClick={(e) => {
                   e.stopPropagation();
                   setEditing(true);

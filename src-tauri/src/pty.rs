@@ -1,5 +1,6 @@
 use crate::activity::ActivityTracker;
 use crate::docker::{DockerClient, DockerError};
+use crate::pty_output::PtyOutputNormalizer;
 use futures_util::StreamExt;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -90,6 +91,7 @@ impl PtyRegistry {
         let activity_out = self.activity.clone();
         let session_out = session.to_string();
         tokio::spawn(async move {
+            let mut output_normalizer = PtyOutputNormalizer::new();
             while let Some(chunk) = handles.output.next().await {
                 match chunk {
                     Ok(log) => {
@@ -101,7 +103,8 @@ impl PtyRegistry {
                         };
                         activity_out.mark(&session_out, bytes.len());
                         let text = String::from_utf8_lossy(&bytes).to_string();
-                        emitter_out.data(&pane_id_out, text);
+                        let normalized = output_normalizer.normalize(&text);
+                        emitter_out.data(&pane_id_out, normalized);
                     },
                     Err(e) => {
                         tracing::warn!("output stream error: {e}");

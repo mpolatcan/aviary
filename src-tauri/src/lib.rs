@@ -18,6 +18,7 @@ pub mod lifecycle;
 /// Per-workspace container manager (per-workspace-container architecture).
 pub mod manager;
 pub mod pty;
+pub mod pty_output;
 /// Per-workspace container stats ring buffer (sparklines).
 pub mod stats_history;
 /// Shared IPC response types (Phase-0 completion contract).

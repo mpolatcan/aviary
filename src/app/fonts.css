@@ -1,0 +1,72 @@
+/* Terminal-pane typefaces. The active terminal face is JetBrains Mono SemiBold
+   under the dedicated family name "JetBrainsMono Terminal"; both normal and bold
+   terminal weights resolve to the same SemiBold files so CLIs cannot switch the
+   pane back to another font weight. The app chrome keeps Geist Mono (tokens.css). */
+
+@font-face {
+  font-family: "JetBrainsMono Terminal";
+  font-style: normal;
+  font-weight: 600;
+  font-display: block;
+  src:
+    url("/fonts/JetBrainsMono-SemiBold.woff2") format("woff2"),
+    url("/fonts/JetBrainsMono-SemiBold.ttf") format("truetype");
+}
+@font-face {
+  font-family: "JetBrainsMono Terminal";
+  font-style: italic;
+  font-weight: 600;
+  font-display: block;
+  src:
+    url("/fonts/JetBrainsMono-SemiBoldItalic.woff2") format("woff2"),
+    url("/fonts/JetBrainsMono-SemiBoldItalic.ttf") format("truetype");
+}
+
+/* Bundled Nerd Font remains available for future icon-specific terminal needs,
+   but src/terminal.ts intentionally uses JetBrainsMono Terminal instead. */
+
+@font-face {
+  font-family: "JetBrainsMono NF Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url("/fonts/JetBrainsMonoNerdFontMono-Regular.woff2") format("woff2");
+}
+@font-face {
+  font-family: "JetBrainsMono NF Mono";
+  font-style: normal;
+  font-weight: 700;
+  font-display: block;
+  src: url("/fonts/JetBrainsMonoNerdFontMono-Bold.woff2") format("woff2");
+}
+@font-face {
+  font-family: "JetBrainsMono NF Mono";
+  font-style: italic;
+  font-weight: 400;
+  font-display: block;
+  src: url("/fonts/JetBrainsMonoNerdFontMono-Italic.woff2") format("woff2");
+}
+@font-face {
+  font-family: "JetBrainsMono NF Mono";
+  font-style: italic;
+  font-weight: 700;
+  font-display: block;
+  src: url("/fonts/JetBrainsMonoNerdFontMono-BoldItalic.woff2") format("woff2");
+}
+
+/* Gap-fill: the dingbat-asterisk spinner frames (✶✷✸✹✺✻✼✽ U+2736–273D, ❋
+   U+274B) — Claude's "✻ Brewed for Xs" spinner — are NOT in JetBrainsMono Nerd
+   Font. They ARE in macOS's bundled Menlo (verified per-glyph), so layer it in
+   under the SAME family name via unicode-range + local(): the browser's font
+   matcher resolves the unicode-range face BEFORE handing a glyph to the canvas,
+   so these resolve within one logical family. local() (not a bundled file)
+   avoids redistributing Apple's font; the Linux/Symbola entries are best-effort
+   on non-mac. Weight-neutral, so one face spans 400–700. */
+@font-face {
+  font-family: "JetBrainsMono NF Mono";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: block;
+  src: local("Menlo"), local("DejaVu Sans Mono"), local("Symbola");
+  unicode-range: U+2736-273D, U+274B;
+}

@@ -14,7 +14,7 @@ This file is loaded on every Claude session in this repo. Keep it short and load
 ## Stack
 
 - **Backend**: Rust 1.85+, Tauri 2, tokio, bollard (Docker API client), futures-util.
-- **Frontend**: React 19 + TypeScript, Vite 5, Zustand 5 (state), Tailwind v4 + shadcn/Radix (Dialog + Popover) for chrome, xterm.js 5 (+ fit + webgl addons) for the terminal panes. xterm panes live OUTSIDE React in a non-reactive registry (`src/app/lib/panes.ts`) — `<PaneMount>` reparents the DOM node so buffers survive splits and tab switches.
+- **Frontend**: React 19 + TypeScript, Vite 5, Zustand 5 (state), Tailwind v4 + shadcn/Radix (Dialog + Popover) for chrome, xterm.js 5 (+ fit + canvas addons) for the terminal panes. xterm panes live OUTSIDE React in a non-reactive registry (`src/app/lib/panes.ts`) — `<PaneMount>` reparents the DOM node so buffers survive splits and tab switches.
 - **Runtime image**: Debian-based `node:20-slim` base, `tail -f /dev/null` entrypoint, tmux server spawned on demand.
 - **OS support**: macOS primary, Linux secondary, Windows untested.
 
@@ -27,36 +27,44 @@ codehub/
     terminal.ts             # xterm.js pane factory + theme (framework-agnostic)
     vite-env.d.ts
     app/                    # React app
-      main.tsx              # StrictMode render; imports theme.css then panes.css
+      main.tsx              # StrictMode render; imports fonts.css, theme.css, panes.css
       App.tsx               # Layout shell; wires lifecycle + keyboard shortcuts
+      fonts.css             # @font-face: self-hosted JetBrainsMono Terminal WOFF2
+                            #   (files in public/fonts/)
       theme.css             # Tailwind @import + @theme token bridge
       tokens.css            # Design tokens: 3 themes (dark/gray/light), status
                             #   colors, agent accents, shadcn bridge, helper classes
       panes.css             # Structural CSS (splits, panes, rail, tabs, launcher)
-      screens/              # Full-page views (15 screens):
-                            #   Dashboard, Settings, Usage, Welcome, NewWorkspace,
-                            #   SessionDetail, ContainerInspector, AgentDetail,
-                            #   Integrations (Settings sub-pane), Companion,
-                            #   EmptyState, Resume, SpawnDialog, LiveActivities,
-                            #   States
-      components/           # Three subdirectories:
-                            #   hub/ — HubSidebar, HubTabs, HubStatusBar, Grid,
-                            #     PaneHead, PaneMount, PaneFoot, DiffViewer,
+      screens/              # Full-page views (13 files):
+                            #   Dashboard, Settings, Welcome, NewWorkspace,
+                            #   SessionDetail, AgentDetail, Integrations (Settings
+                            #   sub-pane), Companion, EmptyState, Resume,
+                            #   SpawnDialog, LiveActivities, States.
+                            #   (Usage = sidebar view rendered inside Dashboard,
+                            #   not its own file)
+      components/           # Top-level shared: Grid, PaneHead, PaneMount, PaneFoot,
+                            #   SpawnModal, SpawnPane, spawn-form, LoginTerminalDialog,
+                            #   ApiKeyDialog, AboutDialog. Plus three subdirectories:
+                            #   hub/ — HubSidebar, HubTabs, HubStatusBar, DiffViewer,
                             #     DiffBody, FilesBrowser, ActionBar, CommandPalette,
-                            #     Shortcuts, GroupsBar, WorkspaceBar, RuntimeBanner
+                            #     Shortcuts, GroupsBar, WorkspaceBar, RuntimeBanner,
+                            #     ShellPanel, … (hub chrome only)
                             #   primitives/ — AgentGlyph, StatusDot, StatusBadge,
                             #     CompanionAvatar, Character, Logo, Tag, Segmented,
                             #     icons, IconBtn, Spark, MetricStat, ContextGauge
                             #   ui/ — shadcn primitives (Button, Dialog, Popover, etc.)
-      hooks/                # useKeyboard, useContainerStatus, useSessionUsage,
-                            #   useBurnRate, useActivityPoll, useGitStatusPoll
+      hooks/                # useKeyboard, useContainerStatus, useContainerStatsPoll,
+                            #   useSessionUsage (+useCodexUsage), useBurnRate,
+                            #   useActivityPoll, useAgentEvents, useGitStatusPoll
       lib/                  # store.ts (Zustand main), overlay.ts (Zustand panels/
                             #   modals/grid), panes.ts (registry), tree.ts (split
                             #   layout), catalog.ts (CLIS/MODES), launcher.ts,
                             #   ipc.ts (typed Tauri boundary), bridge.ts (browser-mode
                             #   transport: Tauri IPC vs dev-server REST/WS),
                             #   theme.ts (dark/gray/light toggle + persistence),
-                            #   activity.ts (deriveLiveStatus — shared live status)
+                            #   activity.ts (deriveLiveStatus — shared live status),
+                            #   pty-output.ts + block-glyph-overlay.ts (terminal
+                            #   render: ANSI normalize + U+2580-U+259F block overlay)
   src-tauri/                # Rust backend (workspace ROOT = the app crate)
     Cargo.toml              # [workspace] root + app package `codehub`
     tauri.conf.json
@@ -138,7 +146,7 @@ Environment knobs:
 - **xterm panes are never disposed except by `closeSession`.** They live in the `lib/panes.ts` registry and get reparented by `<PaneMount>`; disposing on unmount would wipe scrollback on every split/tab-switch.
 - **Tauri commands return `Result<T, String>`.** Coerce backend errors with `.map_err(|e| e.to_string())`. Don't leak typed errors across the IPC boundary.
 - **Three themes: dark (default), gray, light.** Tokens live in `tokens.css` (`--bg-*`, `--fg-*`, `--live`, `--wait`, etc.), bridged to Tailwind in `theme.css`. Theme is toggled via `lib/theme.ts` (localStorage-persisted, `<html>` class swap). Never inline raw hex values; use tokens.
-- **Full-page views live in `screens/`** (15 files). For the frontend map, start at `store.ts` (state) + `App.tsx` (routing). The screens directory is the equivalent of a router — `App.tsx` conditionally renders each based on `view` state. Sidebar nav: Hub, Dashboard, Workspaces, Usage, Settings (Integrations lives inside Settings, not as a top-level view).
+- **Full-page views live in `screens/`** (13 files). For the frontend map, start at `store.ts` (state) + `App.tsx` (routing). The screens directory is the equivalent of a router — `App.tsx` conditionally renders each based on `view` state. Sidebar nav: Hub, Dashboard, Workspaces, Usage, Settings (Integrations lives inside Settings, not as a top-level view).
 - **CTA naming convention**: "New agent" / "Add agent" always opens the spawn dialog (`useLauncher.open`, ⌘N). "New workspace" / "Open workspace" opens the **launcher overlay** (`overlay.setLauncher`, ⌘T / the tab-bar "+" / sidebar "+") — the Welcome content (recent / resume / Blank-wizard / GitHub) rendered above the hub so a workspace can be opened or resumed without closing every tab; its "Blank workspace" card opens the 3-step wizard (`setNewWorkspace`). Never use "New workspace" for something that spawns an agent.
 - **Keyboard shortcuts are a contract**: `useKeyboard.ts` is the single source of truth; the cheat sheet (`Shortcuts.tsx` `SHORTCUT_GROUPS`) and every on-screen `kbd`/title label MUST list ONLY real bindings and match it exactly (no aspirational rows). ⌘R is deliberately left UNbound so the webview reload works. Core: ⌘T launcher · ⌘N new agent · ⌘⇧N agent-in-new-group · ⌘\ split · ⌘W/⌘⇧W close pane/workspace · ⌘E/⌘D/⌘J/⌘B files/diff/shell/sidebar · ⌘1-9/⌘[/⌘] tabs · ⌘⇧L theme · ⌘⇧J companion (Rust-global).
 - **Workspace close confirmation**: closing a workspace tab shows a `confirmCloseWorkspace` dialog ONLY when an agent is still working (idle workspaces close silently). Closing kills the sessions and **stops** the workspace container (`removeWorkspace` → `container_stop`, fire-and-forget, only when no remaining tab routes to it) so it stops leaking CPU/mem. The stopped container persists — reopening the same saved workspace reuses it (the `containerKey` is a stable readable slug, `codehub-ws-<name>-<savedWorkspaceId>`, not a random per-launch id), and `ensure_container` restarts it. Prune for good from the Workspaces view.
@@ -161,7 +169,7 @@ Environment knobs:
 - **The webview drag region** is set via `-webkit-app-region: drag` on the masthead and tabbar (React sets it through the `WebkitAppRegion` style prop). Buttons inside those regions must reset with `WebkitAppRegion: "no-drag"` or clicks get captured by window-drag.
 - **Antigravity install URL is unverified** (`antigravity.google/cli/install.sh` returned an SSL self-signed cert chain error during build). The line is commented out in `runtime/Dockerfile`, and `catalog.ts` `MODE_SUPPORT` caps Antigravity to Standard only. Until confirmed, selecting Antigravity spawns a tmux session that exits immediately.
 - **xterm panes mount via `absolute inset-0`, never flexbox.** `.pane-body` is `position:relative; flex:1` but NOT `display:flex`; a `flex-1` slot collapses to height 0 and the absolutely-positioned `.term-surface` renders blank. `<PaneMount>` fills the slot with `absolute inset-0` + a `ResizeObserver` that re-fits on resize (there is no window-level resize handler — the observer is it).
-- **xterm panes use the WebGL renderer (`@xterm/addon-webgl`), NOT the DOM renderer** (`src/terminal.ts`). WebGL is crisp and cheap; the **DOM renderer** flows glyphs inside `<span>`s, so any sub-pixel gap between the font's advance and xterm's measured cell drifts — TUI boxes fragment and text mis-aligns (xterm even injects a tiny negative `letter-spacing` that doesn't fully compensate; the buffer text is correct, only the paint is wrong). WKWebView *can* drop the GL context (GPU pressure, sleep/wake), so `createPane` registers an `onContextLoss` handler that disposes the dead addon and reloads a fresh `WebglAddon` next frame (guarded on `el.isConnected`) — the pane **repaints** instead of blanking. Do NOT replace this with a permanent DOM/canvas fallback (it mis-aligns). History note: WebGL was once blamed for a "blank on reparent" and a "crash the whole renderer on pane close" and was swapped for `@xterm/addon-canvas`; the close-crash was actually the SessionRow Rules-of-Hooks bug below (NOT the renderer), and current WKWebView no longer blanks on `<PaneMount>` reparent (verified in a real Tauri window: split, tab-switch, close all clean). `addon-canvas` has been dropped. Also: gate `createPane` on `MONO_READY` (`document.fonts.load('400 13px "Geist Mono"')`) so the cell is measured against the real web font, not the swap-in fallback.
+- **xterm panes use the canvas renderer (`@xterm/addon-canvas`), not `@xterm/addon-webgl` or the DOM renderer** (`src/terminal.ts`). WKWebView's WebGL glyph atlas can clip U+2580-U+259F block glyphs into thin horizontal strokes, while xterm's DOM renderer can show the same corruption if block glyphs fall back to a different font. Keep `customGlyphs: true` with the canvas addon and keep the self-hosted WOFF2 `JetBrainsMono Terminal` face for the whole terminal. Gate `createPane` on `MONO_READY` (`document.fonts.load('600 13px "JetBrainsMono Terminal"')`) so xterm measures cells against the real terminal font, not a fallback. The key tmux detail is in `docker.rs::attach_exec`: use `tmux -u attach-session` and set `LANG=C.UTF-8`/`LC_ALL=C.UTF-8`. Without `-u`, tmux downgraded Claude's stored UTF-8 block art to `_`/ASCII-like cells before xterm ever saw it. Terminal output is still normalized in `src-tauri/src/pty_output.rs` and `src/app/lib/pty-output.ts` to rewrite Claude's `48;5;16` background to `49`, but U+2580-U+259F block elements must pass through unchanged. For rendering stability, every pane write goes through a single xterm write queue, fits are debounced to one `requestAnimationFrame`, `pty_resize` is deduped by cols/rows, and the terminal host owns clipping/containment (`.term-surface` / `.login-term-surface`). Don't reintroduce direct `term.write(...)`, immediate `fit.fit()` from `ResizeObserver`, or extra scroll containers around xterm.
 - **The frontend has NO React error boundary** — a single uncaught render throw unmounts the WHOLE tree (blank window, looks like a native "crash"). This bit us via `SessionRow` (`HubSidebar.tsx`): a `if (!meta) return null` guard sat ABOVE its `useSessionUsage` hook, so closing a pane (which deletes `sessionMeta[session]` → row re-renders with `meta` undefined → early return → fewer hooks) threw "Rendered fewer hooks than expected" and blanked the app. Rule: in any component that early-returns on missing session/meta, ALL hooks (incl. `useSessionUsage`) MUST run above the guard — `SessionDetail.tsx` and `SessionRow` both do this now; mirror it. Surfaced only in a real webview, not `make dev-web`-via-Chrome inference — read the console (`playwright-cli console`) to catch it.
 - **Global keyboard shortcuts (`useKeyboard`) attach at the capture phase** so they beat xterm's textarea handler. Don't switch to bubble phase, and don't blanket-skip on `TEXTAREA` — xterm's helper IS a textarea, so the rename-input guard keys off the `.pane-name-input` class instead.
 - **Spawn background tasks in the Tauri `setup` hook with `tauri::async_runtime::spawn`, NOT `tokio::spawn`.** `setup` runs on the main thread with no entered tokio runtime, so a bare `tokio::spawn` panics (`there is no reactor running`) — and because it unwinds across the Obj-C `did_finish_launching` boundary, the process *aborts* instead of erroring. Code shared with the dev bridge (which runs under `#[tokio::main]`, where `tokio::spawn` is valid) must not bake in the spawner: expose the loop as a plain `async fn` and let each caller spawn on its own runtime (see `events::event_tailer_loop` + its two call sites). This shipped as a latent startup crash because the subsystem had only ever run via `make dev-web`, never a real Tauri launch.

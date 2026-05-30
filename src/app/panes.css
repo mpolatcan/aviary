@@ -141,8 +141,8 @@ body.dragging .divider::after {
 /* Inline-renamed pane name field (PaneHead renders the static name with inline
    styles; this is the edit-mode input it swaps to). */
 .pane-name-input {
-  font-family: var(--font-mono);
-  font-weight: 500;
+  font-family: "JetBrainsMono Terminal", Menlo, monospace;
+  font-weight: 600;
   font-size: var(--fs-xs);
   color: var(--color-text);
   background: var(--color-bg-deep);
@@ -163,6 +163,25 @@ body.dragging .divider::after {
 .term-surface {
   position: absolute;
   inset: 7px 5px 5px 7px;
+  box-sizing: border-box;
+  overflow: hidden;
+  contain: size layout paint;
+  background: #08090b;
+}
+.term-surface .xterm,
+.login-term-surface .xterm {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+.term-surface .xterm-viewport,
+.login-term-surface .xterm-viewport {
+  overflow-y: auto;
+}
+.login-term-surface {
+  box-sizing: border-box;
+  overflow: hidden;
+  contain: size layout paint;
 }
 
 /* ---- Mode badge (AUTO / YOLO) ----------------------------------------- */
@@ -510,6 +529,31 @@ body.dragging .divider::after {
 }
 
 /* ---- xterm overrides -------------------------------------------------- */
+
+.term-surface .xterm,
+.term-surface .xterm-rows,
+.term-surface .xterm-rows span,
+.term-surface .xterm-helper-textarea,
+.login-term-surface .xterm,
+.login-term-surface .xterm-rows,
+.login-term-surface .xterm-rows span,
+.login-term-surface .xterm-helper-textarea {
+  font-family: "JetBrainsMono Terminal", Menlo, monospace !important;
+  font-weight: 600 !important;
+  -webkit-font-smoothing: auto;
+}
+
+.term-surface .xterm-rows,
+.login-term-surface .xterm-rows {
+  display: none !important;
+}
+
+.term-surface .xterm-rows .xterm-bold,
+.term-surface .xterm-rows .xterm-dim,
+.login-term-surface .xterm-rows .xterm-bold,
+.login-term-surface .xterm-rows .xterm-dim {
+  font-weight: 600 !important;
+}
 
 .xterm-viewport::-webkit-scrollbar {
   width: 6px;
