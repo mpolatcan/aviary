@@ -263,7 +263,6 @@ export function NewWorkspace() {
                   }}
                   placeholder="e.g. honey-badger"
                   spellCheck={false}
-                  // biome-ignore lint/a11y/noAutofocus: first field of the final step
                   autoFocus
                   className="mono h-auto rounded-lg px-3.5 py-2.5 text-sm"
                 />

@@ -510,7 +510,6 @@ export function SessionDetail({ session }: { session: string }) {
             >
               <Input
                 className="mono h-auto flex-1 min-w-0 rounded-md px-2.5 py-1 text-xs"
-                // biome-ignore lint/a11y/noAutofocus: commit box is opened by an explicit user action
                 autoFocus
                 value={commitMsg}
                 onChange={(e) => setCommitMsg(e.target.value)}
@@ -541,7 +540,6 @@ export function SessionDetail({ session }: { session: string }) {
             >
               <Input
                 className="mono h-auto rounded-md px-2.5 py-1 text-xs"
-                // biome-ignore lint/a11y/noAutofocus: PR form is opened by an explicit user action
                 autoFocus
                 value={prTitle}
                 onChange={(e) => setPrTitle(e.target.value)}

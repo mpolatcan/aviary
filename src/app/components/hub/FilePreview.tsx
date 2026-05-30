@@ -209,6 +209,7 @@ function LineNumbers({ count }: { count: number }) {
       }}
     >
       {Array.from({ length: count }, (_, i) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: static line-number gutter (1..count), never reordered
         <div key={i}>{i + 1}</div>
       ))}
     </div>

@@ -242,7 +242,6 @@ export function PaneHead({
           {Ico.close}
         </IconBtn>
       </div>
-
     </div>
   );
 }
