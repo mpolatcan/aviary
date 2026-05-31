@@ -12,18 +12,20 @@ export function Tip({
   children,
   side = "bottom",
   delay = 400,
+  className,
 }: {
   text: string;
   children: ReactNode;
   side?: "top" | "right" | "bottom" | "left";
   delay?: number;
+  className?: string;
 }) {
   if (!text) return <>{children}</>;
   return (
     <TooltipProvider delayDuration={delay}>
       <Tooltip>
         <TooltipTrigger asChild>{children}</TooltipTrigger>
-        <TooltipContent side={side} sideOffset={6}>
+        <TooltipContent side={side} sideOffset={6} className={className}>
           {text}
         </TooltipContent>
       </Tooltip>

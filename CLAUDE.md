@@ -188,6 +188,8 @@ Environment knobs:
 
 ## Frontend work
 
+**ALWAYS use shadcn/ui components for controls — never hand-roll inline-styled buttons, toggles, selects, menus, inputs, etc.** Every control with a shadcn equivalent (`src/app/ui/`) MUST use it; add the primitive if missing. Inline styles are for layout only and for domain primitives with no shadcn equivalent (StatusDot, Spark, AgentGlyph, …). Full mapping + nuances in the rules file below.
+
 Frontend design, skills, and token rules live in their own file:
 
 @.claude/rules/frontend.md

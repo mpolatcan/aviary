@@ -2,6 +2,7 @@ import { motion } from "motion/react";
 import { IconBtn } from "../../components/primitives/IconBtn";
 import { Spark } from "../../components/primitives/Spark";
 import { StatusDot } from "../../components/primitives/StatusDot";
+import { Tip } from "../../components/primitives/Tip";
 import { Ico } from "../../components/primitives/icons";
 import { deriveLiveStatus } from "../../lib/activity";
 import type { ContainerState } from "../../lib/ipc";
@@ -72,7 +73,7 @@ const lineStyle: React.CSSProperties = {
   padding: "0 10px",
   gap: 10,
   fontFamily: "var(--mono)",
-  fontSize: 11,
+  fontSize: "var(--fs-11)",
   color: "var(--fg-2)",
   // Clip rather than spill/overlap when side panels narrow the main region.
   whiteSpace: "nowrap",
@@ -107,19 +108,20 @@ function MiniMetric({
   title: string;
 }) {
   return (
-    <span
-      className="tnum"
-      title={title}
-      style={{ display: "inline-flex", alignItems: "center", gap: 6, flexShrink: 0 }}
-    >
-      <span style={{ color: "var(--fg-3)" }}>{label}</span>
-      <span style={{ color: "var(--fg-1)" }}>{value}</span>
-      <span style={{ width: 40, height: 16, display: "inline-block", opacity: 0.9 }}>
-        {series.length >= 2 && (
-          <Spark data={series} w={40} h={16} color={accent} fill responsive calm />
-        )}
+    <Tip text={title}>
+      <span
+        className="tnum"
+        style={{ display: "inline-flex", alignItems: "center", gap: 6, flexShrink: 0 }}
+      >
+        <span style={{ color: "var(--fg-3)" }}>{label}</span>
+        <span style={{ color: "var(--fg-1)" }}>{value}</span>
+        <span style={{ width: 40, height: 16, display: "inline-block", opacity: 0.9 }}>
+          {series.length >= 2 && (
+            <Spark data={series} w={40} h={16} color={accent} fill responsive calm />
+          )}
+        </span>
       </span>
-    </span>
+    </Tip>
   );
 }
 
@@ -158,25 +160,24 @@ function RuntimeIndicator() {
   const title = `Runtime: ${STATE_LABEL[state]}${healthBits.length ? ` · ${healthBits.join(" · ")}` : ""}`;
 
   return (
-    <span
-      style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0, flexShrink: 1 }}
-      title={title}
-    >
-      <StatusDot status={dotStatus} pulse={state === "running"} />
-      <span style={{ color: stateColor }}>{STATE_LABEL[state]}</span>
-      {vr}
-      <span style={{ color: "var(--fg-3)", display: "inline-flex" }}>{Ico.container}</span>
-      <span
-        style={{
-          color: "var(--fg-1)",
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap",
-        }}
-      >
-        {runtimeName}
+    <Tip text={title}>
+      <span style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0, flexShrink: 1 }}>
+        <StatusDot status={dotStatus} pulse={state === "running"} />
+        <span style={{ color: stateColor }}>{STATE_LABEL[state]}</span>
+        {vr}
+        <span style={{ color: "var(--fg-3)", display: "inline-flex" }}>{Ico.container}</span>
+        <span
+          style={{
+            color: "var(--fg-1)",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {runtimeName}
+        </span>
       </span>
-    </span>
+    </Tip>
   );
 }
 
@@ -190,7 +191,8 @@ function ExpandChevron() {
       title={details ? "Collapse graphs (⌘I)" : "Expand graphs (⌘I)"}
       active={details}
       onClick={() => setDetails(!details)}
-      style={{ width: 24, height: 24, flexShrink: 0 }}
+      size={24}
+      style={{ flexShrink: 0 }}
     >
       <span
         style={{

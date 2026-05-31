@@ -53,11 +53,13 @@ const TERM_THEME = {
   brightWhite: "#ecedf0",
 };
 
-// Terminal typeface = self-hosted JetBrains Mono SemiBold (fonts.css), NOT the
-// app chrome's Geist Mono. Gate pane creation on the font — if xterm measures the
-// cell at term.open() before it loads, it sizes to fallback metrics and never
-// re-measures, mis-aligning every glyph. Resolves once at module load, then awaits
-// are instant.
+// Terminal typeface = self-hosted JetBrains Mono SemiBold under the dedicated
+// family "JetBrainsMono Terminal" (fonts.css). The app chrome is also JetBrains
+// Mono now, but the variable-weight Google Fonts face under a different family
+// name — the terminal stays pinned to the SemiBold self-hosted file. Gate pane
+// creation on the font — if xterm measures the cell at term.open() before it
+// loads, it sizes to fallback metrics and never re-measures, mis-aligning every
+// glyph. Resolves once at module load, then awaits are instant.
 const MONO_READY: Promise<unknown> =
   typeof document !== "undefined" && "fonts" in document
     ? Promise.all([

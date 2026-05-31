@@ -125,7 +125,7 @@ export function Character({
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            fontSize: 9,
+            fontSize: "var(--fs-9)",
             fontWeight: 700,
           }}
         >
@@ -299,7 +299,7 @@ function AsciiFace({ expression }: { expression: CharacterExpression }) {
     <span
       style={{
         fontFamily: "var(--mono)",
-        fontSize: 11,
+        fontSize: "var(--fs-11)",
         fontWeight: 600,
         color,
         letterSpacing: "0.02em",

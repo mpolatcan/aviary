@@ -5,6 +5,7 @@ import { Grid } from "./components/Grid";
 import { SpawnModal } from "./components/SpawnModal";
 import { ActionBar } from "./components/hub/ActionBar";
 import { BusyOverlay } from "./components/hub/BusyOverlay";
+import { CloneBanner } from "./components/hub/CloneBanner";
 import { CommandPalette } from "./components/hub/CommandPalette";
 import { DiffViewer } from "./components/hub/DiffViewer";
 import { FilePreview } from "./components/hub/FilePreview";
@@ -168,6 +169,7 @@ function HubView() {
         }}
       >
         <RuntimeBanner />
+        <CloneBanner />
         {/* Tab strip only when a workspace is open or the launcher tab is showing —
             on the Welcome empty state there are no tabs (and its own CTA replaces
             the "+" / bell, which belong to a live hub). */}

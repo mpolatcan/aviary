@@ -9,6 +9,7 @@ import { MODE_BY_ID } from "../lib/catalog";
 import { useOverlay } from "../lib/overlay";
 import { confirmCloseRunningSession, useStore } from "../lib/store";
 import { leavesList, paneInk } from "../lib/tree";
+import { Input } from "../ui/input";
 
 // Pane header, visually aligned with design/screens/main-hub-a.jsx: index + a
 // status dot that doubles as the color picker (ColorDot) + colored pane title +
@@ -153,11 +154,10 @@ export function PaneHead({
             title={`${statusText} · click to set pane color`}
           />
           {editing ? (
-            <input
-              className="pane-name-input"
+            <Input
+              className="pane-name-input h-auto w-[12ch]"
               defaultValue={meta.alias}
               maxLength={32}
-              // biome-ignore lint/a11y/noAutofocus: rename input is opened by an explicit user action
               autoFocus
               onFocus={(e) => e.currentTarget.select()}
               onBlur={(e) => {
@@ -179,7 +179,7 @@ export function PaneHead({
                 className="mono ch-rename"
                 style={{
                   fontFamily: '"JetBrainsMono Terminal", Menlo, monospace',
-                  fontSize: 13,
+                  fontSize: "var(--fs-13)",
                   color: titleColor,
                   fontWeight: 600,
                 }}
@@ -197,7 +197,7 @@ export function PaneHead({
         {badge && <span className={`mode-badge badge-${meta.mode}`}>{badge}</span>}
         {awaiting && <StatusBadge status="wait">Awaiting</StatusBadge>}
         {liveLabel && (
-          <span className="mono" style={{ fontSize: 10.5, color: liveColor }}>
+          <span className="mono" style={{ fontSize: "var(--fs-11)", color: liveColor }}>
             {liveLabel}
           </span>
         )}
@@ -208,7 +208,7 @@ export function PaneHead({
           title={isMax ? "Restore split" : canMax ? "Maximize pane" : "Maximize — split first"}
           active={isMax}
           disabled={!canMax}
-          style={{ width: 22, height: 22 }}
+          size={22}
           {...tintBtn}
           onClick={(e) => {
             e.stopPropagation();
@@ -224,7 +224,7 @@ export function PaneHead({
         </IconBtn>
         <IconBtn
           title="Pane menu — spawn, split, close"
-          style={{ width: 22, height: 22 }}
+          size={22}
           {...tintBtn}
           onClick={(e) => {
             e.stopPropagation();
@@ -236,7 +236,7 @@ export function PaneHead({
         <IconBtn
           title="Close session (⌘W)"
           danger={!ink}
-          style={{ width: 22, height: 22 }}
+          size={22}
           {...tintBtn}
           onClick={(e) => {
             e.stopPropagation();

@@ -106,11 +106,11 @@ export function Shortcuts() {
               gap: 14,
             }}
           >
-            <DialogTitle style={{ fontSize: 16 }}>Keyboard shortcuts</DialogTitle>
+            <DialogTitle style={{ fontSize: "var(--fs-16)" }}>Keyboard shortcuts</DialogTitle>
             <DialogDescription className="sr-only">
               Search and review the keyboard shortcuts available in CodeHub.
             </DialogDescription>
-            <span className="mono" style={{ fontSize: 12, color: "var(--fg-2)" }}>
+            <span className="mono" style={{ fontSize: "var(--fs-12)", color: "var(--fg-2)" }}>
               press <span className="kbd">?</span> anywhere to open ·{" "}
               <span className="kbd">esc</span> to close
             </span>
@@ -142,7 +142,7 @@ export function Shortcuts() {
               className="mono"
               style={{
                 margin: 0,
-                fontSize: 12,
+                fontSize: "var(--fs-12)",
                 color: "var(--fg-3)",
                 gridColumn: "1 / -1",
               }}
@@ -154,7 +154,7 @@ export function Shortcuts() {
               <div key={g.title}>
                 <div
                   className="lbl"
-                  style={{ marginBottom: 10, color: "var(--fg-1)", fontSize: 11 }}
+                  style={{ marginBottom: 10, color: "var(--fg-1)", fontSize: "var(--fs-11)" }}
                 >
                   {g.title}
                 </div>
@@ -179,7 +179,7 @@ export function Shortcuts() {
                       <span style={{ flex: 1 }} />
                       <span
                         style={{
-                          fontSize: 12,
+                          fontSize: "var(--fs-12)",
                           color: "var(--fg-1)",
                           textAlign: "right",
                         }}
@@ -204,7 +204,10 @@ export function Shortcuts() {
             background: "var(--bg-1)",
           }}
         >
-          <p className="mono" style={{ margin: 0, fontSize: 11, color: "var(--fg-3)", flex: 1 }}>
+          <p
+            className="mono"
+            style={{ margin: 0, fontSize: "var(--fs-11)", color: "var(--fg-3)", flex: 1 }}
+          >
             vim-style keys also work inside terminal panes (handled by tmux)
           </p>
           <Button variant="outline" size="sm" onClick={() => window.print()}>

@@ -64,13 +64,19 @@ export function WorkspaceTab({
       )}
 
       {/* Repo name */}
-      <span style={{ fontFamily: "var(--mono)", fontSize: 12, fontWeight: active ? 500 : 400 }}>
+      <span
+        style={{
+          fontFamily: "var(--mono)",
+          fontSize: "var(--fs-12)",
+          fontWeight: active ? 500 : 400,
+        }}
+      >
         {repo}
       </span>
 
       {/* Branch */}
       {branch && (
-        <span style={{ fontFamily: "var(--mono)", fontSize: 10.5, color: "var(--fg-3)" }}>
+        <span style={{ fontFamily: "var(--mono)", fontSize: "var(--fs-11)", color: "var(--fg-3)" }}>
           {branch}
         </span>
       )}

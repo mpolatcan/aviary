@@ -27,7 +27,7 @@ export function PaneTypeChip({ kind, style }: PaneTypeChipProps) {
         alignItems: "center",
         gap: 4,
         fontFamily: "var(--mono)",
-        fontSize: 10,
+        fontSize: "var(--fs-10)",
         lineHeight: 1,
         letterSpacing: "0.04em",
         textTransform: "uppercase",

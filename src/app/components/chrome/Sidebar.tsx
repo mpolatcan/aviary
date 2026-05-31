@@ -37,7 +37,7 @@ const DEFAULT_GROUPS: SidebarNavGroup[] = [
   {
     items: [
       { key: "settings", label: "Settings" },
-      { key: "integrations", label: "Integrations" },
+      { key: "integrations", label: "Source control" },
     ],
   },
 ];
@@ -83,7 +83,7 @@ export function Sidebar({ groups = DEFAULT_GROUPS, footer, onSelect }: SidebarPr
                 onClick={() => onSelect?.(item.key)}
               >
                 {item.icon && <span style={{ flexShrink: 0 }}>{item.icon}</span>}
-                <span style={{ fontSize: 12.5 }}>{item.label}</span>
+                <span style={{ fontSize: "var(--fs-13)" }}>{item.label}</span>
               </div>
             ))}
           </div>

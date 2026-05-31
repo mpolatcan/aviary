@@ -30,7 +30,7 @@ export function Logo({ size = 18, withText = true }: LogoProps) {
         <span
           style={{
             fontFamily: "var(--sans)",
-            fontSize: 13.5,
+            fontSize: "var(--fs-14)",
             fontWeight: 600,
             letterSpacing: "-0.01em",
           }}

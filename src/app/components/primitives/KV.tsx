@@ -27,10 +27,10 @@ export function KV({ label, value, mono = false, style }: KVProps) {
         ...style,
       }}
     >
-      <span style={{ fontSize: 11.5, color: "var(--fg-2)" }}>{label}</span>
+      <span style={{ fontSize: "var(--fs-12)", color: "var(--fg-2)" }}>{label}</span>
       <span
         style={{
-          fontSize: 12,
+          fontSize: "var(--fs-12)",
           color: empty ? "var(--fg-3)" : "var(--fg-0)",
           fontFamily: mono ? "var(--mono)" : undefined,
           textAlign: "right",

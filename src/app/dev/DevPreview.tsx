@@ -73,7 +73,7 @@ const SCREENS: { key: ScreenKey; label: string; title: string }[] = [
   { key: "workspaces", label: "Workspaces", title: "codehub · workspaces · runtime" },
   { key: "settings", label: "Settings", title: "codehub · settings" },
   { key: "settings-agents", label: "Agents", title: "codehub · settings · agents" },
-  { key: "settings-integrations", label: "Integrations", title: "codehub · integrations" },
+  { key: "settings-integrations", label: "Source control", title: "codehub · source control" },
   { key: "settings-platform", label: "Platform", title: "codehub · platform" },
   { key: "settings-notifications", label: "Notifications", title: "codehub · notifications" },
   { key: "live-activities", label: "Live activities", title: "codehub · live activities" },
@@ -211,7 +211,7 @@ export default function DevPreview() {
                 border: "1px solid var(--bd)",
                 background: screen === s.key ? "var(--bg-3)" : "transparent",
                 color: screen === s.key ? "var(--fg-0)" : "var(--fg-2)",
-                fontSize: 12,
+                fontSize: "var(--fs-12)",
                 cursor: "pointer",
               }}
             >
@@ -229,7 +229,7 @@ export default function DevPreview() {
             border: "1px solid var(--bd)",
             background: "var(--bg-3)",
             color: "var(--fg-0)",
-            fontSize: 12,
+            fontSize: "var(--fs-12)",
             cursor: "pointer",
           }}
         >

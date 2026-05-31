@@ -3,11 +3,13 @@ import type { DragEvent } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { PaneMount } from "../../components/PaneMount";
 import { IconBtn } from "../../components/primitives/IconBtn";
+import { Tip } from "../../components/primitives/Tip";
 import { Ico } from "../../components/primitives/icons";
 import { useResizableDock } from "../../hooks/useResizableDock";
 import { EASE } from "../../hooks/useSlideIn";
 import { useOverlay } from "../../lib/overlay";
 import { activeWorkspace, useStore } from "../../lib/store";
+import { Input } from "../../ui/input";
 import { ResizeHandle } from "./ResizeHandle";
 
 interface ShellTab {
@@ -208,7 +210,8 @@ export function ShellPanel() {
             <IconBtn
               title="Scroll tabs left"
               onClick={() => scrollTabs(-1)}
-              style={{ width: 22, height: 22, flexShrink: 0 }}
+              size={22}
+              style={{ flexShrink: 0 }}
             >
               {Ico.chevL}
             </IconBtn>
@@ -245,14 +248,15 @@ export function ShellPanel() {
             {tabs.length === 0 && !loading ? (
               <span
                 className="mono"
-                style={{ fontSize: 11, color: "var(--fg-3)", padding: "2px 8px" }}
+                style={{ fontSize: "var(--fs-11)", color: "var(--fg-3)", padding: "2px 8px" }}
               >
                 workspace shell
               </span>
             ) : (
               <IconBtn
                 title="New shell tab"
-                style={{ width: 22, height: 22, flexShrink: 0, marginLeft: 2 }}
+                size={22}
+                style={{ flexShrink: 0, marginLeft: 2 }}
                 onClick={addTab}
                 disabled={!running || loading}
               >
@@ -264,7 +268,8 @@ export function ShellPanel() {
             <IconBtn
               title="Scroll tabs right"
               onClick={() => scrollTabs(1)}
-              style={{ width: 22, height: 22, flexShrink: 0 }}
+              size={22}
+              style={{ flexShrink: 0 }}
             >
               {Ico.chevR}
             </IconBtn>
@@ -334,7 +339,7 @@ function ShellTabBtn({
         height: 24,
         borderRadius: 6,
         fontFamily: "var(--mono)",
-        fontSize: 12,
+        fontSize: "var(--fs-12)",
         background: dropTarget
           ? "color-mix(in oklab, var(--pri) 20%, var(--bg-3))"
           : active
@@ -354,10 +359,9 @@ function ShellTabBtn({
       }}
     >
       {editing ? (
-        <input
-          className="pane-name-input"
+        <Input
+          className="pane-name-input h-auto"
           defaultValue={label}
-          // biome-ignore lint/a11y/noAutofocus: rename input is opened by an explicit double-click
           autoFocus
           onClick={(e) => e.stopPropagation()}
           onPointerDown={(e) => e.stopPropagation()}
@@ -374,38 +378,40 @@ function ShellTabBtn({
             }
             e.stopPropagation();
           }}
-          style={{ width: 76, fontSize: 12 }}
+          style={{ width: 76, fontSize: "var(--fs-12)" }}
         />
       ) : (
         <>
-          <button
-            type="button"
-            onClick={onClick}
-            onDoubleClick={() => setEditing(true)}
-            title="Double-click to rename"
-            style={{
-              background: "transparent",
-              border: "none",
-              padding: 0,
-              cursor: "inherit",
-              color: "inherit",
-              fontFamily: "inherit",
-              fontSize: "inherit",
-            }}
-          >
-            {label}
-          </button>
-          <button
-            type="button"
-            className="tab-close"
-            onClick={(e) => {
-              e.stopPropagation();
-              onClose();
-            }}
-            title="Close shell tab"
-          >
-            {Ico.close}
-          </button>
+          <Tip text="Double-click to rename">
+            <button
+              type="button"
+              onClick={onClick}
+              onDoubleClick={() => setEditing(true)}
+              style={{
+                background: "transparent",
+                border: "none",
+                padding: 0,
+                cursor: "inherit",
+                color: "inherit",
+                fontFamily: "inherit",
+                fontSize: "inherit",
+              }}
+            >
+              {label}
+            </button>
+          </Tip>
+          <Tip text="Close shell tab">
+            <button
+              type="button"
+              className="tab-close"
+              onClick={(e) => {
+                e.stopPropagation();
+                onClose();
+              }}
+            >
+              {Ico.close}
+            </button>
+          </Tip>
         </>
       )}
     </span>
@@ -438,7 +444,7 @@ function ShellEmpty({
         alignItems: "center",
         justifyContent: "center",
         color: err ? "var(--err)" : "var(--fg-3)",
-        fontSize: 12,
+        fontSize: "var(--fs-12)",
         padding: 18,
         textAlign: "center",
       }}

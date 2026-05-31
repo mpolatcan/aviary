@@ -102,14 +102,14 @@ function GaugeCell({
       }}
     >
       <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-        <span className="lbl" style={{ fontSize: 9.5 }}>
+        <span className="lbl" style={{ fontSize: "var(--fs-10)" }}>
           {label}
         </span>
         <span style={{ flex: 1 }} />
         <span
           className="mono tnum"
           style={{
-            fontSize: 17,
+            fontSize: "var(--fs-16)",
             fontWeight: 600,
             lineHeight: 1,
             color: value ? accent : "var(--fg-3)",
@@ -121,7 +121,12 @@ function GaugeCell({
       {value && sub && (
         <div
           className="mono tnum"
-          style={{ fontSize: 9.5, color: "var(--fg-3)", marginTop: 2, textAlign: "right" }}
+          style={{
+            fontSize: "var(--fs-10)",
+            color: "var(--fg-3)",
+            marginTop: 2,
+            textAlign: "right",
+          }}
         >
           {sub}
         </div>

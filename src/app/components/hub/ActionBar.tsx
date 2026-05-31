@@ -1,5 +1,6 @@
 import { PaneAddBtn } from "../../components/primitives/PaneAddBtn";
 import { SpawnSplitBtn } from "../../components/primitives/SpawnSplitBtn";
+import { Tip } from "../../components/primitives/Tip";
 import { Ico } from "../../components/primitives/icons";
 import { useOverlay } from "../../lib/overlay";
 import { Button } from "../../ui/button";
@@ -58,22 +59,23 @@ export function ActionBar() {
 
       <span style={{ flex: 1 }} />
 
-      <Button
-        variant="ghost"
-        size="xs"
-        // Match the spawn button's 28px height so the Resume / New-agent pair lines up.
-        className="h-7"
-        onClick={() => setResume(!resumeOpen)}
-        title={resumeOpen ? "Hide Resume drawer" : "Resume a past session"}
-        style={
-          resumeOpen
-            ? { background: "var(--bg-3)", color: "var(--fg-0)", borderColor: "var(--bd)" }
-            : undefined
-        }
-      >
-        {Ico.clock}
-        Resume
-      </Button>
+      <Tip text={resumeOpen ? "Hide Resume drawer" : "Resume a past session"}>
+        <Button
+          variant="ghost"
+          size="xs"
+          // Match the spawn button's 28px height so the Resume / New-agent pair lines up.
+          className="h-7"
+          onClick={() => setResume(!resumeOpen)}
+          style={
+            resumeOpen
+              ? { background: "var(--bg-3)", color: "var(--fg-0)", borderColor: "var(--bd)" }
+              : undefined
+          }
+        >
+          {Ico.clock}
+          Resume
+        </Button>
+      </Tip>
       <SpawnSplitBtn />
     </div>
   );

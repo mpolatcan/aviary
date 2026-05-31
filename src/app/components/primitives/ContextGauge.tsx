@@ -13,7 +13,9 @@ export function ContextGauge({ used, max, label = "ctx", width = 110 }: ContextG
   const color = pct > 0.85 ? "var(--err)" : pct > 0.7 ? "var(--wait)" : "var(--fg-1)";
   return (
     <span style={{ display: "inline-flex", alignItems: "center", gap: 8, height: 18 }}>
-      <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--fg-3)" }}>{label}</span>
+      <span style={{ fontFamily: "var(--mono)", fontSize: "var(--fs-11)", color: "var(--fg-3)" }}>
+        {label}
+      </span>
       <span
         style={{
           width,
@@ -34,7 +36,10 @@ export function ContextGauge({ used, max, label = "ctx", width = 110 }: ContextG
           }}
         />
       </span>
-      <span className="mono tnum" style={{ fontSize: 12, color: "var(--fg-0)", fontWeight: 500 }}>
+      <span
+        className="mono tnum"
+        style={{ fontSize: "var(--fs-12)", color: "var(--fg-0)", fontWeight: 500 }}
+      >
         {max > 0 ? (
           <>
             {formatK(used)}

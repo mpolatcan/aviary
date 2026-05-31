@@ -49,7 +49,7 @@ export function Tab({
         borderBottom: `2px solid ${active ? "var(--pri)" : "transparent"}`,
         color: active ? "var(--fg-0)" : "var(--fg-2)",
         cursor: active || disabled ? "default" : "pointer",
-        fontSize: 13,
+        fontSize: "var(--fs-13)",
         fontFamily: "var(--sans)",
         fontWeight: active ? 500 : 400,
         transition: "color .12s ease, border-color .12s ease",

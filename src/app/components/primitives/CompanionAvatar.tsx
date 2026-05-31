@@ -218,7 +218,7 @@ export function CompanionAvatar({
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                fontSize: 11,
+                fontSize: "var(--fs-11)",
                 fontWeight: 600,
                 boxShadow: `0 0 8px ${ring}`,
               }}
@@ -252,7 +252,7 @@ export function CompanionAvatar({
                 top: "50%",
                 transform: "translateY(-50%)",
                 color: "var(--fg-3)",
-                fontSize: 14,
+                fontSize: "var(--fs-14)",
               }}
             >
               ‹
@@ -270,7 +270,7 @@ export function CompanionAvatar({
             color: "var(--fg-0)",
             padding: "8px 12px",
             borderRadius: 10,
-            fontSize: 12,
+            fontSize: "var(--fs-12)",
             fontFamily: "var(--sans)",
             maxWidth: 220,
             marginTop: 6,
@@ -291,14 +291,22 @@ export function CompanionAvatar({
             }}
           />
           <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
-            <span style={{ fontSize: 12.5, fontWeight: 600 }}>{meta?.name ?? agent}</span>
+            <span style={{ fontSize: "var(--fs-13)", fontWeight: 600 }}>{meta?.name ?? agent}</span>
             {bubbleMeta && (
-              <span style={{ fontSize: 10.5, color: "var(--fg-2)", fontFamily: "var(--mono)" }}>
+              <span
+                style={{
+                  fontSize: "var(--fs-11)",
+                  color: "var(--fg-2)",
+                  fontFamily: "var(--mono)",
+                }}
+              >
                 {bubbleMeta}
               </span>
             )}
           </div>
-          <div style={{ fontSize: 11.5, color: "var(--fg-1)", lineHeight: 1.4 }}>{bubble}</div>
+          <div style={{ fontSize: "var(--fs-12)", color: "var(--fg-1)", lineHeight: 1.4 }}>
+            {bubble}
+          </div>
           {status === "wait" && (onApprove || onDeny) && (
             <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
               <button
@@ -310,7 +318,7 @@ export function CompanionAvatar({
                   border: "1px solid var(--bd)",
                   borderRadius: 999,
                   padding: "5px 10px",
-                  fontSize: 11,
+                  fontSize: "var(--fs-11)",
                   cursor: "pointer",
                 }}
               >
@@ -325,7 +333,7 @@ export function CompanionAvatar({
                   border: "none",
                   borderRadius: 999,
                   padding: "5px 12px",
-                  fontSize: 11,
+                  fontSize: "var(--fs-11)",
                   fontWeight: 600,
                   cursor: "pointer",
                 }}

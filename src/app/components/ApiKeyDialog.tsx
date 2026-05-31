@@ -90,7 +90,7 @@ export function ApiKeyDialog({ agent, onClose, onSaved }: ApiKeyDialogProps) {
           </div>
 
           {error && (
-            <div className="text-[11.5px]" style={{ color: "var(--err)" }}>
+            <div className="text-[12px]" style={{ color: "var(--err)" }}>
               {error}
             </div>
           )}

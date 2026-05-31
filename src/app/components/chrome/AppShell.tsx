@@ -46,7 +46,7 @@ export function AppShell({ title = "CodeHub", rail, railFramed = true, children 
           style={{
             flex: 1,
             textAlign: "center",
-            fontSize: 11.5,
+            fontSize: "var(--fs-12)",
             color: "var(--fg-2)",
             fontFamily: "var(--mono)",
             letterSpacing: 0.3,

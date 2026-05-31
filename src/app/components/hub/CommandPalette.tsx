@@ -28,7 +28,7 @@ const SCOPES: { id: Exclude<Scope, null>; label: string }[] = [
 const VIEWS: { id: HubView; label: string; icon: keyof typeof Ico; section?: string }[] = [
   { id: "hub", label: "Hub", icon: "hub" },
   { id: "dashboard", label: "Dashboard", icon: "grid" },
-  { id: "settings", label: "Integrations", icon: "branch", section: "integrations" },
+  { id: "settings", label: "Source control", icon: "branch", section: "integrations" },
   { id: "settings", label: "Settings", icon: "settings" },
 ];
 
@@ -272,7 +272,7 @@ export function CommandPalette() {
                   <span
                     className="mono"
                     style={{
-                      fontSize: 10.5,
+                      fontSize: "var(--fs-11)",
                       color: "var(--fg-3)",
                       flexShrink: 0,
                       display: "inline-flex",
@@ -283,7 +283,11 @@ export function CommandPalette() {
                     {SPEC_BY_CLI[meta.cli].label}
                     {sText && ` · ${sText}`}
                     {isAwaiting && (
-                      <span style={{ color: "var(--fg-2)", fontSize: 14, lineHeight: 1 }}>›</span>
+                      <span
+                        style={{ color: "var(--fg-2)", fontSize: "var(--fs-14)", lineHeight: 1 }}
+                      >
+                        ›
+                      </span>
                     )}
                   </span>
                 </CommandItem>
@@ -302,7 +306,7 @@ export function CommandPalette() {
                   <span style={{ color: "var(--fg-2)" }}>{c.label} in </span>
                   <Hi text={workspaceName} q={query} />
                 </span>
-                <span className="mono" style={{ fontSize: 10.5, color: "var(--fg-3)" }}>
+                <span className="mono" style={{ fontSize: "var(--fs-11)", color: "var(--fg-3)" }}>
                   standard · ⌘N
                 </span>
               </CommandItem>
@@ -319,7 +323,7 @@ export function CommandPalette() {
                 <Hi text="Review all changes" q={query} />
               </span>
               <span style={{ display: "inline-flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
-                <span className="mono" style={{ fontSize: 10.5, color: "var(--fg-3)" }}>
+                <span className="mono" style={{ fontSize: "var(--fs-11)", color: "var(--fg-3)" }}>
                   workspace diff
                 </span>
                 <Kbd>⌘D</Kbd>
@@ -342,7 +346,7 @@ export function CommandPalette() {
               <span style={{ flex: 1 }}>
                 <Hi text="Restart runtime container" q={query} />
               </span>
-              <span className="mono" style={{ fontSize: 10.5, color: "var(--fg-3)" }}>
+              <span className="mono" style={{ fontSize: "var(--fs-11)", color: "var(--fg-3)" }}>
                 ends sessions
               </span>
             </CommandItem>
@@ -364,7 +368,7 @@ export function CommandPalette() {
                   <Hi text={v.label} q={query} />
                 </span>
                 {v.id === view && (!v.section || v.section === settingsSection) && (
-                  <span className="mono" style={{ fontSize: 10.5, color: "var(--fg-3)" }}>
+                  <span className="mono" style={{ fontSize: "var(--fs-11)", color: "var(--fg-3)" }}>
                     current
                   </span>
                 )}
@@ -387,7 +391,7 @@ export function CommandPalette() {
               <span style={{ flex: 1 }}>
                 <Hi text="Open companion window" q={query} />
               </span>
-              <span className="mono" style={{ fontSize: 10.5, color: "var(--fg-3)" }}>
+              <span className="mono" style={{ fontSize: "var(--fs-11)", color: "var(--fg-3)" }}>
                 always on top
               </span>
             </CommandItem>
@@ -409,7 +413,7 @@ export function CommandPalette() {
                 <span style={{ flex: 1 }}>
                   <Hi text={shortPath(path)} q={query} />
                 </span>
-                <span className="mono" style={{ fontSize: 10.5, color: "var(--fg-3)" }}>
+                <span className="mono" style={{ fontSize: "var(--fs-11)", color: "var(--fg-3)" }}>
                   recent
                 </span>
               </CommandItem>
@@ -427,7 +431,7 @@ export function CommandPalette() {
                 <span style={{ flex: 1 }}>
                   <Hi text={repo.nameWithOwner} q={query} />
                 </span>
-                <span className="mono" style={{ fontSize: 10.5, color: "var(--fg-3)" }}>
+                <span className="mono" style={{ fontSize: "var(--fs-11)", color: "var(--fg-3)" }}>
                   {repo.private ? "private" : "public"}
                 </span>
               </CommandItem>
@@ -445,7 +449,7 @@ export function CommandPalette() {
           padding: "6px 14px",
           borderTop: "1px solid var(--bd-soft)",
           background: "var(--bg-1)",
-          fontSize: 11,
+          fontSize: "var(--fs-11)",
           color: "var(--fg-2)",
         }}
       >
@@ -476,7 +480,11 @@ function ScopeChips({ scope, setScope }: { scope: Scope; setScope: (s: Scope) =>
     <span style={{ display: "flex", alignItems: "center", flexShrink: 0 }}>
       {SCOPES.map((s, i) => (
         <Fragment key={s.id}>
-          {i > 0 && <span style={{ color: "var(--fg-3)", fontSize: 10, margin: "0 4px" }}>·</span>}
+          {i > 0 && (
+            <span style={{ color: "var(--fg-3)", fontSize: "var(--fs-10)", margin: "0 4px" }}>
+              ·
+            </span>
+          )}
           <button
             type="button"
             onClick={(e) => {
@@ -489,7 +497,7 @@ function ScopeChips({ scope, setScope }: { scope: Scope; setScope: (s: Scope) =>
               padding: "1px 4px",
               cursor: "pointer",
               fontFamily: "var(--mono)",
-              fontSize: 11,
+              fontSize: "var(--fs-11)",
               color: scope === s.id ? "var(--fg-0)" : "var(--fg-3)",
               transition: "color 0.1s, background 0.1s",
               borderRadius: 3,
@@ -547,7 +555,7 @@ function Kbd({ children, style }: { children: ReactNode; style?: CSSProperties }
         background: "var(--bg-3)",
         border: "1px solid var(--bd-soft)",
         color: "var(--fg-2)",
-        fontSize: 10,
+        fontSize: "var(--fs-10)",
         ...style,
       }}
     >

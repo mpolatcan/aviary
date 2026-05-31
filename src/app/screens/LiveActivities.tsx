@@ -42,8 +42,10 @@ export function LiveActivities() {
             marginTop: 8,
           }}
         >
-          <h2 style={{ margin: 0, fontSize: 16, fontWeight: 600 }}>Cross-platform toasts</h2>
-          <span className="mono" style={{ fontSize: 12, color: "var(--fg-2)" }}>
+          <h2 style={{ margin: 0, fontSize: "var(--fs-16)", fontWeight: 600 }}>
+            Cross-platform toasts
+          </h2>
+          <span className="mono" style={{ fontSize: "var(--fs-12)", color: "var(--fg-2)" }}>
             same event, native styling per OS
           </span>
         </div>

@@ -82,6 +82,13 @@ pub struct AccountProfile {
     /// dialog's account picker. Defaults to true for back-compat.
     #[serde(default = "default_true")]
     pub enabled: bool,
+    /// The account's email, captured at subscription sign-in. Identity only (the
+    /// same address `oauthAccount.emailAddress` / the ChatGPT id_token carries) —
+    /// NOT a secret. `None` for env-backed profiles, for sign-ins predating this
+    /// field, or when the address couldn't be read. Lets the UI show *which*
+    /// account each vault profile is, so multiple subscriptions are distinguishable.
+    #[serde(default)]
+    pub email: Option<String>,
     #[serde(flatten)]
     pub credential: CredentialSource,
 }
@@ -145,6 +152,11 @@ impl<'de> Deserialize<'de> for AccountProfile {
             .to_string();
         // Absent in older settings.json → enabled (back-compat default).
         let enabled = obj.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
+        // Absent for env-backed / pre-feature sign-ins → None.
+        let email = obj
+            .get("email")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
 
         let credential = match obj.get("source").and_then(|v| v.as_str()) {
             Some("vault") => CredentialSource::Vault,
@@ -166,6 +178,7 @@ impl<'de> Deserialize<'de> for AccountProfile {
             agent,
             label,
             enabled,
+            email,
             credential,
         })
     }
@@ -188,6 +201,9 @@ pub struct AccountProfileStatus {
     pub present: bool,
     /// Whether the profile is offered at spawn (user-toggleable).
     pub enabled: bool,
+    /// The signed-in account's email (vault-backed sign-ins only). Identity, not
+    /// a secret; `None` until captured. Surfaced so the UI can show which account.
+    pub email: Option<String>,
 }
 
 /// Map stored profiles to their live presence status.
@@ -219,6 +235,7 @@ pub fn profile_statuses(
                 var_name,
                 present,
                 enabled: p.enabled,
+                email: p.email,
             }
         })
         .collect()
@@ -665,6 +682,21 @@ impl ConfigStore {
             .find(|p| p.id == id)
             .ok_or_else(|| format!("no profile with id {id}"))?;
         profile.enabled = enabled;
+        self.set(next)
+    }
+
+    /// Set (or clear) an account profile's captured email. Called after a
+    /// subscription sign-in once the address is read from the credential. A
+    /// missing id is a no-op (the profile may have been removed mid-login).
+    pub fn set_account_profile_email(
+        &self,
+        id: &str,
+        email: Option<String>,
+    ) -> Result<Settings, String> {
+        let mut next = self.get();
+        if let Some(profile) = next.account_profiles.iter_mut().find(|p| p.id == id) {
+            profile.email = email;
+        }
         self.set(next)
     }
 }

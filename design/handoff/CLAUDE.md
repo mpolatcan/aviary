@@ -58,16 +58,19 @@ it as your visual reference; do not import from it.
 - **Tailwind CSS** as the styling backbone. Replace existing CSS-in-JS with
   Tailwind classes paired with shadcn primitives.
 - **xterm.js** for tmux output. Existing.
-- **JetBrains Mono** + **Geist** fonts. Load from Google Fonts.
+- **JetBrains Mono** as the single typeface (chrome + terminal). Load from
+  Google Fonts. (Originally paired with **Geist** for sans prose; Geist was
+  later dropped — the app is all-mono now.)
 - **No emojis** in chrome. No reproduced third-party logos.
 
 ---
 
 ## Design language rules (non-negotiable)
 
-1. **Mono-first, sans for prose.** Default font stack is JetBrains Mono. Use
-   Geist (sans) for body prose: settings descriptions, captions, hints. Use
-   `font-weight: 600` for headings to compensate.
+1. **All JetBrains Mono.** One typeface across all chrome (originally
+   mono-first with Geist for sans prose — settings descriptions, captions,
+   hints; Geist was later dropped, so everything is mono now). Use
+   `font-weight: 600` for headings.
 2. **Cool-neutral darks.** Surfaces lift from `bg-0` (`#08090b`) to `bg-3`
    (`#1f242d`). Borders sit between bg layers, not on top of them.
 3. **Primary is violet, status is warm.** `--pri` lives at hue 295 (cool

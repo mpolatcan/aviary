@@ -5,6 +5,7 @@ import * as registry from "../lib/panes";
 import { confirmCloseRunningSession, isSpawnPlaceholder, useStore } from "../lib/store";
 import type { Group, LayoutNode, SplitNode, Workspace } from "../lib/tree";
 import { activeGroup, leavesList, leavesOf } from "../lib/tree";
+import { Button } from "../ui/button";
 import { PaneFoot } from "./PaneFoot";
 import { PaneHead } from "./PaneHead";
 import { PaneMount } from "./PaneMount";
@@ -104,38 +105,47 @@ function EmptyGroup({ ws, group }: { ws: Workspace; group: Group }) {
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
           <span style={{ width: 8, height: 8, borderRadius: "50%", background: group.color }} />
-          <span style={{ fontSize: 15, color: "var(--fg-0)", fontWeight: 500 }}>Empty group</span>
+          <span style={{ fontSize: "var(--fs-14)", color: "var(--fg-0)", fontWeight: 500 }}>
+            Empty group
+          </span>
         </div>
-        <div style={{ fontSize: 12, color: "var(--fg-2)", textAlign: "center", maxWidth: 384 }}>
+        <div
+          style={{
+            fontSize: "var(--fs-12)",
+            color: "var(--fg-2)",
+            textAlign: "center",
+            maxWidth: 384,
+          }}
+        >
           Add an agent to {group.name}. Right-click anywhere to see all options.
         </div>
       </div>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "center" }}>
-        <button type="button" className="btn sm pri" onClick={() => spawn("claude")}>
+        <Button size="sm" onClick={() => spawn("claude")}>
           <span
             style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--a-claude)" }}
           />
           Claude
           <span className="kbd">⌘1</span>
-        </button>
-        <button type="button" className="btn sm pri" onClick={() => spawn("codex")}>
+        </Button>
+        <Button size="sm" onClick={() => spawn("codex")}>
           <span
             style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--a-codex)" }}
           />
           Codex
           <span className="kbd">⌘2</span>
-        </button>
-        <button type="button" className="btn sm pri" onClick={() => spawn("antigravity")}>
+        </Button>
+        <Button size="sm" onClick={() => spawn("antigravity")}>
           <span
             style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--a-antigravity)" }}
           />
           Antigravity
           <span className="kbd">⌘3</span>
-        </button>
+        </Button>
       </div>
-      <button type="button" onClick={openMore} className="btn ghost sm">
+      <Button variant="ghost" size="sm" onClick={openMore}>
         More agents
-      </button>
+      </Button>
       {menu && (
         <PaneContextMenu x={menu.x} y={menu.y} items={items} onClose={() => setMenu(null)} />
       )}
@@ -219,14 +229,17 @@ function ConfiguringLeaf({ id, group }: { id: string; group: Group }) {
             border: `1px solid color-mix(in oklab, var(--a-${agent}) 60%, black)`,
           }}
         />
-        <span className="mono" style={{ fontSize: 13, fontWeight: 500, color: "var(--fg-0)" }}>
+        <span
+          className="mono"
+          style={{ fontSize: "var(--fs-13)", fontWeight: 500, color: "var(--fg-0)" }}
+        >
           {draft?.resume ? "Resume agent" : "New agent"}
         </span>
-        <span className="mono" style={{ fontSize: 12, color: "var(--fg-3)" }}>
+        <span className="mono" style={{ fontSize: "var(--fs-12)", color: "var(--fg-3)" }}>
           · configuring
         </span>
         <span style={{ flex: 1 }} />
-        <IconBtn title="Cancel (Esc)" style={{ width: 22, height: 22 }} onClick={() => cancel(id)}>
+        <IconBtn title="Cancel (Esc)" size={22} onClick={() => cancel(id)}>
           {Ico.close}
         </IconBtn>
       </div>
@@ -411,7 +424,7 @@ function DropQuadrants({ active }: { active: DropZone | null }) {
       justifyContent: "center",
       gap: 5,
       fontFamily: "var(--mono)",
-      fontSize: 11,
+      fontSize: "var(--fs-11)",
       color: "var(--pri)",
       opacity: on ? 1 : 0.5,
       pointerEvents: "none",
@@ -448,7 +461,7 @@ function DropQuadrants({ active }: { active: DropZone | null }) {
           display: "flex",
           alignItems: "center",
           gap: 7,
-          fontSize: 13,
+          fontSize: "var(--fs-13)",
           color: active === "center" ? "var(--fg-0)" : "var(--fg-2)",
           opacity: active === "center" ? 1 : 0.6,
           boxShadow: "0 6px 20px rgba(0,0,0,0.4)",
@@ -590,7 +603,7 @@ function FocusLayout({ group, leaves }: { group: Group; leaves: string[] }) {
               border: "1px solid var(--bd-soft)",
               background: "var(--bg-2)",
               color: "var(--fg-1)",
-              fontSize: 12,
+              fontSize: "var(--fs-12)",
               cursor: "pointer",
             }}
           >
@@ -641,7 +654,7 @@ function MiniPane({
         <span
           className="mono"
           style={{
-            fontSize: 10,
+            fontSize: "var(--fs-10)",
             color: "var(--fg-3)",
             background: "var(--bg-3)",
             padding: "0 4px",
@@ -656,7 +669,7 @@ function MiniPane({
         <span
           className="mono"
           style={{
-            fontSize: 12,
+            fontSize: "var(--fs-12)",
             color: "var(--fg-1)",
             overflow: "hidden",
             textOverflow: "ellipsis",

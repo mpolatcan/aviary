@@ -22,6 +22,12 @@ const buttonVariants = cva(
         link: "text-primary underline-offset-4 hover:underline",
         success:
           "border border-[color-mix(in_oklab,var(--live)_40%,var(--bd))] bg-[var(--live)] text-[var(--bg-0)] hover:bg-[oklch(0.85_0.17_145)] focus-visible:ring-[var(--live)]/30",
+        // Backs the IconBtn domain primitive. Colors are driven by CSS custom
+        // properties so a tinted pane header can recolor every control (idle /
+        // hover / active) without JS hover handlers — IconBtn sets the vars
+        // inline; the fallbacks reproduce the neutral icon-button look.
+        ghostIcon:
+          "border-0 bg-[var(--ib-bg,transparent)] text-[var(--ib-fg,var(--fg-2))] shadow-none hover:bg-[var(--ib-hover-bg,var(--bg-3))] hover:text-[var(--ib-hover-fg,var(--fg-0))]",
       },
       size: {
         default: "h-9 px-4 py-2 has-[>svg]:px-3",

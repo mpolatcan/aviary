@@ -32,7 +32,7 @@ export function BusyOverlay() {
               alignItems: "center",
               gap: 12,
               fontFamily: "var(--mono)",
-              fontSize: 13,
+              fontSize: "var(--fs-13)",
               color: "var(--fg-1)",
               boxShadow: "0 12px 40px rgba(0,0,0,0.4)",
             }}

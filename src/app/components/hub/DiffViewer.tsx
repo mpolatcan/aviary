@@ -1,6 +1,7 @@
 import { motion } from "motion/react";
 import { useEffect, useState } from "react";
 import { IconBtn } from "../../components/primitives/IconBtn";
+import { Tip } from "../../components/primitives/Tip";
 import { Ico } from "../../components/primitives/icons";
 import { useResizableDock } from "../../hooks/useResizableDock";
 import { EASE } from "../../hooks/useSlideIn";
@@ -81,26 +82,27 @@ export function DiffViewer({ path, onClose }: { path: string; onClose: () => voi
           }}
         >
           <span style={{ color: "var(--wait)", display: "inline-flex" }}>{Ico.diff}</span>
-          <span
-            className="mono"
-            title={path === "" ? "All tracked changes" : path}
-            style={{
-              fontSize: 12,
-              fontWeight: 500,
-              color: "var(--fg-0)",
-              flex: 1,
-              minWidth: 0,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-              direction: path === "" ? "ltr" : "rtl",
-              textAlign: "left",
-            }}
-          >
-            {path === "" ? "All changes" : path}
-          </span>
+          <Tip text={path === "" ? "All tracked changes" : path}>
+            <span
+              className="mono"
+              style={{
+                fontSize: "var(--fs-12)",
+                fontWeight: 500,
+                color: "var(--fg-0)",
+                flex: 1,
+                minWidth: 0,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                direction: path === "" ? "ltr" : "rtl",
+                textAlign: "left",
+              }}
+            >
+              {path === "" ? "All changes" : path}
+            </span>
+          </Tip>
           {counts && (counts.added > 0 || counts.removed > 0) && (
-            <span className="mono tnum" style={{ fontSize: 11, flexShrink: 0 }}>
+            <span className="mono tnum" style={{ fontSize: "var(--fs-11)", flexShrink: 0 }}>
               <span style={{ color: "var(--live)" }}>+{counts.added}</span>{" "}
               <span style={{ color: "var(--err)" }}>−{counts.removed}</span>
             </span>

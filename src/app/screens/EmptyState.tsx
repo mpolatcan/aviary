@@ -116,7 +116,7 @@ export function EmptyHero({ onNew }: EmptyStateProps) {
                   padding: "4px 10px",
                   border: "1px solid var(--bd)",
                   borderRadius: 999,
-                  fontSize: 11,
+                  fontSize: "var(--fs-11)",
                   color: "var(--fg-2)",
                   fontFamily: "var(--mono)",
                   marginBottom: 18,
@@ -139,7 +139,7 @@ export function EmptyHero({ onNew }: EmptyStateProps) {
             <h1
               style={{
                 margin: 0,
-                fontSize: 30,
+                fontSize: "var(--fs-26)",
                 fontWeight: 600,
                 letterSpacing: "-0.02em",
                 color: "var(--fg-0)",
@@ -154,7 +154,7 @@ export function EmptyHero({ onNew }: EmptyStateProps) {
               style={{
                 margin: "10px auto 0",
                 maxWidth: 480,
-                fontSize: 13,
+                fontSize: "var(--fs-13)",
                 color: "var(--fg-2)",
                 lineHeight: 1.55,
               }}
@@ -248,10 +248,10 @@ function DockerBanner({
           {Ico.container}
         </div>
         <div style={{ flex: 1 }}>
-          <div style={{ fontSize: 13, fontWeight: 500, color: "var(--fg-0)" }}>
+          <div style={{ fontSize: "var(--fs-13)", fontWeight: 500, color: "var(--fg-0)" }}>
             No container runtime found
           </div>
-          <div style={{ fontSize: 11.5, color: "var(--fg-2)", lineHeight: 1.45 }}>
+          <div style={{ fontSize: "var(--fs-12)", color: "var(--fg-2)", lineHeight: 1.45 }}>
             Install{" "}
             <a
               href="https://www.docker.com/products/docker-desktop/"
@@ -306,10 +306,10 @@ function DockerBanner({
         {Ico.container}
       </div>
       <div style={{ flex: 1 }}>
-        <div style={{ fontSize: 13, fontWeight: 500, color: "var(--fg-0)" }}>
+        <div style={{ fontSize: "var(--fs-13)", fontWeight: 500, color: "var(--fg-0)" }}>
           Container runtime is not running
         </div>
-        <div style={{ fontSize: 11.5, color: "var(--fg-2)" }}>
+        <div style={{ fontSize: "var(--fs-12)", color: "var(--fg-2)" }}>
           Start {installed.length === 1 ? RUNTIME_LABELS[installed[0]] : "a runtime"} to launch
           agents.
         </div>
@@ -442,16 +442,20 @@ function AgentCard({
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
-            <span style={{ fontSize: 14, fontWeight: 600, color: "var(--fg-0)" }}>{name}</span>
+            <span style={{ fontSize: "var(--fs-14)", fontWeight: 600, color: "var(--fg-0)" }}>
+              {name}
+            </span>
           </div>
         </div>
       </div>
-      <p style={{ margin: 0, fontSize: 12, color: "var(--fg-2)", lineHeight: 1.5 }}>{desc}</p>
+      <p style={{ margin: 0, fontSize: "var(--fs-12)", color: "var(--fg-2)", lineHeight: 1.5 }}>
+        {desc}
+      </p>
       {keySet ? (
         <div
           className="mono"
           style={{
-            fontSize: 11,
+            fontSize: "var(--fs-11)",
             color: "var(--pri)",
             display: "flex",
             alignItems: "center",
@@ -464,7 +468,7 @@ function AgentCard({
         <div
           className="mono"
           style={{
-            fontSize: 11,
+            fontSize: "var(--fs-11)",
             color: "var(--fg-3)",
             display: "flex",
             alignItems: "center",

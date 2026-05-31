@@ -1,3 +1,4 @@
+import { Tip } from "../../components/primitives/Tip";
 import { Ico } from "../../components/primitives/icons";
 import { activeWorkspace, useStore } from "../../lib/store";
 import { workspaceLeaves } from "../../lib/tree";
@@ -37,9 +38,11 @@ export function RuntimeBanner() {
       title="Workspace offline"
       message={message}
       actions={
-        <Button size="sm" onClick={() => void restartRuntime()} title="Reconnect workspace runtime">
-          Reconnect
-        </Button>
+        <Tip text="Reconnect workspace runtime">
+          <Button size="sm" onClick={() => void restartRuntime()}>
+            Reconnect
+          </Button>
+        </Tip>
       }
     />
   );

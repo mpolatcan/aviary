@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { confirmCloseGroup, useStore } from "../../lib/store";
 import { type Group, MAX_GROUP_PANES, type Workspace, leavesList } from "../../lib/tree";
+import { Input } from "../../ui/input";
 import { ColorDot } from "../primitives/ColorDot";
 import { IconBtn } from "../primitives/IconBtn";
 import { Tip } from "../primitives/Tip";
@@ -43,7 +44,8 @@ export function GroupsBar({ ws }: { ws: Workspace }) {
       <IconBtn
         title="Add group"
         onClick={() => addGroup(ws.id)}
-        style={{ alignSelf: "center", marginLeft: 6, width: 22, height: 22 }}
+        size={22}
+        style={{ alignSelf: "center", marginLeft: 6 }}
       >
         {Ico.plus}
       </IconBtn>
@@ -51,7 +53,12 @@ export function GroupsBar({ ws }: { ws: Workspace }) {
       {groups.length > 1 && (
         <span
           className="mono"
-          style={{ alignSelf: "center", fontSize: 10, color: "var(--fg-3)", padding: "0 10px" }}
+          style={{
+            alignSelf: "center",
+            fontSize: "var(--fs-10)",
+            color: "var(--fg-3)",
+            padding: "0 10px",
+          }}
         >
           {groups.length} groups
         </span>
@@ -106,7 +113,7 @@ function GroupTab({
         color: fg,
         cursor: "pointer",
         position: "relative",
-        fontSize: 12,
+        fontSize: "var(--fs-12)",
       }}
     >
       <ColorDot
@@ -118,10 +125,9 @@ function GroupTab({
         title="Group color"
       />
       {editing ? (
-        <input
-          className="pane-name-input"
+        <Input
+          className="pane-name-input h-auto"
           defaultValue={group.name}
-          // biome-ignore lint/a11y/noAutofocus: rename input is opened by an explicit user action
           autoFocus
           onClick={(e) => e.stopPropagation()}
           onBlur={(e) => {
@@ -153,24 +159,27 @@ function GroupTab({
           </span>
         </Tip>
       )}
-      <span
-        className="mono"
-        title={full ? "Group at pane capacity" : `${count} pane${count === 1 ? "" : "s"}`}
-        style={{
-          fontSize: 10,
-          color: full ? "var(--wait)" : "var(--fg-3)",
-          background: full ? "color-mix(in oklab, var(--wait) 14%, transparent)" : "transparent",
-          border: full ? "1px solid color-mix(in oklab, var(--wait) 30%, transparent)" : "none",
-          borderRadius: 999,
-          padding: full ? "1px 5px" : 0,
-          lineHeight: 1,
-        }}
-      >
-        {full ? `${count}/${MAX_GROUP_PANES}` : count}
-      </span>
-      <button type="button" className="tab-close" title="Close group" onClick={close}>
-        {Ico.close}
-      </button>
+      <Tip text={full ? "Group at pane capacity" : `${count} pane${count === 1 ? "" : "s"}`}>
+        <span
+          className="mono"
+          style={{
+            fontSize: "var(--fs-10)",
+            color: full ? "var(--wait)" : "var(--fg-3)",
+            background: full ? "color-mix(in oklab, var(--wait) 14%, transparent)" : "transparent",
+            border: full ? "1px solid color-mix(in oklab, var(--wait) 30%, transparent)" : "none",
+            borderRadius: 999,
+            padding: full ? "1px 5px" : 0,
+            lineHeight: 1,
+          }}
+        >
+          {full ? `${count}/${MAX_GROUP_PANES}` : count}
+        </span>
+      </Tip>
+      <Tip text="Close group">
+        <button type="button" className="tab-close" onClick={close}>
+          {Ico.close}
+        </button>
+      </Tip>
     </div>
   );
 }

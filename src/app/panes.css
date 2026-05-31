@@ -143,7 +143,7 @@ body.dragging .divider::after {
 .pane-name-input {
   font-family: "JetBrainsMono Terminal", Menlo, monospace;
   font-weight: 600;
-  font-size: var(--fs-xs);
+  font-size: var(--fs-12);
   color: var(--color-text);
   background: var(--color-bg-deep);
   border: 1px solid var(--color-accent-deep);
@@ -188,7 +188,7 @@ body.dragging .divider::after {
 
 .mode-badge {
   font-family: var(--font-pixel);
-  font-size: var(--fs-micro);
+  font-size: var(--fs-9);
   letter-spacing: 0.08em;
   line-height: 1;
   padding: 3px 4px;
@@ -257,7 +257,7 @@ body.dragging .divider::after {
   color: var(--color-text-faint);
   opacity: 0;
   font-family: var(--font-mono);
-  font-size: var(--fs-md);
+  font-size: var(--fs-14);
   line-height: 1;
   padding: 3px 6px;
   border-radius: 2px;
@@ -294,7 +294,7 @@ body.dragging .divider::after {
 }
 .col-label {
   font-family: var(--font-pixel);
-  font-size: var(--fs-pixel);
+  font-size: var(--fs-9);
   text-transform: uppercase;
   letter-spacing: 0.1em;
   color: var(--color-text-faint);
@@ -371,12 +371,12 @@ body.dragging .divider::after {
 .agent-row .ar-name {
   font-family: var(--font-mono);
   font-weight: 600;
-  font-size: var(--fs-md);
+  font-size: var(--fs-14);
   color: var(--color-text);
   line-height: 1;
 }
 .agent-row .ar-tick {
-  font-size: 10px;
+  font-size: var(--fs-10);
   color: transparent;
 }
 .agent-row.selected .ar-tick {
@@ -395,7 +395,7 @@ body.dragging .divider::after {
   cursor: pointer;
   font-family: var(--font-mono);
   font-weight: 600;
-  font-size: var(--fs-sm);
+  font-size: var(--fs-13);
   color: var(--color-text-dim);
   text-align: left;
   transition: border-color 0.16s ease, color 0.16s ease, background 0.16s ease;
@@ -420,7 +420,7 @@ body.dragging .divider::after {
 }
 .mode-hint {
   font-family: var(--font-mono);
-  font-size: var(--fs-xs);
+  font-size: var(--fs-12);
   line-height: 1.4;
   color: var(--color-text-dim);
   min-height: 34px;
@@ -429,7 +429,7 @@ body.dragging .divider::after {
 .mode-warn {
   display: none;
   font-family: var(--font-mono);
-  font-size: var(--fs-2xs);
+  font-size: var(--fs-11);
   line-height: 1.4;
   color: var(--color-danger);
   margin: 0;
@@ -442,7 +442,7 @@ body.dragging .divider::after {
   border-radius: 2px;
   padding: 8px 16px;
   font-family: var(--font-pixel);
-  font-size: var(--fs-pixel);
+  font-size: var(--fs-9);
   text-transform: uppercase;
   letter-spacing: 0.06em;
   cursor: pointer;
@@ -484,7 +484,7 @@ body.dragging .divider::after {
 }
 .popover-head .kicker {
   font-family: var(--font-pixel);
-  font-size: var(--fs-pixel);
+  font-size: var(--fs-9);
   text-transform: uppercase;
   letter-spacing: 0.1em;
   color: var(--color-text-faint);
@@ -716,12 +716,12 @@ body.dragging .divider::after {
 .btn.sm {
   height: 26px;
   padding: 0 9px;
-  font-size: 11.5px;
+  font-size: var(--fs-12);
 }
 .btn.xs {
   height: 24px;
   padding: 0 8px;
-  font-size: 11px;
+  font-size: var(--fs-11);
 }
 .btn.ghost {
   background: transparent;
@@ -828,7 +828,7 @@ body.dragging .divider::after {
   padding: 5px 12px;
   border-radius: 7px;
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: var(--fs-12);
   font-weight: 500;
   cursor: pointer;
   color: var(--pri);

@@ -6,6 +6,7 @@ import { Ico } from "../../components/primitives/icons";
 import { useOverlay } from "../../lib/overlay";
 import { confirmCloseWorkspace, isSpawnPlaceholder, useStore } from "../../lib/store";
 import { type Workspace, workspaceLeaves, workspaceTitle } from "../../lib/tree";
+import { Input } from "../../ui/input";
 
 // Real agent sessions in a workspace — excludes configuring panes (placeholders
 // with no tmux session yet) so the tab count reflects live agents.
@@ -127,55 +128,58 @@ export function HubTabs() {
             the "+" affordance while it's closed. The launcher fills the content
             area below (HubView), so other tabs + the sidebar stay visible. */}
         {launcher ? (
-          <div
-            className="ch-tab active"
-            title="New workspace — recent, resume, or create"
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              padding: "0 8px 0 11px",
-              height: "100%",
-              borderRight: "1px solid var(--bd-soft)",
-              background: "var(--bg-2)",
-              color: "var(--fg-0)",
-              whiteSpace: "nowrap",
-              flexShrink: 0,
-            }}
-          >
-            <span style={{ color: "var(--pri)", display: "inline-flex" }}>{Ico.plus}</span>
-            <span style={{ fontSize: 12, fontWeight: 500 }}>New workspace</span>
-            <button
-              type="button"
-              className="tab-close"
-              title="Close (esc)"
-              style={{ marginLeft: 2 }}
-              onClick={(e) => {
-                e.stopPropagation();
-                setLauncher(false);
+          <Tip text="New workspace — recent, resume, or create">
+            <div
+              className="ch-tab active"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                padding: "0 8px 0 11px",
+                height: "100%",
+                borderRight: "1px solid var(--bd-soft)",
+                background: "var(--bg-2)",
+                color: "var(--fg-0)",
+                whiteSpace: "nowrap",
+                flexShrink: 0,
               }}
             >
-              {Ico.close}
-            </button>
-          </div>
+              <span style={{ color: "var(--pri)", display: "inline-flex" }}>{Ico.plus}</span>
+              <span style={{ fontSize: "var(--fs-12)", fontWeight: 500 }}>New workspace</span>
+              <Tip text="Close (esc)">
+                <button
+                  type="button"
+                  className="tab-close"
+                  style={{ marginLeft: 2 }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setLauncher(false);
+                  }}
+                >
+                  {Ico.close}
+                </button>
+              </Tip>
+            </div>
+          </Tip>
         ) : (
-          <button
-            type="button"
-            title="Open workspace — recent, resume, or new (⌘T)"
-            onClick={() => setLauncher(true)}
-            style={{
-              alignSelf: "center",
-              marginLeft: 6,
-              padding: "4px 6px",
-              background: "transparent",
-              border: "none",
-              color: "var(--fg-2)",
-              cursor: "pointer",
-              display: "inline-flex",
-            }}
-          >
-            {Ico.plus}
-          </button>
+          <Tip text="Open workspace — recent, resume, or new (⌘T)">
+            <button
+              type="button"
+              onClick={() => setLauncher(true)}
+              style={{
+                alignSelf: "center",
+                marginLeft: 6,
+                padding: "4px 6px",
+                background: "transparent",
+                border: "none",
+                color: "var(--fg-2)",
+                cursor: "pointer",
+                display: "inline-flex",
+              }}
+            >
+              {Ico.plus}
+            </button>
+          </Tip>
         )}
       </div>
 
@@ -203,26 +207,27 @@ export function HubTabs() {
           position: "relative",
         }}
       >
-        <button
-          type="button"
-          title="Search workspaces (⌘K)"
-          onClick={() => setPalette(true)}
-          style={{
-            alignSelf: "center",
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 5,
-            padding: "4px 7px",
-            background: "transparent",
-            border: "none",
-            color: "var(--fg-2)",
-            cursor: "pointer",
-            borderRadius: 6,
-          }}
-        >
-          {Ico.search}
-          <span className="kbd">⌘K</span>
-        </button>
+        <Tip text="Search workspaces (⌘K)">
+          <button
+            type="button"
+            onClick={() => setPalette(true)}
+            style={{
+              alignSelf: "center",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 5,
+              padding: "4px 7px",
+              background: "transparent",
+              border: "none",
+              color: "var(--fg-2)",
+              cursor: "pointer",
+              borderRadius: 6,
+            }}
+          >
+            {Ico.search}
+            <span className="kbd">⌘K</span>
+          </button>
+        </Tip>
         {overflowing && (
           <IconBtn
             title="All workspaces"
@@ -272,11 +277,11 @@ export function HubTabs() {
                   marginBottom: 4,
                 }}
               >
-                <span className="lbl" style={{ fontSize: 10 }}>
+                <span className="lbl" style={{ fontSize: "var(--fs-10)" }}>
                   Workspaces · {workspaces.length}
                 </span>
                 <span style={{ flex: 1 }} />
-                <span className="mono" style={{ fontSize: 10, color: "var(--fg-3)" }}>
+                <span className="mono" style={{ fontSize: "var(--fs-10)", color: "var(--fg-3)" }}>
                   ⌘P
                 </span>
               </div>
@@ -316,7 +321,7 @@ export function HubTabs() {
                       <span
                         className="mono"
                         style={{
-                          fontSize: 13,
+                          fontSize: "var(--fs-13)",
                           color: "var(--fg-0)",
                           fontWeight: 500,
                           overflow: "hidden",
@@ -326,14 +331,20 @@ export function HubTabs() {
                       >
                         {workspaceTitle(ws)}
                       </span>
-                      <span className="mono" style={{ fontSize: 10, color: "var(--fg-3)" }}>
+                      <span
+                        className="mono"
+                        style={{ fontSize: "var(--fs-10)", color: "var(--fg-3)" }}
+                      >
                         {ws.id === activeId && git?.isRepo
                           ? "1 repo"
                           : (dirName(ws.dir) ?? "workspace")}
                       </span>
                     </div>
                     {waits > 0 && (
-                      <span className="mono" style={{ fontSize: 10, color: "var(--wait)" }}>
+                      <span
+                        className="mono"
+                        style={{ fontSize: "var(--fs-10)", color: "var(--wait)" }}
+                      >
                         {waits} wait
                       </span>
                     )}
@@ -347,7 +358,12 @@ export function HubTabs() {
                     setOverflowOpen(false);
                     setPalette(true);
                   }}
-                  style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 13 }}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 7,
+                    fontSize: "var(--fs-13)",
+                  }}
                 >
                   {Ico.search}
                   Search workspaces…
@@ -437,132 +453,135 @@ function WorkspaceTab({
   const chipFg = state === "wait" ? "var(--bg-0)" : state === "live" ? "var(--live)" : subFg;
 
   return (
-    <div
-      className={`ch-tab${active ? " active" : ""}`}
-      title={`${title} · ${sessions.length} session${sessions.length === 1 ? "" : "s"}${waits > 0 ? ` · ${waits} awaiting input` : ""}`}
-      onClick={onSelect}
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 9,
-        padding: "0 10px 0 8px",
-        height: "100%",
-        borderRight: "1px solid var(--bd-soft)",
-        ...(active ? { background: "var(--bg-2)", boxShadow: `inset 0 3px 0 ${accent}` } : {}),
-        color: tabFg,
-        cursor: "pointer",
-        position: "relative",
-        whiteSpace: "nowrap",
-        width: 212,
-        flexShrink: 0,
-      }}
+    <Tip
+      text={`${title} · ${sessions.length} session${sessions.length === 1 ? "" : "s"}${waits > 0 ? ` · ${waits} awaiting input` : ""}`}
     >
-      <ColorDot
-        size={10}
-        display={accent}
-        selected={wsColor}
-        onPick={(c) => setWorkspaceColor(ws.id, c)}
-        title="Workspace color"
-      />
       <div
+        className={`ch-tab${active ? " active" : ""}`}
+        onClick={onSelect}
         style={{
           display: "flex",
-          flexDirection: "column",
-          lineHeight: 1.15,
-          flex: 1,
-          minWidth: 0,
-        }}
-      >
-        {editing ? (
-          <input
-            className="pane-name-input"
-            defaultValue={title}
-            // biome-ignore lint/a11y/noAutofocus: rename input is opened by an explicit user action
-            autoFocus
-            onClick={(e) => e.stopPropagation()}
-            onFocus={(e) => e.currentTarget.select()}
-            onBlur={(e) => {
-              renameWorkspace(ws.id, e.currentTarget.value);
-              setEditing(false);
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                renameWorkspace(ws.id, e.currentTarget.value);
-                setEditing(false);
-              } else if (e.key === "Escape") {
-                setEditing(false);
-              }
-            }}
-            style={{
-              width: "100%",
-              background: "var(--bg-0)",
-              border: "1px solid var(--bd)",
-              borderRadius: 4,
-              color: "var(--fg-0)",
-              font: "inherit",
-              fontSize: 12,
-              padding: "1px 4px",
-            }}
-          />
-        ) : (
-          <Tip text="Double-click to rename">
-            <span
-              className="ch-rename"
-              onDoubleClick={(e) => {
-                e.stopPropagation();
-                setEditing(true);
-              }}
-              style={{
-                fontSize: 12,
-                fontWeight: 500,
-                color: tabFg,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {title}
-            </span>
-          </Tip>
-        )}
-        <span className="mono" style={{ fontSize: 10, color: subFg }}>
-          {repoLabel}
-        </span>
-      </div>
-      <span
-        className="mono"
-        style={{
-          fontSize: 10,
-          fontWeight: state === "wait" ? 600 : 500,
-          color: chipFg,
-          background: chipBg,
-          padding: "1px 5px",
-          borderRadius: 999,
-          lineHeight: 1,
-          display: "inline-flex",
           alignItems: "center",
-          gap: 4,
+          gap: 9,
+          padding: "0 10px 0 8px",
+          height: "100%",
+          borderRight: "1px solid var(--bd-soft)",
+          ...(active ? { background: "var(--bg-2)", boxShadow: `inset 0 3px 0 ${accent}` } : {}),
+          color: tabFg,
+          cursor: "pointer",
+          position: "relative",
+          whiteSpace: "nowrap",
+          width: 212,
           flexShrink: 0,
         }}
       >
-        {state === "live" && (
-          <span style={{ width: 5, height: 5, borderRadius: "50%", background: "var(--live)" }} />
-        )}
-        {chipLabel}
-      </span>
-      <button
-        type="button"
-        className="tab-close"
-        title="Close workspace"
-        style={{ marginLeft: 2 }}
-        onClick={(e) => {
-          e.stopPropagation();
-          const result = confirmCloseWorkspace(ws.id);
-          if (result) void closeWorkspace(ws.id);
-        }}
-      >
-        {Ico.close}
-      </button>
-    </div>
+        <ColorDot
+          size={10}
+          display={accent}
+          selected={wsColor}
+          onPick={(c) => setWorkspaceColor(ws.id, c)}
+          title="Workspace color"
+        />
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            lineHeight: 1.15,
+            flex: 1,
+            minWidth: 0,
+          }}
+        >
+          {editing ? (
+            <Input
+              className="pane-name-input h-auto"
+              defaultValue={title}
+              autoFocus
+              onClick={(e) => e.stopPropagation()}
+              onFocus={(e) => e.currentTarget.select()}
+              onBlur={(e) => {
+                renameWorkspace(ws.id, e.currentTarget.value);
+                setEditing(false);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  renameWorkspace(ws.id, e.currentTarget.value);
+                  setEditing(false);
+                } else if (e.key === "Escape") {
+                  setEditing(false);
+                }
+              }}
+              style={{
+                width: "100%",
+                background: "var(--bg-0)",
+                border: "1px solid var(--bd)",
+                borderRadius: 4,
+                color: "var(--fg-0)",
+                font: "inherit",
+                fontSize: "var(--fs-12)",
+                padding: "1px 4px",
+              }}
+            />
+          ) : (
+            <Tip text="Double-click to rename">
+              <span
+                className="ch-rename"
+                onDoubleClick={(e) => {
+                  e.stopPropagation();
+                  setEditing(true);
+                }}
+                style={{
+                  fontSize: "var(--fs-12)",
+                  fontWeight: 500,
+                  color: tabFg,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {title}
+              </span>
+            </Tip>
+          )}
+          <span className="mono" style={{ fontSize: "var(--fs-10)", color: subFg }}>
+            {repoLabel}
+          </span>
+        </div>
+        <span
+          className="mono"
+          style={{
+            fontSize: "var(--fs-10)",
+            fontWeight: state === "wait" ? 600 : 500,
+            color: chipFg,
+            background: chipBg,
+            padding: "1px 5px",
+            borderRadius: 999,
+            lineHeight: 1,
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 4,
+            flexShrink: 0,
+          }}
+        >
+          {state === "live" && (
+            <span style={{ width: 5, height: 5, borderRadius: "50%", background: "var(--live)" }} />
+          )}
+          {chipLabel}
+        </span>
+        <Tip text="Close workspace">
+          <button
+            type="button"
+            className="tab-close"
+            style={{ marginLeft: 2 }}
+            onClick={(e) => {
+              e.stopPropagation();
+              const result = confirmCloseWorkspace(ws.id);
+              if (result) void closeWorkspace(ws.id);
+            }}
+          >
+            {Ico.close}
+          </button>
+        </Tip>
+      </div>
+    </Tip>
   );
 }

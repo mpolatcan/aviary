@@ -1,7 +1,8 @@
 /* Terminal-pane typefaces. The active terminal face is JetBrains Mono SemiBold
    under the dedicated family name "JetBrainsMono Terminal"; both normal and bold
    terminal weights resolve to the same SemiBold files so CLIs cannot switch the
-   pane back to another font weight. The app chrome keeps Geist Mono (tokens.css). */
+   pane back to another font weight. The app chrome is also JetBrains Mono — the
+   variable-weight Google Fonts face (index.html), tokens in tokens.css. */
 
 @font-face {
   font-family: "JetBrainsMono Terminal";

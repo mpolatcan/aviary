@@ -23,10 +23,6 @@ function mountPath(path: string | undefined): string {
   return `…/${parts.slice(-2).join("/")}`;
 }
 
-// Compact size for the workspace row's lifecycle IconBtns (restart/stop/start) —
-// smaller than the default 26 so two fit the dense 264px sidebar row.
-const LIFE_BTN = { width: 22, height: 22 } as const;
-
 // Left sidebar — ported 1:1 from design/components.jsx `AppSidebar`. Two forms:
 // an expanded 264px panel and a collapsed 52px icon rail (⌘B / header chevron
 // toggles `sidebarCollapsed`). Structure matches the design exactly:
@@ -132,23 +128,24 @@ function SidebarExpanded() {
           alignItems: "center",
         }}
       >
-        <button
-          type="button"
-          title="About CodeHub"
-          onClick={() => openAbout(true)}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            background: "transparent",
-            border: "none",
-            padding: 0,
-            margin: 0,
-            cursor: "pointer",
-            color: "inherit",
-          }}
-        >
-          <Logo />
-        </button>
+        <Tip text="About CodeHub">
+          <button
+            type="button"
+            onClick={() => openAbout(true)}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              background: "transparent",
+              border: "none",
+              padding: 0,
+              margin: 0,
+              cursor: "pointer",
+              color: "inherit",
+            }}
+          >
+            <Logo />
+          </button>
+        </Tip>
         <span style={{ flex: 1 }} />
         <IconBtn title="Collapse sidebar (⌘B)" onClick={toggleSidebar}>
           {Ico.sidebarL}
@@ -170,7 +167,7 @@ function SidebarExpanded() {
             {n.icon}
             <span style={{ flex: 1 }}>{n.label}</span>
             {n.badge && (
-              <span className="mono" style={{ color: "var(--fg-2)", fontSize: 11 }}>
+              <span className="mono" style={{ color: "var(--fg-2)", fontSize: "var(--fs-11)" }}>
                 {n.badge}
               </span>
             )}
@@ -231,7 +228,7 @@ function WorkspacesSection() {
             textAlign: "center",
             border: "1px dashed var(--bd)",
             borderRadius: 8,
-            fontSize: 12,
+            fontSize: "var(--fs-12)",
             color: "var(--fg-2)",
             lineHeight: 1.55,
           }}
@@ -352,7 +349,7 @@ function WorkspaceSideRow({ workspaceId }: { workspaceId: string }) {
           <span
             className="mono"
             style={{
-              fontSize: 12.5,
+              fontSize: "var(--fs-13)",
               color: open ? "var(--fg-0)" : "var(--fg-1)",
               fontWeight: 600,
               flex: 1,
@@ -366,24 +363,25 @@ function WorkspaceSideRow({ workspaceId }: { workspaceId: string }) {
           </span>
         </button>
         {busy ? (
-          <span
-            title={`${busy}…`}
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              color: "var(--wait)",
-              flexShrink: 0,
-            }}
-          >
-            {Ico.spinner}
-          </span>
+          <Tip text={`${busy}…`}>
+            <span
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                color: "var(--wait)",
+                flexShrink: 0,
+              }}
+            >
+              {Ico.spinner}
+            </span>
+          </Tip>
         ) : (
           <>
             {state === "running" && (
               <span style={{ display: "inline-flex", gap: 1 }}>
                 <IconBtn
                   title="Restart container"
-                  style={LIFE_BTN}
+                  size={22}
                   onClick={(e) => {
                     e.stopPropagation();
                     void restartContainer();
@@ -393,7 +391,7 @@ function WorkspaceSideRow({ workspaceId }: { workspaceId: string }) {
                 </IconBtn>
                 <IconBtn
                   title="Stop container"
-                  style={LIFE_BTN}
+                  size={22}
                   hoverColor="var(--err)"
                   hoverBg="color-mix(in oklab, var(--err) 16%, transparent)"
                   onClick={(e) => {
@@ -408,7 +406,7 @@ function WorkspaceSideRow({ workspaceId }: { workspaceId: string }) {
             {state === "stopped" && (
               <IconBtn
                 title="Start container"
-                style={LIFE_BTN}
+                size={22}
                 onClick={(e) => {
                   e.stopPropagation();
                   void startContainer();
@@ -420,76 +418,78 @@ function WorkspaceSideRow({ workspaceId }: { workspaceId: string }) {
           </>
         )}
         {sessions.length > 0 && (
-          <span
-            className="mono tnum"
-            title={`${sessions.length} pane${sessions.length === 1 ? "" : "s"}`}
-            style={{
-              fontSize: 10,
-              fontWeight: 600,
-              color: open ? "var(--fg-1)" : "var(--fg-2)",
-              background: "var(--bg-3)",
-              borderRadius: 5,
-              padding: "1px 6px",
-              flexShrink: 0,
-            }}
-          >
-            {sessions.length}
-          </span>
+          <Tip text={`${sessions.length} pane${sessions.length === 1 ? "" : "s"}`}>
+            <span
+              className="mono tnum"
+              style={{
+                fontSize: "var(--fs-10)",
+                fontWeight: 600,
+                color: open ? "var(--fg-1)" : "var(--fg-2)",
+                background: "var(--bg-3)",
+                borderRadius: 5,
+                padding: "1px 6px",
+                flexShrink: 0,
+              }}
+            >
+              {sessions.length}
+            </span>
+          </Tip>
         )}
       </div>
 
       {/* mounted directory — proper path, right under the name; a repo also gets a
           branch chip. Divider + spacing live here so name+path read as one block. */}
-      <div
-        title={branch ? `${ws.dir ?? path} · ${branch}` : (ws.dir ?? path)}
-        style={{
-          fontFamily: "var(--mono)",
-          fontSize: 11,
-          color: "var(--fg-2)",
-          padding: "0 6px 6px",
-          borderBottom: open ? "1px solid var(--bd-soft)" : "none",
-          marginBottom: open ? 5 : 0,
-          display: "flex",
-          alignItems: "center",
-          gap: 5,
-        }}
-      >
-        <span style={{ display: "inline-flex", flexShrink: 0, color: "var(--fg-3)" }}>
-          {Ico.files}
-        </span>
-        <span
+      <Tip text={branch ? `${ws.dir ?? path} · ${branch}` : (ws.dir ?? path)}>
+        <div
           style={{
-            flex: branch ? "0 1 auto" : 1,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
+            fontFamily: "var(--mono)",
+            fontSize: "var(--fs-11)",
+            color: "var(--fg-2)",
+            padding: "0 6px 6px",
+            borderBottom: open ? "1px solid var(--bd-soft)" : "none",
+            marginBottom: open ? 5 : 0,
+            display: "flex",
+            alignItems: "center",
+            gap: 5,
           }}
         >
-          {path}
-        </span>
-        {branch && (
+          <span style={{ display: "inline-flex", flexShrink: 0, color: "var(--fg-3)" }}>
+            {Ico.files}
+          </span>
           <span
             style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 3,
-              flexShrink: 0,
-              maxWidth: "45%",
-              padding: "0 5px",
-              borderRadius: 4,
-              background: "var(--bg-3)",
-              color: "var(--fg-1)",
+              flex: branch ? "0 1 auto" : 1,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
             }}
           >
-            <span style={{ display: "inline-flex", flexShrink: 0, color: "var(--fg-3)" }}>
-              {Ico.branch}
-            </span>
-            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {branch}
-            </span>
+            {path}
           </span>
-        )}
-      </div>
+          {branch && (
+            <span
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 3,
+                flexShrink: 0,
+                maxWidth: "45%",
+                padding: "0 5px",
+                borderRadius: 4,
+                background: "var(--bg-3)",
+                color: "var(--fg-1)",
+              }}
+            >
+              <span style={{ display: "inline-flex", flexShrink: 0, color: "var(--fg-3)" }}>
+                {Ico.branch}
+              </span>
+              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {branch}
+              </span>
+            </span>
+          )}
+        </div>
+      </Tip>
 
       {open && (
         <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
@@ -519,7 +519,7 @@ function GroupSessions({ group, showLabel }: { group: Group; showLabel: boolean 
           }}
         >
           <span style={{ width: 7, height: 7, borderRadius: "50%", background: group.color }} />
-          <span className="lbl" style={{ fontSize: 9 }}>
+          <span className="lbl" style={{ fontSize: "var(--fs-9)" }}>
             {group.name}
           </span>
         </div>
@@ -636,7 +636,7 @@ function SessionRow({
           <span
             className="mono"
             style={{
-              fontSize: 12,
+              fontSize: "var(--fs-12)",
               fontWeight: 600,
               color: "var(--fg-0)",
               overflow: "hidden",
@@ -652,7 +652,7 @@ function SessionRow({
             <span
               className="mono"
               style={{
-                fontSize: 9,
+                fontSize: "var(--fs-9)",
                 fontWeight: 600,
                 color: "var(--wait)",
                 background: "color-mix(in oklab, var(--wait) 15%, transparent)",
@@ -668,7 +668,7 @@ function SessionRow({
             <span
               className="mono"
               style={{
-                fontSize: 10,
+                fontSize: "var(--fs-10)",
                 color: statusColor,
                 fontWeight: working ? 600 : 400,
                 flexShrink: 0,
@@ -687,7 +687,7 @@ function SessionRow({
               display: "flex",
               alignItems: "center",
               gap: 4,
-              fontSize: 10.5,
+              fontSize: "var(--fs-11)",
               color: "var(--fg-2)",
             }}
           >
@@ -701,26 +701,28 @@ function SessionRow({
             >
               {Ico.files}
             </span>
-            <span
-              title={fullDir}
-              style={{
-                flexShrink: 1,
-                minWidth: 0,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {workingDir}
-            </span>
-            {usage && (
+            <Tip text={fullDir}>
               <span
-                className="tnum"
-                style={{ flexShrink: 0, color: "var(--fg-3)", whiteSpace: "nowrap" }}
+                style={{
+                  flexShrink: 1,
+                  minWidth: 0,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
               >
-                · {usage.turns}t · {fmtTokens(usage.tokensIn + usage.tokensOut)} tok
+                {workingDir}
               </span>
-            )}
+            </Tip>
+            {/* Turn + context (tokens) — always shown so the meta line is stable;
+                em-dashed until the usage poll lands real numbers. */}
+            <span
+              className="tnum"
+              style={{ flexShrink: 0, color: "var(--fg-3)", whiteSpace: "nowrap" }}
+            >
+              · {usage ? usage.turns : "—"}t ·{" "}
+              {usage ? fmtTokens(usage.tokensIn + usage.tokensOut) : "—"} tok
+            </span>
           </div>
         )}
       </div>
@@ -781,23 +783,25 @@ function SidebarFooter() {
           }}
         />
       </div>
-      <div style={{ flex: 1, minWidth: 0 }} title={status?.name ?? undefined}>
-        <div
-          className="mono"
-          style={{
-            fontSize: 12,
-            color: "var(--fg-0)",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-          }}
-        >
-          {status?.state ?? "—"}
+      <Tip text={status?.name ?? ""}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div
+            className="mono"
+            style={{
+              fontSize: "var(--fs-12)",
+              color: "var(--fg-0)",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {status?.state ?? "—"}
+          </div>
+          <div className="mono" style={{ fontSize: "var(--fs-10)", color: "var(--fg-3)" }}>
+            {dockerInfo?.version ? `docker ${dockerInfo.version}` : "docker daemon"}
+          </div>
         </div>
-        <div className="mono" style={{ fontSize: 10, color: "var(--fg-3)" }}>
-          {dockerInfo?.version ? `docker ${dockerInfo.version}` : "docker daemon"}
-        </div>
-      </div>
+      </Tip>
     </div>
   );
 }
@@ -848,21 +852,22 @@ function SidebarRail() {
         </RailIcon>
       ))}
       <div style={{ flex: 1 }} />
-      <div
-        title={runtimeState ?? "unknown"}
-        style={{
-          display: "flex",
-          justifyContent: "center",
-          padding: "6px 0",
-        }}
-      >
-        <StatusDot
-          status={
-            runtimeState === "running" ? "live" : runtimeState === "starting" ? "wait" : "off"
-          }
-          pulse={runtimeState === "running"}
-        />
-      </div>
+      <Tip text={runtimeState ?? "unknown"} side="right">
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "center",
+            padding: "6px 0",
+          }}
+        >
+          <StatusDot
+            status={
+              runtimeState === "running" ? "live" : runtimeState === "starting" ? "wait" : "off"
+            }
+            pulse={runtimeState === "running"}
+          />
+        </div>
+      </Tip>
     </aside>
   );
 }
@@ -922,7 +927,7 @@ function RailIcon({
               position: "absolute",
               top: -2,
               right: -2,
-              fontSize: 10,
+              fontSize: "var(--fs-10)",
               fontWeight: 600,
               background: "var(--fg-0)",
               color: "var(--bg-0)",

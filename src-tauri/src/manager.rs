@@ -193,6 +193,13 @@ impl LifecycleManager {
         }
     }
 
+    /// The configured pinned runtime image tag (`CODEHUB_IMAGE` / default).
+    /// Always available without a container — the New Workspace wizard shows it
+    /// as the base image before any workspace container exists.
+    pub fn image(&self) -> &str {
+        &self.image
+    }
+
     /// Return a `DockerClient` for any running workspace container. Used by
     /// global commands (agent_versions, claude_usage, etc.) that need a container
     /// but aren't workspace-specific. Returns `None` when no containers are

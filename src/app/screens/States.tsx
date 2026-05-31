@@ -68,7 +68,10 @@ export function SkeletonPane({
       <div style={{ height: 4 }} />
       <Sk w="74%" h={9} />
       <Sk w="60%" h={9} />
-      <div className="mono" style={{ marginTop: "auto", fontSize: 10.5, color: "var(--fg-3)" }}>
+      <div
+        className="mono"
+        style={{ marginTop: "auto", fontSize: "var(--fs-11)", color: "var(--fg-3)" }}
+      >
         {caption}
         {turns != null && <span className="tnum"> · {turns} turns</span>}
       </div>
@@ -93,7 +96,7 @@ function BootStep({ state, text, detail }: BootStepSpec) {
         display: "flex",
         alignItems: "center",
         gap: 8,
-        fontSize: 12,
+        fontSize: "var(--fs-12)",
         fontFamily: "var(--mono)",
       }}
     >
@@ -133,7 +136,7 @@ function BootStep({ state, text, detail }: BootStepSpec) {
       <span style={{ color: done ? "var(--fg-2)" : active ? "var(--fg-0)" : "var(--fg-3)" }}>
         {text}
       </span>
-      {detail && <span style={{ color: "var(--fg-3)", fontSize: 10.5 }}>· {detail}</span>}
+      {detail && <span style={{ color: "var(--fg-3)", fontSize: "var(--fs-11)" }}>· {detail}</span>}
     </div>
   );
 }
@@ -168,12 +171,12 @@ export function ContainerBootingPane({
             boxShadow: "0 0 12px var(--live)",
           }}
         />
-        <span className="mono" style={{ fontSize: 12, color: "var(--fg-0)" }}>
+        <span className="mono" style={{ fontSize: "var(--fs-12)", color: "var(--fg-0)" }}>
           {name ? `${name} · booting` : "booting"}
         </span>
         <span style={{ flex: 1 }} />
         {elapsed && (
-          <span className="mono" style={{ fontSize: 10.5, color: "var(--fg-2)" }}>
+          <span className="mono" style={{ fontSize: "var(--fs-11)", color: "var(--fg-2)" }}>
             {elapsed}
           </span>
         )}
@@ -233,11 +236,11 @@ export function CrashPane({
             boxShadow: "0 0 12px var(--err)",
           }}
         />
-        <span className="mono" style={{ fontSize: 12, color: "var(--err)" }}>
+        <span className="mono" style={{ fontSize: "var(--fs-12)", color: "var(--err)" }}>
           {title}
         </span>
         <span style={{ flex: 1 }} />
-        <span className="mono" style={{ fontSize: 10.5, color: "var(--fg-3)" }}>
+        <span className="mono" style={{ fontSize: "var(--fs-11)", color: "var(--fg-3)" }}>
           {detail ?? "—"}
         </span>
       </div>
@@ -249,7 +252,7 @@ export function CrashPane({
             border: "1px solid color-mix(in oklab, var(--err) 30%, var(--bd))",
             borderRadius: 6,
             fontFamily: "var(--mono)",
-            fontSize: 11.5,
+            fontSize: "var(--fs-12)",
             color: "var(--fg-1)",
             lineHeight: 1.55,
           }}
@@ -299,7 +302,7 @@ export function ApiKeyError({
             boxShadow: "0 0 12px var(--wait)",
           }}
         />
-        <span className="mono" style={{ fontSize: 12, color: "var(--wait)" }}>
+        <span className="mono" style={{ fontSize: "var(--fs-12)", color: "var(--wait)" }}>
           {code}
         </span>
       </div>
@@ -310,7 +313,7 @@ export function ApiKeyError({
             background: "color-mix(in oklab, var(--wait) 8%, var(--bg-0))",
             border: "1px solid color-mix(in oklab, var(--wait) 30%, var(--bd))",
             borderRadius: 6,
-            fontSize: 11.5,
+            fontSize: "var(--fs-12)",
             color: "var(--fg-1)",
             lineHeight: 1.55,
           }}
@@ -357,12 +360,12 @@ export function RateLimited({
     <div style={{ flex: 1, padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <span style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--wait)" }} />
-        <span className="mono" style={{ fontSize: 12, color: "var(--wait)" }}>
+        <span className="mono" style={{ fontSize: "var(--fs-12)", color: "var(--wait)" }}>
           {title}
         </span>
         <span style={{ flex: 1 }} />
         {account && (
-          <span className="mono" style={{ fontSize: 10.5, color: "var(--fg-2)" }}>
+          <span className="mono" style={{ fontSize: "var(--fs-11)", color: "var(--fg-2)" }}>
             {account}
           </span>
         )}
@@ -383,12 +386,12 @@ export function RateLimited({
             marginBottom: 6,
           }}
         >
-          <span className="mono" style={{ fontSize: 11.5, color: "var(--fg-2)" }}>
+          <span className="mono" style={{ fontSize: "var(--fs-12)", color: "var(--fg-2)" }}>
             resets in
           </span>
           <span
             className="mono tnum"
-            style={{ fontSize: 16, fontWeight: 500, color: "var(--fg-0)" }}
+            style={{ fontSize: "var(--fs-16)", fontWeight: 500, color: "var(--fg-0)" }}
           >
             {resetsIn ?? "—"}
           </span>
@@ -399,7 +402,10 @@ export function RateLimited({
           <div style={{ width, height: "100%", background: "var(--wait)" }} />
         </div>
         {usedLabel && (
-          <div className="mono tnum" style={{ marginTop: 6, fontSize: 10.5, color: "var(--fg-3)" }}>
+          <div
+            className="mono tnum"
+            style={{ marginTop: 6, fontSize: "var(--fs-11)", color: "var(--fg-3)" }}
+          >
             {usedLabel}
           </div>
         )}
@@ -453,7 +459,7 @@ export function OfflineBanner({
           display: "inline-flex",
           alignItems: "center",
           justifyContent: "center",
-          fontSize: 13,
+          fontSize: "var(--fs-13)",
           fontWeight: 700,
           flexShrink: 0,
         }}
@@ -461,10 +467,15 @@ export function OfflineBanner({
         !
       </span>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 13, fontWeight: 500, color: "var(--fg-0)" }}>You're offline</div>
-        <div style={{ fontSize: 11, color: "var(--fg-2)" }}>{hint}</div>
+        <div style={{ fontSize: "var(--fs-13)", fontWeight: 500, color: "var(--fg-0)" }}>
+          You're offline
+        </div>
+        <div style={{ fontSize: "var(--fs-11)", color: "var(--fg-2)" }}>{hint}</div>
         {sub && (
-          <div className="mono" style={{ marginTop: 4, fontSize: 10.5, color: "var(--fg-3)" }}>
+          <div
+            className="mono"
+            style={{ marginTop: 4, fontSize: "var(--fs-11)", color: "var(--fg-3)" }}
+          >
             {sub}
           </div>
         )}
@@ -495,7 +506,9 @@ export function SuspendedBanner({
   return (
     <div style={{ flex: 1, padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <span style={{ fontSize: 13, fontWeight: 500, color: "var(--fg-0)" }}>{account}</span>
+        <span style={{ fontSize: "var(--fs-13)", fontWeight: 500, color: "var(--fg-0)" }}>
+          {account}
+        </span>
         <span style={{ flex: 1 }} />
         <Tag color="var(--err)">suspended</Tag>
       </div>
@@ -506,7 +519,7 @@ export function SuspendedBanner({
             background: "color-mix(in oklab, var(--err) 8%, var(--bg-0))",
             border: "1px solid color-mix(in oklab, var(--err) 30%, var(--bd))",
             borderRadius: 6,
-            fontSize: 11.5,
+            fontSize: "var(--fs-12)",
             color: "var(--fg-1)",
             lineHeight: 1.55,
           }}
@@ -578,8 +591,10 @@ export function EmptyPanel({
       >
         <span style={{ transform: "scale(1.4)" }}>{icon}</span>
       </div>
-      <div style={{ fontSize: 13.5, fontWeight: 500, color: "var(--fg-0)" }}>{title}</div>
-      <div style={{ fontSize: 11.5, color: "var(--fg-2)", maxWidth: 280, lineHeight: 1.5 }}>
+      <div style={{ fontSize: "var(--fs-14)", fontWeight: 500, color: "var(--fg-0)" }}>{title}</div>
+      <div
+        style={{ fontSize: "var(--fs-12)", color: "var(--fg-2)", maxWidth: 280, lineHeight: 1.5 }}
+      >
         {hint}
       </div>
       {cta && (
@@ -607,8 +622,10 @@ function SectionTitle({ label, caption }: { label: string; caption: string }) {
         marginTop: 4,
       }}
     >
-      <h2 style={{ margin: 0, fontSize: 14, fontWeight: 600, color: "var(--fg-0)" }}>{label}</h2>
-      <span className="mono" style={{ fontSize: 11, color: "var(--fg-2)" }}>
+      <h2 style={{ margin: 0, fontSize: "var(--fs-14)", fontWeight: 600, color: "var(--fg-0)" }}>
+        {label}
+      </h2>
+      <span className="mono" style={{ fontSize: "var(--fs-11)", color: "var(--fg-2)" }}>
         {caption}
       </span>
       <span style={{ flex: 1, height: 1, background: "var(--bd-soft)" }} />
@@ -651,10 +668,19 @@ function StateCard({
         {children}
       </div>
       <div>
-        <div style={{ fontSize: 12.5, color: "var(--fg-0)", fontWeight: 500, marginBottom: 2 }}>
+        <div
+          style={{
+            fontSize: "var(--fs-13)",
+            color: "var(--fg-0)",
+            fontWeight: 500,
+            marginBottom: 2,
+          }}
+        >
           {caption}
         </div>
-        <div style={{ fontSize: 11.5, color: "var(--fg-2)", lineHeight: 1.4 }}>{desc}</div>
+        <div style={{ fontSize: "var(--fs-12)", color: "var(--fg-2)", lineHeight: 1.4 }}>
+          {desc}
+        </div>
       </div>
     </div>
   );
@@ -681,10 +707,12 @@ export default function StatesGallery() {
           flexShrink: 0,
         }}
       >
-        <h1 style={{ margin: 0, fontSize: 19, fontWeight: 600, letterSpacing: "-0.01em" }}>
+        <h1
+          style={{ margin: 0, fontSize: "var(--fs-20)", fontWeight: 600, letterSpacing: "-0.01em" }}
+        >
           States
         </h1>
-        <span className="mono" style={{ fontSize: 12, color: "var(--fg-2)" }}>
+        <span className="mono" style={{ fontSize: "var(--fs-12)", color: "var(--fg-2)" }}>
           loading · error · empty states across the app · reference
         </span>
       </div>
@@ -805,10 +833,10 @@ export default function StatesGallery() {
               cta="Start a session"
             />
           </StateCard>
-          <StateCard caption="No integrations" desc="Before connecting GitHub.">
+          <StateCard caption="Source control" desc="Before connecting GitHub.">
             <EmptyPanel
               icon={Ico.files}
-              title="No integrations connected"
+              title="Source control not connected"
               hint="Connect GitHub to let agents clone, branch, and open PRs."
               cta="Connect GitHub"
             />

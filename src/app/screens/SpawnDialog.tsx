@@ -186,11 +186,11 @@ export function SpawnDialog({
             flexShrink: 0,
           }}
         >
-          <span style={{ fontSize: 13.5, fontWeight: 600, color: "var(--fg-0)" }}>
+          <span style={{ fontSize: "var(--fs-14)", fontWeight: 600, color: "var(--fg-0)" }}>
             {splitting ? "Split — new agent" : workspaceName ? "Add agent" : "New agent"}
           </span>
           {workspaceName && (
-            <span className="mono" style={{ fontSize: 11, color: "var(--fg-2)" }}>
+            <span className="mono" style={{ fontSize: "var(--fs-11)", color: "var(--fg-2)" }}>
               {workspaceName}
             </span>
           )}
@@ -217,7 +217,10 @@ export function SpawnDialog({
                       <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
                         <AgentGlyph agent={c.id} size={14} color={meta.accent} />
                         <span>{c.label}</span>
-                        <span className="mono" style={{ fontSize: 10.5, color: "var(--fg-3)" }}>
+                        <span
+                          className="mono"
+                          style={{ fontSize: "var(--fs-11)", color: "var(--fg-3)" }}
+                        >
                           {MODEL_HINT[c.id]}
                         </span>
                       </span>
@@ -245,7 +248,10 @@ export function SpawnDialog({
                 ))}
               </SelectContent>
             </Select>
-            <div className="mono" style={{ fontSize: 10.5, color: "var(--fg-3)", marginTop: 6 }}>
+            <div
+              className="mono"
+              style={{ fontSize: "var(--fs-11)", color: "var(--fg-3)", marginTop: 6 }}
+            >
               {MODE_BY_ID[mode].hint}
             </div>
           </FormRow>
@@ -263,7 +269,10 @@ export function SpawnDialog({
                   >
                     <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
                       <span className="mono">/workspace</span>
-                      <span className="mono" style={{ fontSize: 10.5, color: "var(--fg-3)" }}>
+                      <span
+                        className="mono"
+                        style={{ fontSize: "var(--fs-11)", color: "var(--fg-3)" }}
+                      >
                         workspace root
                       </span>
                     </span>
@@ -277,7 +286,10 @@ export function SpawnDialog({
                       <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
                         <span>{dirName(r.path)}</span>
                         {r.branch && (
-                          <span className="mono" style={{ fontSize: 10.5, color: "var(--fg-3)" }}>
+                          <span
+                            className="mono"
+                            style={{ fontSize: "var(--fs-11)", color: "var(--fg-3)" }}
+                          >
                             {r.branch}
                           </span>
                         )}
@@ -286,7 +298,10 @@ export function SpawnDialog({
                   ))}
                 </SelectContent>
               </Select>
-              <div className="mono" style={{ fontSize: 10.5, color: "var(--fg-3)", marginTop: 6 }}>
+              <div
+                className="mono"
+                style={{ fontSize: "var(--fs-11)", color: "var(--fg-3)", marginTop: 6 }}
+              >
                 The agent starts here inside the workspace container.
               </div>
             </FormRow>
@@ -316,7 +331,10 @@ export function SpawnDialog({
                         }}
                       />
                       <span>{opt.label}</span>
-                      <span className="mono" style={{ fontSize: 10, color: "var(--fg-3)" }}>
+                      <span
+                        className="mono"
+                        style={{ fontSize: "var(--fs-10)", color: "var(--fg-3)" }}
+                      >
                         {opt.sub}
                       </span>
                     </span>
@@ -324,7 +342,10 @@ export function SpawnDialog({
                 ))}
               </SelectContent>
             </Select>
-            <div className="mono" style={{ fontSize: 10.5, color: "var(--fg-3)", marginTop: 6 }}>
+            <div
+              className="mono"
+              style={{ fontSize: "var(--fs-11)", color: "var(--fg-3)", marginTop: 6 }}
+            >
               Credentials stored in OS keychain
             </div>
           </FormRow>
@@ -360,7 +381,7 @@ export function SpawnDialog({
               {groups.some((g) => g.full) && (
                 <div
                   className="mono"
-                  style={{ marginTop: 6, fontSize: 10.5, color: "var(--fg-3)" }}
+                  style={{ marginTop: 6, fontSize: "var(--fs-11)", color: "var(--fg-3)" }}
                 >
                   Full groups are capped at {MAX_GROUP_PANES} panes. Add a new group to keep the
                   grid readable.
@@ -447,7 +468,7 @@ function GroupTargetChip({
               ? "color-mix(in oklab, var(--wait) 30%, var(--bd))"
               : "var(--bd)"
         }`,
-        fontSize: 12,
+        fontSize: "var(--fs-12)",
         color: disabled ? "var(--fg-3)" : selected ? "var(--fg-0)" : "var(--fg-2)",
         cursor: disabled ? "not-allowed" : "pointer",
         opacity: disabled ? 0.7 : 1,
@@ -463,7 +484,7 @@ function GroupTargetChip({
       {count !== undefined && (
         <span
           className="mono"
-          style={{ fontSize: 10, color: full ? "var(--wait)" : "var(--fg-3)" }}
+          style={{ fontSize: "var(--fs-10)", color: full ? "var(--wait)" : "var(--fg-3)" }}
         >
           · {full ? `${count}/${MAX_GROUP_PANES}` : count}
         </span>

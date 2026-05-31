@@ -313,6 +313,84 @@ pub async fn github_poll_token(
     }
 }
 
+// ── GitHub REST (host-side) ─────────────────────────────────────────────────
+// Status + repos call the GitHub API directly from the host, NOT via curl inside
+// a workspace container — so they work whether or not a workspace is open (the
+// throwaway login container is gone by the time we read status, and the user may
+// have zero workspaces). The token is resolved from the vault by the caller and
+// passed in; it never touches argv or a log. NOTE: api.github.com rejects
+// requests with no User-Agent (403), so every call sets one.
+const GH_UA: &str = "CodeHub";
+
+/// Fetch the authenticated user's login + granted OAuth scopes. Scopes come from
+/// the `X-OAuth-Scopes` response header (empty for fine-grained PATs,
+/// which don't report classic scopes). Err on a transport failure; the caller
+/// decides whether to still report "connected" (token present, details absent).
+pub async fn github_fetch_identity(token: &str) -> Result<(Option<String>, Vec<String>), String> {
+    let resp = reqwest::Client::new()
+        .get("https://api.github.com/user")
+        .header("Authorization", format!("Bearer {token}"))
+        .header("Accept", "application/vnd.github+json")
+        .header("X-GitHub-Api-Version", "2022-11-28")
+        .header("User-Agent", GH_UA)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let scopes = resp
+        .headers()
+        .get("x-oauth-scopes")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| {
+            s.split(',')
+                .map(str::trim)
+                .filter(|x| !x.is_empty())
+                .map(String::from)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let login = resp
+        .json::<serde_json::Value>()
+        .await
+        .ok()
+        .and_then(|v| v.get("login").and_then(|l| l.as_str()).map(String::from));
+    Ok((login, scopes))
+}
+
+/// Fetch ALL repos visible to the token (most-recently-pushed first), paging the
+/// GitHub API until a short page (or the safety cap) is hit, parsed into
+/// [`crate::types::GithubRepo`]. A non-array / error page ends paging and yields
+/// what was collected so far (honest) via the shared parser.
+pub async fn github_fetch_repos(token: &str) -> Result<Vec<crate::types::GithubRepo>, String> {
+    const PER_PAGE: usize = 100; // GitHub's max page size
+    const MAX_PAGES: usize = 20; // safety cap (≤ 2000 repos)
+    let client = reqwest::Client::new();
+    let mut all: Vec<crate::types::GithubRepo> = Vec::new();
+    for page in 1..=MAX_PAGES {
+        let url = format!(
+            "https://api.github.com/user/repos?per_page={PER_PAGE}&page={page}&sort=pushed"
+        );
+        let body = client
+            .get(&url)
+            .header("Authorization", format!("Bearer {token}"))
+            .header("Accept", "application/vnd.github+json")
+            .header("X-GitHub-Api-Version", "2022-11-28")
+            .header("User-Agent", GH_UA)
+            .send()
+            .await
+            .map_err(|e| e.to_string())?
+            .text()
+            .await
+            .map_err(|e| e.to_string())?;
+        let batch = crate::docker::parse_github_repos(&body);
+        let got = batch.len();
+        all.extend(batch);
+        if got < PER_PAGE {
+            break; // last (short) page reached
+        }
+    }
+    Ok(all)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

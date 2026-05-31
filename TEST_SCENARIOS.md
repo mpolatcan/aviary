@@ -115,6 +115,17 @@ docker exec -it codehub-runtime ps -ef | grep -E "tmux|claude|codex"
 | ST7 | Agent detail for Claude (runtime running) | Real account, model, permission mode, MCP/sub-agents/skills/plugins with honest "none configured" empties |
 | ST8 | Agent detail for Codex / Antigravity | Version + key presence + an honest "no per-agent config tree read" note (no fabricated sections) |
 
+## Subscription accounts — email + multi-account conflict
+
+| # | Scenario | Expected |
+|---|---|---|
+| AC1 | Settings → Coding Agents → Claude → Subscription Sign In → sign in with your Claude plan | Row shows the account **email** as the subtitle (captured at login, persisted on the profile); status "Active" |
+| AC2 | Reload app after AC1 | Email still shown (persisted in settings.json, not just read from the running container) |
+| AC3 | Codex tab → Subscription Sign In → sign in with a ChatGPT plan | Row shows the ChatGPT account email (decoded from the id_token JWT) |
+| AC4 | Add a **second** Claude subscription ("Sign in with another Claude account") | Two rows, each with its own email — distinguishable |
+| AC5 | Two Claude subs, launch a pane under each in the **same** workspace | **No conflict** — each restores into its own `/config/claude-profiles/<env>` dir + per-pane `CLAUDE_CONFIG_DIR`; both run as their own account |
+| AC6 | Two **Codex** subs, launch a pane under each in the **same** workspace | **No conflict** (per-pane `CODEX_HOME` isolation) — each restores into its own `/config/codex-profiles/<env>` home (own `auth.json` + rollouts, `config.toml` seeded forward) and the pane exports `CODEX_HOME=<that dir>`. Verify: `ls /config/codex-profiles/` shows two dirs with different `auth.json` (distinct md5), per-pane `CODEX_HOME` env differs, usage/rollouts read per-profile (globs include `/config/codex-profiles/*/sessions`). Watch for a Codex first-run onboarding/trust prompt in the fresh home — report if it appears. |
+
 ## Known limitations (don't test against)
 
 - Antigravity CLI install URL not yet confirmed — currently commented out in `runtime/Dockerfile`. Selecting Antigravity in the modal will create a tmux session that exits immediately because the `antigravity` binary is missing.

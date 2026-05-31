@@ -13,7 +13,7 @@
 //! built only via `cargo run --bin codehub-devserver --features devserver`.
 
 use crate::config::{ConfigStore, Settings};
-use crate::docker::{Cli, DockerClient, LaunchMode, TmuxSessionRequest};
+use crate::docker::{Cli, DockerClient, ImageInfo, LaunchMode, TmuxSessionRequest};
 use crate::events::EventsTracker;
 use crate::manager::LifecycleManager;
 use crate::pty::{PaneEmitter, PtyRegistry};
@@ -269,6 +269,9 @@ pub async fn serve() {
             "/account-profiles/:id/enabled",
             post(set_account_profile_enabled),
         )
+        // Email backfill needs the vault, which the dev bridge doesn't have, so
+        // there's nothing to decode here — report 0 updated and stay a no-op.
+        .route("/account-profiles/backfill-emails", post(backfill_emails))
         .route("/agent-key-status", get(agent_key_status))
         .route("/agent-versions", get(agent_versions))
         .route("/container-stats", get(container_stats))
@@ -324,6 +327,8 @@ pub async fn serve() {
         .route("/codex-rate-limits", get(codex_rate_limits))
         .route("/github-status", get(github_status))
         .route("/github-repos", get(github_repos))
+        .route("/github-repo-dir", post(github_repo_dir))
+        .route("/github-clone-into", post(github_clone_into))
         .route("/check-update", get(check_update))
         .route("/search-transcripts", get(search_transcripts))
         .route(
@@ -603,6 +608,12 @@ async fn add_account_profile(
     Ok(Json(crate::profile_statuses(next.account_profiles, None)))
 }
 
+// No vault in browser mode → nothing to decode; mirror the Tauri command's
+// "count updated" return as 0 so the frontend's mount-time call is harmless.
+async fn backfill_emails() -> impl IntoResponse {
+    Json(0u32)
+}
+
 async fn remove_account_profile(
     State(st): State<AppState>,
     Path(id): Path<String>,
@@ -729,8 +740,19 @@ async fn container_image(
     State(st): State<AppState>,
     Query(q): Query<WorkspaceQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let docker = docker_for_optional_workspace(&st, q.workspace).await?;
-    docker.image_info().await.map(Json).map_err(err)
+    // Mirror lib.rs: with no workspace AND no running container, fall back to the
+    // configured pinned image tag so the New Workspace wizard shows a base image.
+    let docker = match q.workspace {
+        Some(ws) => Some(docker_container_for(&st, &ws)),
+        None => st.manager.any_running_docker().await,
+    };
+    match docker {
+        Some(d) => d.image_info().await.map(Json).map_err(err),
+        None => Ok(Json(ImageInfo {
+            tag: Some(st.manager.image().to_string()),
+            ..Default::default()
+        })),
+    }
 }
 
 async fn container_health(
@@ -893,8 +915,9 @@ async fn container_git_open_pr(
     Json(body): Json<OpenPrBody>,
 ) -> Result<impl IntoResponse, ApiError> {
     let ws = workspace_required(q.workspace)?;
+    let token = resolve_github_token_dev(&st).unwrap_or_default();
     docker_container_for(&st, &ws)
-        .git_open_pr(&body.title, &body.body)
+        .git_open_pr(&body.title, &body.body, &token)
         .await
         .map(Json)
         .map_err(err)
@@ -1472,14 +1495,95 @@ async fn codex_rate_limits(State(st): State<AppState>) -> Result<impl IntoRespon
     docker.codex_rate_limits().await.map(Json).map_err(err)
 }
 
+/// Resolve the GitHub token for the dev bridge. The browser bridge has NO vault
+/// (its AppState carries only the `provider_tokens` presence-set stand-in), so
+/// the real secret can only come from the host `GITHUB_TOKEN` env. A vault-backed
+/// OAuth/PAT sign-in isn't reachable in `make dev-web` — that's Tauri-only.
+fn resolve_github_token_dev(_st: &AppState) -> Option<String> {
+    std::env::var("GITHUB_TOKEN")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
 async fn github_status(State(st): State<AppState>) -> Result<impl IntoResponse, ApiError> {
-    let docker = running_workspace_docker(&st).await?;
-    docker.github_status().await.map(Json).map_err(err)
+    let Some(token) = resolve_github_token_dev(&st) else {
+        return Ok(Json(crate::types::GithubStatus {
+            connected: false,
+            var_name: "GITHUB_TOKEN".to_string(),
+            login: None,
+            scopes: Vec::new(),
+            token_expiry: None,
+        }));
+    };
+    let (login, scopes) = crate::vault::github_fetch_identity(&token)
+        .await
+        .unwrap_or((None, Vec::new()));
+    Ok(Json(crate::types::GithubStatus {
+        connected: true,
+        var_name: "GITHUB_TOKEN".to_string(),
+        login,
+        scopes,
+        token_expiry: None,
+    }))
 }
 
 async fn github_repos(State(st): State<AppState>) -> Result<impl IntoResponse, ApiError> {
-    let docker = running_workspace_docker(&st).await?;
-    docker.github_repos().await.map(Json).map_err(err)
+    let Some(token) = resolve_github_token_dev(&st) else {
+        return Ok(Json(Vec::new()));
+    };
+    Ok(Json(
+        crate::vault::github_fetch_repos(&token).await.unwrap_or_default(),
+    ))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GithubRepoDirBody {
+    name_with_owner: String,
+}
+
+async fn github_repo_dir(
+    Json(body): Json<GithubRepoDirBody>,
+) -> Result<impl IntoResponse, ApiError> {
+    let (_owner, repo) = body
+        .name_with_owner
+        .split_once('/')
+        .ok_or_else(|| err("expected owner/repo".to_string()))?;
+    let ok = |s: &str| {
+        !s.is_empty()
+            && s.chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+    };
+    if !ok(repo) {
+        return Err(err("invalid repo name".to_string()));
+    }
+    let home = std::env::var("HOME").map_err(|_| err("HOME not set".to_string()))?;
+    let dir = std::path::Path::new(&home).join("CodeHub").join(repo);
+    Ok(Json(dir.to_string_lossy().to_string()))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GithubCloneIntoBody {
+    workspace: String,
+    name_with_owner: String,
+    target: String,
+}
+
+async fn github_clone_into(
+    State(st): State<AppState>,
+    Json(body): Json<GithubCloneIntoBody>,
+) -> Result<impl IntoResponse, ApiError> {
+    let token = resolve_github_token_dev(&st).ok_or_else(|| err("GitHub not connected".to_string()))?;
+    let lifecycle = st.manager.resolve(&body.workspace, None);
+    lifecycle.ensure_runtime().await.map_err(err)?;
+    lifecycle
+        .docker_client()
+        .github_clone(&body.name_with_owner, &token, &body.target)
+        .await
+        .map_err(err)?;
+    Ok(Json(()))
 }
 
 async fn check_update() -> impl IntoResponse {

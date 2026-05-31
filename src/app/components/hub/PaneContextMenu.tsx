@@ -64,7 +64,7 @@ export function PaneContextMenu({
         borderRadius: 6,
         boxShadow: "0 8px 24px rgba(0,0,0,0.45)",
         padding: 5,
-        fontSize: 13,
+        fontSize: "var(--fs-13)",
         color: "var(--fg-1)",
       }}
       onMouseDown={(e) => e.stopPropagation()}

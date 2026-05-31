@@ -1,4 +1,5 @@
 import type { CSSProperties, MouseEventHandler } from "react";
+import { Tip } from "./Tip";
 import { Ico } from "./icons";
 
 // IDE-style "toggle a pane of type X" chip for the Hub ActionBar. Ported from
@@ -37,18 +38,21 @@ export function PaneAddBtn({
   const titlePrefix = m.toggle ? (active ? "Hide" : "Show") : "New";
   const suffix = m.toggle ? " pane" : "";
   return (
-    <button
-      type="button"
-      className={`pane-add-btn${m.toggle && active ? " active" : ""}${showLabel ? " with-label" : ""}`}
-      title={`${titlePrefix} ${m.label}${suffix} · ${kbd}`}
-      aria-pressed={m.toggle ? active : undefined}
-      onClick={onClick}
-      style={{ "--pa-c": m.color } as CSSProperties}
-    >
-      {Ico[m.icon]}
-      {showLabel && (
-        <span style={{ fontSize: 11, fontFamily: "var(--mono)", fontWeight: 500 }}>{m.label}</span>
-      )}
-    </button>
+    <Tip text={`${titlePrefix} ${m.label}${suffix} · ${kbd}`}>
+      <button
+        type="button"
+        className={`pane-add-btn${m.toggle && active ? " active" : ""}${showLabel ? " with-label" : ""}`}
+        aria-pressed={m.toggle ? active : undefined}
+        onClick={onClick}
+        style={{ "--pa-c": m.color } as CSSProperties}
+      >
+        {Ico[m.icon]}
+        {showLabel && (
+          <span style={{ fontSize: "var(--fs-11)", fontFamily: "var(--mono)", fontWeight: 500 }}>
+            {m.label}
+          </span>
+        )}
+      </button>
+    </Tip>
   );
 }

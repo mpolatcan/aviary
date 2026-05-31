@@ -4,6 +4,8 @@ A home for your AI coding agents.
 
 Tauri desktop app that runs **Claude Code**, **Codex**, and **Antigravity** CLIs in sandboxed Docker containers, multiplexed via tmux. Each pane = one tmux session = one agent; tabs hold one or more split panes. Each workspace gets its own container (`codehub-ws-<key>`) so its cpu/mem/network/state report as real, isolated data. CodeHub spawns and manages containers itself — no `docker compose` step.
 
+**Built with** Tauri 2 · Rust + tokio · React 19 + Zustand · xterm.js · Tailwind v4 + shadcn/ui · **JetBrains Mono** throughout.
+
 ## Why
 
 Running multiple agent CLIs locally is messy: separate terminals, separate auth, no unified view, no isolation. CodeHub isolates each agent in a tmux session inside a container — one container per workspace by default — and gives you a single window to switch between them.

@@ -29,6 +29,7 @@ import { Button } from "@/app/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/app/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "@/app/ui/select";
 import { type CSSProperties, type ReactNode, useEffect, useState } from "react";
+import { Tip } from "./primitives/Tip";
 import { Ico } from "./primitives/icons";
 
 const WORKSPACE_ROOT = "/workspace";
@@ -77,7 +78,10 @@ function RowValue({ value, meta }: { value: string; meta?: ReactNode }) {
         {value}
       </span>
       {meta && (
-        <span className="mono" style={{ fontSize: 10.5, color: "var(--fg-3)", flexShrink: 0 }}>
+        <span
+          className="mono"
+          style={{ fontSize: "var(--fs-11)", color: "var(--fg-3)", flexShrink: 0 }}
+        >
           {meta}
         </span>
       )}
@@ -236,11 +240,16 @@ export function SpawnPane({ id }: { id: string }) {
           >
             <AgentGlyph agent={agent} size={22} color="var(--pri)" />
           </div>
-          <span style={{ fontSize: 17, fontWeight: 600, color: "var(--fg-0)" }}>
+          <span style={{ fontSize: "var(--fs-16)", fontWeight: 600, color: "var(--fg-0)" }}>
             {resuming ? "Resume agent" : "New agent"}
           </span>
           <span
-            style={{ fontSize: 12.5, color: "var(--fg-2)", textAlign: "center", maxWidth: 320 }}
+            style={{
+              fontSize: "var(--fs-13)",
+              color: "var(--fg-2)",
+              textAlign: "center",
+              maxWidth: 320,
+            }}
           >
             {resuming ? (
               <>
@@ -355,7 +364,10 @@ export function SpawnPane({ id }: { id: string }) {
                       }}
                     />
                     <span>{opt.label}</span>
-                    <span className="mono" style={{ fontSize: 10, color: "var(--fg-3)" }}>
+                    <span
+                      className="mono"
+                      style={{ fontSize: "var(--fs-10)", color: "var(--fg-3)" }}
+                    >
                       {opt.sub}
                     </span>
                   </span>
@@ -377,7 +389,12 @@ export function SpawnPane({ id }: { id: string }) {
         {/* tip */}
         <div
           className="mono"
-          style={{ marginTop: 14, fontSize: 10.5, color: "var(--fg-3)", textAlign: "center" }}
+          style={{
+            marginTop: 14,
+            fontSize: "var(--fs-11)",
+            color: "var(--fg-3)",
+            textAlign: "center",
+          }}
         >
           {resuming
             ? "Esc cancel · Tab next field"
@@ -399,7 +416,7 @@ function crumbStyle(active: boolean): CSSProperties {
     background: "none",
     border: "none",
     padding: "1px 3px",
-    fontSize: 11,
+    fontSize: "var(--fs-11)",
     cursor: "pointer",
     color: active ? "var(--fg-0)" : "var(--fg-2)",
     fontWeight: active ? 600 : 400,
@@ -510,7 +527,7 @@ function WorkdirBrowser({
             <span
               className="mono"
               style={{
-                fontSize: 10.5,
+                fontSize: "var(--fs-11)",
                 color: "var(--fg-3)",
                 overflow: "hidden",
                 textOverflow: "ellipsis",
@@ -572,14 +589,14 @@ function WorkdirBrowser({
           {loading ? (
             <div
               className="mono"
-              style={{ padding: "10px 8px", fontSize: 11, color: "var(--fg-3)" }}
+              style={{ padding: "10px 8px", fontSize: "var(--fs-11)", color: "var(--fg-3)" }}
             >
               Loading…
             </div>
           ) : entries.length === 0 ? (
             <div
               className="mono"
-              style={{ padding: "10px 8px", fontSize: 11, color: "var(--fg-3)" }}
+              style={{ padding: "10px 8px", fontSize: "var(--fs-11)", color: "var(--fg-3)" }}
             >
               No subfolders
             </div>
@@ -610,7 +627,7 @@ function WorkdirBrowser({
                       display: "inline-flex",
                       alignItems: "center",
                       gap: 3,
-                      fontSize: 10.5,
+                      fontSize: "var(--fs-11)",
                       color: "var(--fg-3)",
                       flexShrink: 0,
                       maxWidth: 120,
@@ -641,21 +658,22 @@ function WorkdirBrowser({
             borderTop: "1px solid var(--bd)",
           }}
         >
-          <span
-            className="mono"
-            title={nav}
-            style={{
-              flex: 1,
-              minWidth: 0,
-              fontSize: 10.5,
-              color: "var(--fg-2)",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {nav}
-          </span>
+          <Tip text={nav}>
+            <span
+              className="mono"
+              style={{
+                flex: 1,
+                minWidth: 0,
+                fontSize: "var(--fs-11)",
+                color: "var(--fg-2)",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {nav}
+            </span>
+          </Tip>
           <Button variant="outline" size="xs" onClick={useFolder}>
             Use this folder
           </Button>

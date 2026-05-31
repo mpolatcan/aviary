@@ -1,3 +1,4 @@
+import { Tip } from "../../components/primitives/Tip";
 import { Ico } from "../../components/primitives/icons";
 import { activeWorkspace, useStore } from "../../lib/store";
 import { workspaceLeaves } from "../../lib/tree";
@@ -33,37 +34,38 @@ export function WorkspaceBar() {
         borderTop: "1px solid var(--bd-soft)",
         background: "var(--bg-1)",
         fontFamily: "var(--mono)",
-        fontSize: 11,
+        fontSize: "var(--fs-11)",
         color: "var(--fg-2)",
       }}
     >
-      <span
-        style={{ display: "inline-flex", alignItems: "center", gap: 5 }}
-        title={git?.isRepo ? `/workspace · ${git.branch ?? "detached"}` : "/workspace"}
-      >
-        {Ico.branch}
-        {git?.isRepo ? (
-          <>
-            <span style={{ color: "var(--fg-1)" }}>{git.branch ?? "detached"}</span>
-            <span style={{ color: "var(--fg-3)" }}>·</span>
-            {git.total > 0 ? (
-              <span style={{ color: "var(--wait)" }}>+{git.total} uncommitted</span>
-            ) : (
-              <span style={{ color: "var(--fg-3)" }}>clean</span>
-            )}
-            {git.ahead > 0 && <span style={{ color: "var(--fg-3)" }}>↑{git.ahead}</span>}
-            {git.behind > 0 && <span style={{ color: "var(--fg-3)" }}>↓{git.behind}</span>}
-          </>
-        ) : (
-          <span style={{ color: "var(--fg-3)" }}>/workspace</span>
-        )}
-      </span>
+      <Tip text={git?.isRepo ? `/workspace · ${git.branch ?? "detached"}` : "/workspace"}>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+          {Ico.branch}
+          {git?.isRepo ? (
+            <>
+              <span style={{ color: "var(--fg-1)" }}>{git.branch ?? "detached"}</span>
+              <span style={{ color: "var(--fg-3)" }}>·</span>
+              {git.total > 0 ? (
+                <span style={{ color: "var(--wait)" }}>+{git.total} uncommitted</span>
+              ) : (
+                <span style={{ color: "var(--fg-3)" }}>clean</span>
+              )}
+              {git.ahead > 0 && <span style={{ color: "var(--fg-3)" }}>↑{git.ahead}</span>}
+              {git.behind > 0 && <span style={{ color: "var(--fg-3)" }}>↓{git.behind}</span>}
+            </>
+          ) : (
+            <span style={{ color: "var(--fg-3)" }}>/workspace</span>
+          )}
+        </span>
+      </Tip>
 
       <span style={{ flex: 1 }} />
 
-      <span title="Agent panes in this workspace">
-        {agentCount} agent{agentCount === 1 ? "" : "s"}
-      </span>
+      <Tip text="Agent panes in this workspace">
+        <span>
+          {agentCount} agent{agentCount === 1 ? "" : "s"}
+        </span>
+      </Tip>
       {groupCount > 1 && <span style={{ color: "var(--fg-3)" }}>· {groupCount} groups</span>}
     </div>
   );

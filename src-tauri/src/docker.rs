@@ -73,7 +73,7 @@ pub struct ContainerStats {
 /// Identity of the image the runtime container runs, from `docker inspect` +
 /// `docker image inspect`. Backs the Containers view "Image" card. Every field
 /// is `Option` so a missing value renders as an em-dash rather than a fake.
-#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Serialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ImageInfo {
     /// Image ID (`sha256:…`), as the container resolves it.
@@ -720,6 +720,15 @@ pub fn claude_profile_dir_for_env(src: &str) -> String {
     format!("/config/claude-profiles/{src}")
 }
 
+/// Per-profile `CODEX_HOME` for a vault profile's env name. Mirrors
+/// [`claude_profile_dir_for_env`]: each subscription account gets its OWN Codex
+/// home (auth.json + rollouts + config.toml) so two Codex accounts in one
+/// workspace don't clobber the single shared `/config/codex/auth.json`. The base
+/// `CODEX_HOME=/config/codex` stays the default for account-less (auto) panes.
+pub fn codex_profile_dir_for_env(src: &str) -> String {
+    format!("/config/codex-profiles/{src}")
+}
+
 pub struct TmuxSessionRequest<'a> {
     pub name: &'a str,
     pub cli: Cli,
@@ -1168,25 +1177,42 @@ unset secret payload {src}
     /// A JSON secret (ChatGPT OAuth `auth.json`) is written verbatim; a bare API
     /// key is piped to `codex login --with-api-key` so Codex writes `auth.json` in
     /// its own format.
+    ///
+    /// Per-profile isolation: each vault account materializes into its OWN
+    /// `CODEX_HOME` (`/config/codex-profiles/<src>`), mirroring Claude's
+    /// per-profile config dir — so two Codex accounts in one workspace keep
+    /// separate auth.json + rollouts instead of clobbering the shared
+    /// `/config/codex`. Returns the home dir; the caller exports it as the pane's
+    /// `CODEX_HOME` (overriding the base default).
     pub async fn restore_codex_auth_from_env(
         &self,
         src: &str,
         account_env: &[String],
-    ) -> Result<(), DockerError> {
+    ) -> Result<String, DockerError> {
         if !is_env_name(src) {
             return Err(DockerError::Command(format!(
                 "invalid Codex auth env name: {src}"
             )));
         }
+        let dir = codex_profile_dir_for_env(src);
         let script = format!(
             r#"set -eu
 PATH="{path}"
+home={home}
 secret="${{{src}:-}}"
 if [ -z "$secret" ]; then
   echo "missing Codex auth env {src}" >&2
   exit 1
 fi
-mkdir -p {home}
+mkdir -p "$home"
+chmod 700 "$home"
+# Seed config.toml forward so the isolated home carries the runtime's Codex
+# config. Hooks/notify ride `-c` argv (CODEX_HOOK_ARGS) and OVERRIDE the same
+# keys, so the copied file's hooks never double-fire; this just preserves any
+# baked defaults + saves Codex a from-scratch first-run rewrite.
+if [ -f {base}/config.toml ] && [ ! -f "$home/config.toml" ]; then
+  cp {base}/config.toml "$home/config.toml"
+fi
 umask 077
 case "$secret" in
   \{{*|\[*)
@@ -1196,25 +1222,86 @@ case "$secret" in
     # is newer. dash has no string `>`, so pick the later via `sort`.
     inc=$(printf '%s' "$secret" | jq -r '.last_refresh // ""' 2>/dev/null || echo "")
     cur=""
-    [ -f {home}/auth.json ] && cur=$(jq -r '.last_refresh // ""' {home}/auth.json 2>/dev/null || echo "")
+    [ -f "$home/auth.json" ] && cur=$(jq -r '.last_refresh // ""' "$home/auth.json" 2>/dev/null || echo "")
     if [ -n "$cur" ] && [ -n "$inc" ] \
        && [ "$(printf '%s\n%s\n' "$cur" "$inc" | sort | tail -n1)" = "$cur" ] \
        && [ "$cur" != "$inc" ]; then
       : # container holds a newer auth.json — keep it
     else
-      printf '%s' "$secret" > {home}/auth.json
+      printf '%s' "$secret" > "$home/auth.json"
     fi ;;
-  *) printf '%s' "$secret" | CODEX_HOME={home} codex login --with-api-key ;;
+  *) printf '%s' "$secret" | CODEX_HOME="$home" codex login --with-api-key ;;
 esac
 unset secret {src}
 "#,
             path = CONTAINER_PATH,
-            home = CODEX_CONFIG_DIR,
+            home = shell_single_quote(&dir),
+            base = CODEX_CONFIG_DIR,
             src = src,
         );
         self.exec_capture_env(vec!["sh", "-c", &script], account_env)
             .await?;
-        Ok(())
+        Ok(dir)
+    }
+
+    /// Decode the signed-in account's email from a vault credential `secret`,
+    /// without re-login — used to backfill profiles signed in before the email
+    /// was captured. The secret rides in the exec ENV by name (never an argv, so
+    /// it can't leak via `docker top`), and the decode runs container-side
+    /// because the host can't crack it dep-free: Claude's is a tar+gzip bundle,
+    /// Codex's email is a base64url JWT claim — `base64`/`tar`/`jq` all live in
+    /// the runtime image. Identity only; `None` on any miss (wrong agent, not a
+    /// recognizable credential, no email field).
+    pub async fn read_account_email_from_secret(
+        &self,
+        agent: &str,
+        secret: &str,
+    ) -> Option<String> {
+        let prefix = crate::auth::CLAUDE_AUTH_BUNDLE_PREFIX;
+        let body = match agent {
+            // Strip the bundle prefix, base64-decode, stream just `.claude.json`
+            // out of the tar, read `oauthAccount.emailAddress`.
+            "claude" => format!(
+                r#"case "$secret" in
+  {prefix}*) payload="${{secret#{prefix}}}" ;;
+  *) exit 0 ;;
+esac
+printf '%s' "$payload" | base64 -d 2>/dev/null | tar -xzO ./.claude.json 2>/dev/null | jq -r '.oauthAccount.emailAddress // empty' 2>/dev/null || true"#,
+                prefix = prefix,
+            ),
+            // Pull the id_token JWT, base64url→base64 + pad its payload, decode,
+            // read the email claim (or the OpenAI profile claim some tokens use).
+            "codex" => {
+                r#"tok=$(printf '%s' "$secret" | jq -r '.tokens.id_token // empty' 2>/dev/null)
+[ -n "$tok" ] || exit 0
+payload=$(printf '%s' "$tok" | cut -d. -f2 | tr '_-' '/+')
+case $(( ${#payload} % 4 )) in 2) payload="${payload}==";; 3) payload="${payload}=";; esac
+printf '%s' "$payload" | base64 -d 2>/dev/null \
+  | jq -r '.email // (."https://api.openai.com/profile".email) // empty' 2>/dev/null || true"#
+                    .to_string()
+            },
+            _ => return None,
+        };
+        let script = format!(
+            r#"PATH="{path}"
+secret="${{CODEHUB_EMAIL_SECRET:-}}"
+[ -n "$secret" ] || exit 0
+{body}
+unset secret CODEHUB_EMAIL_SECRET payload tok"#,
+            path = CONTAINER_PATH,
+            body = body,
+        );
+        let env = vec![format!("CODEHUB_EMAIL_SECRET={secret}")];
+        let out = self
+            .exec_capture_env(vec!["sh", "-c", &script], &env)
+            .await
+            .ok()?;
+        let email = out.trim();
+        if email.is_empty() || !email.contains('@') {
+            None
+        } else {
+            Some(email.to_string())
+        }
     }
 
     pub async fn kill_tmux_session(&self, name: &str) -> Result<(), DockerError> {
@@ -1735,18 +1822,23 @@ unset secret {src}
     /// Returns the new PR's `html_url` on success. Errors when the container is
     /// down; every other failure (no token, push rejected, API error) is a
     /// descriptive `Command` error carrying GitHub's / git's own message.
-    pub async fn git_open_pr(&self, title: &str, body: &str) -> Result<String, DockerError> {
+    pub async fn git_open_pr(
+        &self,
+        title: &str,
+        body: &str,
+        token: &str,
+    ) -> Result<String, DockerError> {
         self.require_running().await?;
         const VAR: &str = "GITHUB_TOKEN";
-        // The token is read from the HOST env and forwarded into each exec via the
-        // structured `env` field (never argv/logs) — `exec_capture` does not
-        // otherwise propagate it into the container, so the in-shell
-        // `${GITHUB_TOKEN}` reference would be empty without this.
-        let Ok(token) = std::env::var(VAR) else {
+        // `token` is the resolved credential (vault or host env), passed by the
+        // caller. It's forwarded into each exec via the structured `env` field
+        // (never argv/logs) — `exec_capture` does not otherwise propagate it, so
+        // the in-shell `${GITHUB_TOKEN}` reference would be empty without this.
+        if token.is_empty() {
             return Err(DockerError::Command(
-                "no GITHUB_TOKEN — connect GitHub in Settings to open a PR".into(),
+                "no GitHub token — connect GitHub in Source control to open a PR".into(),
             ));
-        };
+        }
         let token_env = vec![format!("{VAR}={token}")];
 
         // Step 1 — preflight. Token referenced by name in-container only.
@@ -2145,99 +2237,15 @@ rm -f /tmp/codehub-pr.json"#,
         self.exec_capture(vec![
             "sh",
             "-c",
-            "find /config/codex/sessions -type f -name 'rollout-*.jsonl' -exec cat {} + 2>/dev/null || true",
+            "find /config/codex/sessions /config/codex-profiles/*/sessions -type f -name 'rollout-*.jsonl' -exec cat {} + 2>/dev/null || true",
         ])
         .await
     }
 
     // ── GitHub connector ────────────────────────────────────────────────────
-
-    /// GitHub connection status. Checks for GITHUB_TOKEN presence on the host
-    /// (presence-only — the value is NEVER read or returned). When present,
-    /// calls the GitHub API via `curl` inside the container (where the token is
-    /// already forwarded) to fetch the authenticated user identity + scopes.
-    pub async fn github_status(&self) -> Result<crate::types::GithubStatus, DockerError> {
-        const VAR: &str = "GITHUB_TOKEN";
-        let connected = std::env::var(VAR).is_ok();
-        if !connected {
-            return Ok(crate::types::GithubStatus {
-                connected: false,
-                var_name: VAR.to_string(),
-                login: None,
-                scopes: Vec::new(),
-                token_expiry: None,
-            });
-        }
-
-        // Token is forwarded into the container at create-time via lifecycle::auth_env_with.
-        // We run the API call inside the container using the already-forwarded token.
-        // The token is referenced by NAME inside the container shell — it never
-        // appears in the Rust argv or in a log. Response body only → no value returned.
-        if !self.is_running().await? {
-            // Container down but token present — report connected:true, no details.
-            return Ok(crate::types::GithubStatus {
-                connected: true,
-                var_name: VAR.to_string(),
-                login: None,
-                scopes: Vec::new(),
-                token_expiry: None,
-            });
-        }
-
-        // Use sh -c so the var expansion happens in-container (value never in argv here).
-        let out = self
-            .exec_capture(vec![
-                "sh",
-                "-c",
-                "curl -s -f -H \"Authorization: token ${GITHUB_TOKEN}\" -H \"Accept: application/vnd.github+json\" -H \"X-GitHub-Api-Version: 2022-11-28\" https://api.github.com/user 2>/dev/null || true",
-            ])
-            .await
-            .unwrap_or_default();
-
-        // Parse login from the JSON response. If the call failed, stay connected:true
-        // with no details (honest — token exists but call failed).
-        let (login, token_expiry) = if let Ok(v) = serde_json::from_str::<serde_json::Value>(&out) {
-            let login = v.get("login").and_then(|l| l.as_str()).map(String::from);
-            // GitHub doesn't surface token expiry in /user; left as None (factual absence).
-            (login, None)
-        } else {
-            (None, None)
-        };
-
-        // Scopes: GitHub returns them in the X-GitHub-OAuth-Scopes header, not the body.
-        // Fetching headers adds complexity; leave as empty (honest — we don't have them).
-        Ok(crate::types::GithubStatus {
-            connected: true,
-            var_name: VAR.to_string(),
-            login,
-            scopes: Vec::new(),
-            token_expiry,
-        })
-    }
-
-    /// Repos visible to the connected GitHub account. Returns empty when the
-    /// token is absent or the container is down. Requests up to 30 repos
-    /// (GitHub's default page size) — enough for the Integrations card.
-    pub async fn github_repos(&self) -> Result<Vec<crate::types::GithubRepo>, DockerError> {
-        const VAR: &str = "GITHUB_TOKEN";
-        if std::env::var(VAR).is_err() {
-            return Ok(Vec::new());
-        }
-        if !self.is_running().await? {
-            return Ok(Vec::new());
-        }
-
-        let out = self
-            .exec_capture(vec![
-                "sh",
-                "-c",
-                "curl -s -f -H \"Authorization: token ${GITHUB_TOKEN}\" -H \"Accept: application/vnd.github+json\" -H \"X-GitHub-Api-Version: 2022-11-28\" \"https://api.github.com/user/repos?per_page=30&sort=pushed\" 2>/dev/null || true",
-            ])
-            .await
-            .unwrap_or_default();
-
-        Ok(parse_github_repos(&out))
-    }
+    // Status + repos moved HOST-side (vault::github_fetch_*) so they work with no
+    // workspace container running. `git_open_pr` below stays in-container (it
+    // needs the workspace's git tree); it takes the resolved token as an arg.
 
     /// Past Codex conversations from rollout files (Resume view), newest first.
     pub async fn codex_sessions(&self) -> Result<Vec<crate::types::CodexSession>, DockerError> {
@@ -2263,7 +2271,7 @@ rm -f /tmp/codehub-pr.json"#,
         }
         self.require_running().await?;
         let pattern = format!(
-            "find /config/codex/sessions -type f -name 'rollout-*{id}.jsonl' -exec cat {{}} + 2>/dev/null || true"
+            "find /config/codex/sessions /config/codex-profiles/*/sessions -type f -name 'rollout-*{id}.jsonl' -exec cat {{}} + 2>/dev/null || true"
         );
         let raw = self.exec_capture(vec!["sh", "-c", &pattern]).await?;
         Ok(codex_session_usage_from_raw(&raw))
@@ -2280,7 +2288,7 @@ rm -f /tmp/codehub-pr.json"#,
             .exec_capture(vec![
                 "sh",
                 "-c",
-                "f=$(find /config/codex/sessions -type f -name 'rollout-*.jsonl' 2>/dev/null | sort | tail -1); [ -n \"$f\" ] && cat \"$f\" || true",
+                "f=$(find /config/codex/sessions /config/codex-profiles/*/sessions -type f -name 'rollout-*.jsonl' 2>/dev/null | sort | tail -1); [ -n \"$f\" ] && cat \"$f\" || true",
             ])
             .await?;
         Ok(extract_codex_rate_limits(&raw))
@@ -2356,6 +2364,52 @@ rm -f /tmp/codehub-pr.json"#,
             });
         }
         Ok(repos)
+    }
+
+    /// Clone a GitHub repo (`owner/repo`) into `target` (an in-container path under
+    /// `/workspace`, which is host-bind-mounted so the files persist) using `gh`,
+    /// with the token passed via the exec env (`GH_TOKEN`) so it never appears in
+    /// argv or a log — the same structured-env channel `exec_capture_env` uses for
+    /// other secrets. The cloned `origin` keeps the clean `https://github.com/...`
+    /// URL (gh doesn't embed the token). Caller MUST pre-validate both args to
+    /// `[A-Za-z0-9._/-]` (they ride an `sh -c` string). Idempotent: an existing
+    /// `<target>/.git` short-circuits to Ok. Returns `target` on success; a non-OK
+    /// clone surfaces gh's combined output as the error.
+    pub async fn github_clone(
+        &self,
+        name_with_owner: &str,
+        token: &str,
+        target: &str,
+    ) -> Result<String, DockerError> {
+        self.require_running().await?;
+        let valid = |s: &str| {
+            !s.is_empty()
+                && s.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '/' | '-'))
+        };
+        if !name_with_owner.contains('/') || !valid(name_with_owner) {
+            return Err(DockerError::Command(
+                "invalid repo: expected owner/repo".into(),
+            ));
+        }
+        if !target.starts_with("/workspace") || !valid(target) {
+            return Err(DockerError::Command("invalid clone target".into()));
+        }
+        // exec_capture_env returns combined output, not an exit code, so an explicit
+        // sentinel is the reliable success signal. A pre-existing checkout is reused.
+        let script = format!(
+            "if [ -d {target}/.git ]; then echo __CLONE_OK__; \
+             else gh repo clone {name_with_owner} {target} 2>&1 && echo __CLONE_OK__; fi"
+        );
+        let env = vec![format!("GH_TOKEN={token}")];
+        let output = self
+            .exec_capture_env(vec!["sh", "-c", &script], &env)
+            .await?;
+        if output.contains("__CLONE_OK__") {
+            Ok(target.to_string())
+        } else {
+            Err(DockerError::Command(output))
+        }
     }
 
     /// Clone a git repo by URL into `/workspace/<repo-name>`.
@@ -4068,8 +4122,9 @@ fn extract_codex_rate_limits(raw: &str) -> Option<crate::types::CodexRateLimits>
 }
 
 /// Parse the GitHub `/user/repos` JSON response into [`GithubRepo`] entries.
-/// Unknown / malformed responses → empty list (honest).
-fn parse_github_repos(raw: &str) -> Vec<crate::types::GithubRepo> {
+/// Unknown / malformed responses → empty list (honest). `pub(crate)` so the
+/// host-side fetch in `vault` reuses the same parser.
+pub(crate) fn parse_github_repos(raw: &str) -> Vec<crate::types::GithubRepo> {
     // SECURITY: this function must never include any token value in its output.
     // It only reads repo metadata (name, branch, visibility) — no credentials.
     let Ok(arr) = serde_json::from_str::<serde_json::Value>(raw) else {

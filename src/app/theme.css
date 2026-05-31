@@ -6,14 +6,14 @@
 @custom-variant dark (&:is(.dark *, .gray *));
 
 /* Fonts → Tailwind utilities (font-mono / font-sans). Static stacks (Tailwind's
-   @theme requires literal values, not var()): the design uses Geist for sans
-   prose and Geist Mono for mono/data, JetBrains Mono as the mono fallback.
-   --font-pixel is a legacy alias kept so existing chrome classes resolve; it now
-   points at the mono stack (the old Silkscreen HUD face was dropped). */
+   @theme requires literal values, not var()): the whole app chrome is JetBrains
+   Mono — the same family the terminal panes use — so font-sans, font-mono and
+   the legacy --font-pixel alias all resolve to one typeface. Geist and the old
+   Silkscreen HUD face were dropped. */
 @theme {
-  --font-sans: "Geist", ui-sans-serif, sans-serif;
-  --font-mono: "Geist Mono", ui-monospace, "JetBrains Mono", monospace;
-  --font-pixel: "Geist Mono", ui-monospace, "JetBrains Mono", monospace;
+  --font-sans: "JetBrains Mono", ui-monospace, monospace;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --font-pixel: "JetBrains Mono", ui-monospace, monospace;
 }
 
 /* Color-utility + chrome token bridge. Tailwind v4 only emits bg-/text-/border-
@@ -75,19 +75,19 @@
 }
 
 :root {
-  /* Type scale — two families (JetBrains Mono + Silkscreen), one rhythm.
-     `pixel`/`micro` are the Silkscreen HUD sizes; the rest are mono. Every
-     hardcoded px size in the app should resolve to one of these. */
-  --fs-micro: 8px; /* tiniest pixel caps (mode badges) */
-  --fs-pixel: 9px; /* default Silkscreen HUD label */
-  --fs-2xs: 11px; /* dim mono captions */
-  --fs-xs: 12px; /* mono body / data — base */
-  --fs-sm: 13px; /* mode rows, hints */
-  --fs-md: 14px; /* agent names */
-  --fs-lg: 17px; /* masthead wordmark */
-  --fs-xl: 22px; /* empty-state heading */
-  --fs-2xl: 26px; /* launcher title */
-  --fs-base: var(--fs-xs);
+  /* Type scale — JetBrains Mono throughout, one canonical step ladder. Every
+     font size in the app resolves to one of these tokens: no raw px, no
+     half-steps. Token name == its px value. */
+  --fs-9: 9px; /* micro caps, tiny glyph labels, mode badges */
+  --fs-10: 10px; /* dim mono captions */
+  --fs-11: 11px; /* labels, secondary data */
+  --fs-12: 12px; /* base body / data */
+  --fs-13: 13px; /* primary rows, hints, mode rows */
+  --fs-14: 14px; /* agent names, emphasis */
+  --fs-16: 16px; /* section / panel / masthead headings */
+  --fs-20: 20px; /* view + empty-state titles */
+  --fs-26: 26px; /* display / launcher title */
+  --fs-base: var(--fs-12);
 
   /* Motion — shared easings so every transition/animation feels related. */
   --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
@@ -111,7 +111,7 @@ body {
 /* Pixel labels — tiny mono caps (legacy alias; HUD face dropped in the reskin). */
 .pixel {
   font-family: var(--font-pixel);
-  font-size: var(--fs-pixel);
+  font-size: var(--fs-9);
   text-transform: uppercase;
   letter-spacing: 0.08em;
 }

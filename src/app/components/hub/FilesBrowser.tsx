@@ -1,7 +1,8 @@
 import { AnimatePresence, motion } from "motion/react";
-import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FileGlyph, FolderGlyph } from "../../components/primitives/FileGlyph";
 import { IconBtn } from "../../components/primitives/IconBtn";
+import { Tip } from "../../components/primitives/Tip";
 import { Ico } from "../../components/primitives/icons";
 import { useResizableDock } from "../../hooks/useResizableDock";
 import { EASE } from "../../hooks/useSlideIn";
@@ -24,6 +25,9 @@ import { ResizeHandle } from "./ResizeHandle";
 const ROOT = "/workspace";
 const WIDTH = 256;
 const INDENT = 14;
+// Silent re-poll of the currently-expanded dirs so externally-created files (an
+// agent writing, a background clone landing) appear without a manual app reload.
+const FILES_POLL_MS = 4000;
 
 type DirState = FileEntry[] | "loading" | "error";
 
@@ -144,6 +148,25 @@ export function FilesBrowser({ onClose }: { onClose: () => void }) {
     load(ROOT);
   }, [load]);
 
+  // Auto-reload: silently re-list every expanded dir on an interval so new files
+  // surface live (no "loading" flicker — only the data is swapped). A ref holds
+  // the live `expanded` set so the interval isn't torn down on every toggle.
+  const expandedRef = useRef(expanded);
+  expandedRef.current = expanded;
+  useEffect(() => {
+    if (!containerKey) return;
+    const tick = () => {
+      for (const path of expandedRef.current) {
+        ipc
+          .containerListDir(path, containerKey)
+          .then((e) => setChildren((c) => ({ ...c, [path]: e })))
+          .catch(() => {});
+      }
+    };
+    const h = setInterval(tick, FILES_POLL_MS);
+    return () => clearInterval(h);
+  }, [containerKey]);
+
   const toggle = useCallback(
     (path: string) => {
       setExpanded((prev) => {
@@ -212,8 +235,10 @@ export function FilesBrowser({ onClose }: { onClose: () => void }) {
           }}
         >
           <span style={{ color: "var(--idle)", display: "inline-flex" }}>{Ico.files}</span>
-          <span style={{ fontSize: 13, fontWeight: 500, color: "var(--fg-0)" }}>Files</span>
-          <span className="mono" style={{ fontSize: 10, color: "var(--fg-3)" }}>
+          <span style={{ fontSize: "var(--fs-13)", fontWeight: 500, color: "var(--fg-0)" }}>
+            Files
+          </span>
+          <span className="mono" style={{ fontSize: "var(--fs-10)", color: "var(--fg-3)" }}>
             {Array.isArray(root) ? rootRows.length : "…"}
           </span>
           <span style={{ flex: 1 }} />
@@ -224,7 +249,7 @@ export function FilesBrowser({ onClose }: { onClose: () => void }) {
 
         <div style={{ padding: "8px 10px 6px" }}>
           <Input
-            className="mono h-auto rounded-[5px] px-2 py-1 text-[11.5px]"
+            className="mono h-auto rounded-[5px] px-2 py-1 text-[12px]"
             placeholder="filter by name…"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
@@ -254,7 +279,7 @@ export function FilesBrowser({ onClose }: { onClose: () => void }) {
             alignItems: "center",
             gap: 7,
             fontFamily: "var(--mono)",
-            fontSize: 10,
+            fontSize: "var(--fs-10)",
             color: "var(--fg-3)",
             minHeight: 28,
           }}
@@ -265,30 +290,31 @@ export function FilesBrowser({ onClose }: { onClose: () => void }) {
               "all mounted folders" is visible even when (as usual) the only mount
               is /workspace itself (a root, not a tree node) plus the out-of-tree
               /config. Nested mounts under /workspace also get a badge in-tree. */}
-          <span
-            title={
+          <Tip
+            text={
               mounts.length
                 ? mounts
                     .map((m) => `${m.source} → ${m.destination}${m.rw ? "" : " (ro)"}`)
                     .join("\n")
                 : ROOT
             }
-            style={{ display: "inline-flex", alignItems: "center", gap: 4 }}
           >
-            {mounts.length > 0 && (
-              <span
-                style={{
-                  display: "inline-flex",
-                  color: "var(--a-codex)",
-                  opacity: 0.85,
-                  transform: "scale(0.78)",
-                }}
-              >
-                {Ico.link}
-              </span>
-            )}
-            {ROOT}
-          </span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+              {mounts.length > 0 && (
+                <span
+                  style={{
+                    display: "inline-flex",
+                    color: "var(--a-codex)",
+                    opacity: 0.85,
+                    transform: "scale(0.78)",
+                  }}
+                >
+                  {Ico.link}
+                </span>
+              )}
+              {ROOT}
+            </span>
+          </Tip>
         </div>
       </div>
       <ResizeHandle edge="right" onMouseDown={beginResize} onDoubleClick={reset} />
@@ -328,111 +354,118 @@ function TreeNode({
 
   return (
     <>
-      <button
-        type="button"
-        className="rail-file"
-        title={entry.name}
-        onClick={() => (isDir ? tree.toggle(path) : tree.open(path))}
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 6,
-          width: "100%",
-          padding: "3px 6px",
-          paddingLeft: depth * INDENT + 6,
-          borderRadius: 4,
-          border: "none",
-          background: active ? "var(--bg-2)" : "transparent",
-          cursor: "pointer",
-          textAlign: "left",
-          fontFamily: "var(--mono)",
-          fontSize: 11.5,
-        }}
-      >
-        {/* chevron gutter — only for dirs (files get an equal spacer to align) */}
-        <span
+      <Tip text={entry.name}>
+        <button
+          type="button"
+          className="rail-file"
+          onClick={() => (isDir ? tree.toggle(path) : tree.open(path))}
           style={{
-            flexShrink: 0,
-            width: 12,
-            display: "inline-flex",
+            display: "flex",
             alignItems: "center",
-            justifyContent: "center",
-            color: "var(--fg-3)",
-            transform: isDir && open ? "rotate(90deg)" : "rotate(0deg)",
-            transition: "transform .15s ease",
+            gap: 6,
+            width: "100%",
+            padding: "3px 6px",
+            paddingLeft: depth * INDENT + 6,
+            borderRadius: 4,
+            border: "none",
+            background: active ? "var(--bg-2)" : "transparent",
+            cursor: "pointer",
+            textAlign: "left",
+            fontFamily: "var(--mono)",
+            fontSize: "var(--fs-12)",
           }}
         >
-          {isDir ? Ico.chevR : null}
-        </span>
-        {isDir ? <FolderGlyph open={open} /> : <FileGlyph name={entry.name} />}
-        <span
-          style={{
-            color: decor
-              ? decor.color
-              : entry.kind === "link"
-                ? "var(--wait)"
-                : active
-                  ? "var(--fg-0)"
-                  : "var(--fg-1)",
-            flex: 1,
-            minWidth: 0,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-          }}
-        >
-          {entry.name}
-        </span>
-        {mount && (
+          {/* chevron gutter — only for dirs (files get an equal spacer to align) */}
           <span
-            title={`mounted from ${mount.source}${mount.rw ? "" : " (read-only)"}`}
-            style={{
-              flexShrink: 0,
-              display: "inline-flex",
-              alignItems: "center",
-              color: "var(--a-codex)",
-              opacity: 0.9,
-            }}
-          >
-            {Ico.link}
-          </span>
-        )}
-        {!isDir && entry.size > 0 && (
-          <span className="tnum" style={{ flexShrink: 0, fontSize: 10, color: "var(--fg-3)" }}>
-            {fmtBytes(entry.size)}
-          </span>
-        )}
-        {decor && (
-          <span
-            className="tnum"
-            title={`git: ${entry.name} (${decor.letter})`}
             style={{
               flexShrink: 0,
               width: 12,
-              textAlign: "center",
-              fontSize: 10.5,
-              fontWeight: 600,
-              color: decor.color,
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              color: "var(--fg-3)",
+              transform: isDir && open ? "rotate(90deg)" : "rotate(0deg)",
+              transition: "transform .15s ease",
             }}
           >
-            {decor.letter}
+            {isDir ? Ico.chevR : null}
           </span>
-        )}
-        {dirChanged && (
+          {isDir ? <FolderGlyph open={open} /> : <FileGlyph name={entry.name} />}
           <span
-            aria-hidden="true"
-            title="contains uncommitted changes"
             style={{
-              flexShrink: 0,
-              width: 6,
-              height: 6,
-              borderRadius: "50%",
-              background: "var(--wait)",
-              opacity: 0.9,
+              color: decor
+                ? decor.color
+                : entry.kind === "link"
+                  ? "var(--wait)"
+                  : active
+                    ? "var(--fg-0)"
+                    : "var(--fg-1)",
+              flex: 1,
+              minWidth: 0,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
             }}
-          />
-        )}
-      </button>
+          >
+            {entry.name}
+          </span>
+          {mount && (
+            <Tip text={`mounted from ${mount.source}${mount.rw ? "" : " (read-only)"}`}>
+              <span
+                style={{
+                  flexShrink: 0,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  color: "var(--a-codex)",
+                  opacity: 0.9,
+                }}
+              >
+                {Ico.link}
+              </span>
+            </Tip>
+          )}
+          {!isDir && entry.size > 0 && (
+            <span
+              className="tnum"
+              style={{ flexShrink: 0, fontSize: "var(--fs-10)", color: "var(--fg-3)" }}
+            >
+              {fmtBytes(entry.size)}
+            </span>
+          )}
+          {decor && (
+            <Tip text={`git: ${entry.name} (${decor.letter})`}>
+              <span
+                className="tnum"
+                style={{
+                  flexShrink: 0,
+                  width: 12,
+                  textAlign: "center",
+                  fontSize: "var(--fs-11)",
+                  fontWeight: 600,
+                  color: decor.color,
+                }}
+              >
+                {decor.letter}
+              </span>
+            </Tip>
+          )}
+          {dirChanged && (
+            <Tip text="contains uncommitted changes">
+              <span
+                aria-hidden="true"
+                style={{
+                  flexShrink: 0,
+                  width: 6,
+                  height: 6,
+                  borderRadius: "50%",
+                  background: "var(--wait)",
+                  opacity: 0.9,
+                }}
+              />
+            </Tip>
+          )}
+        </button>
+      </Tip>
 
       <AnimatePresence initial={false}>
         {isDir && open && (
@@ -489,7 +522,7 @@ function Leaf({ depth, children }: { depth: number; children: ReactNode }) {
       className="mono"
       style={{
         padding: `2px 6px 2px ${depth * INDENT + 24}px`,
-        fontSize: 10.5,
+        fontSize: "var(--fs-11)",
         color: "var(--fg-3)",
       }}
     >
@@ -502,7 +535,12 @@ function Note({ children }: { children: ReactNode }) {
   return (
     <div
       className="mono"
-      style={{ padding: "20px 14px", fontSize: 11, color: "var(--fg-3)", lineHeight: 1.5 }}
+      style={{
+        padding: "20px 14px",
+        fontSize: "var(--fs-11)",
+        color: "var(--fg-3)",
+        lineHeight: 1.5,
+      }}
     >
       {children}
     </div>

@@ -39,7 +39,7 @@ export function MetricStat({
       <span
         style={{
           fontFamily: "var(--mono)",
-          fontSize: 11,
+          fontSize: "var(--fs-11)",
           color: "var(--fg-3)",
           fontWeight: 400,
         }}
@@ -48,12 +48,12 @@ export function MetricStat({
       </span>
       <span
         className={mono ? "mono tnum" : "tnum"}
-        style={{ fontSize: 12.5, color: valueColor, fontWeight: 500 }}
+        style={{ fontSize: "var(--fs-13)", color: valueColor, fontWeight: 500 }}
       >
         {value}
       </span>
       {delta && (
-        <span className="mono" style={{ fontSize: 10.5, color: dtone, marginLeft: -2 }}>
+        <span className="mono" style={{ fontSize: "var(--fs-11)", color: dtone, marginLeft: -2 }}>
           {delta}
         </span>
       )}

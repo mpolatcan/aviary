@@ -1,4 +1,5 @@
 import type { CSSProperties, ReactNode } from "react";
+import { Badge } from "../../ui/badge";
 
 export interface TagProps {
   children: ReactNode;
@@ -6,25 +7,23 @@ export interface TagProps {
   style?: CSSProperties;
 }
 
+// Small colored chip. Renders the shadcn <Badge> (outline) so it shares the
+// badge base, then overrides to the Tag look: mono, 10.5px, 4px radius, and a
+// dynamic accent (color-mixed bg/border/text) that fixed Badge variants can't
+// express — pass `color` for live/err/agent accents, omit for neutral.
 export function Tag({ children, color, style }: TagProps) {
   return (
-    <span
+    <Badge
+      variant="outline"
+      className="gap-1 rounded-[4px] px-1.5 py-[2px] font-mono text-[11px] tracking-[0.03em]"
       style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 4,
-        fontFamily: "var(--mono)",
-        fontSize: 10.5,
-        letterSpacing: "0.03em",
         color: color ?? "var(--fg-1)",
         background: color ? `color-mix(in oklab, ${color} 14%, transparent)` : "var(--bg-3)",
-        border: `1px solid ${color ? `color-mix(in oklab, ${color} 35%, transparent)` : "var(--bd)"}`,
-        padding: "2px 6px",
-        borderRadius: 4,
+        borderColor: color ? `color-mix(in oklab, ${color} 35%, transparent)` : "var(--bd)",
         ...style,
       }}
     >
       {children}
-    </span>
+    </Badge>
   );
 }

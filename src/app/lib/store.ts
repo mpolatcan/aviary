@@ -57,6 +57,13 @@ import {
   workspaceTitle,
 } from "./tree";
 
+// One background GitHub clone job (New Workspace wizard → post-create clone).
+export interface RepoCloneJob {
+  repo: string; // nameWithOwner, e.g. "owner/repo"
+  status: "cloning" | "done" | "error";
+  error?: string;
+}
+
 // Top-level view, switched from the sidebar nav. "hub" is the terminal grid;
 // the rest are full-pane screens. Resume is no longer a view — it's a docked
 // drawer over the hub (useOverlay.resume). Integrations is no longer a view
@@ -190,6 +197,9 @@ interface CodeHubState {
   // GitHub connection (presence-only) + visible repos (Integrations).
   githubStatus: GithubStatus | null;
   githubRepos: GithubRepo[];
+  // Background GitHub repo clones started by the New Workspace wizard (the clone
+  // runs after the workspace opens). Drives the clone progress banner.
+  repoClones: RepoCloneJob[];
   // App update check (Settings → About).
   updateStatus: UpdateStatus | null;
 
@@ -388,6 +398,14 @@ interface CodeHubState {
   loadCodexRateLimits: () => Promise<void>;
   loadGithubStatus: () => Promise<void>;
   loadGithubRepos: () => Promise<void>;
+  // Clone a GitHub repo into an open workspace container, tracking progress in
+  // `repoClones` (background; the wizard calls this after the workspace opens).
+  cloneRepoIntoWorkspace: (
+    workspace: string,
+    nameWithOwner: string,
+    target: string,
+  ) => Promise<void>;
+  dismissRepoClone: (repo: string) => void;
   loadUpdateStatus: () => Promise<void>;
 }
 
@@ -585,6 +603,7 @@ export const useStore = create<CodeHubState>((set, get) => {
     codexRateLimits: null,
     githubStatus: null,
     githubRepos: [],
+    repoClones: [],
     updateStatus: null,
     busyMessage: null,
     plateCounter: 0,
@@ -1751,6 +1770,33 @@ export const useStore = create<CodeHubState>((set, get) => {
         console.warn("github_repos failed", e);
       }
     },
+    cloneRepoIntoWorkspace: async (workspace, nameWithOwner, target) => {
+      // (Re)start a job entry for this repo as "cloning".
+      set((s) => ({
+        repoClones: [
+          ...s.repoClones.filter((j) => j.repo !== nameWithOwner),
+          { repo: nameWithOwner, status: "cloning" as const },
+        ],
+      }));
+      try {
+        await ipc.githubCloneInto(workspace, nameWithOwner, target);
+        set((s) => ({
+          repoClones: s.repoClones.map((j) =>
+            j.repo === nameWithOwner ? { ...j, status: "done" as const } : j,
+          ),
+        }));
+      } catch (e) {
+        set((s) => ({
+          repoClones: s.repoClones.map((j) =>
+            j.repo === nameWithOwner
+              ? { ...j, status: "error" as const, error: String(e).replace(/^Error:\s*/, "") }
+              : j,
+          ),
+        }));
+      }
+    },
+    dismissRepoClone: (repo) =>
+      set((s) => ({ repoClones: s.repoClones.filter((j) => j.repo !== repo) })),
     loadUpdateStatus: async () => {
       try {
         set({ updateStatus: await ipc.checkUpdate() });
@@ -2063,6 +2109,16 @@ async function bootstrap(get: Get, set: Set, registerMeta: RegisterMeta) {
   // with live presence). Independent best-effort reads.
   void get().loadWorkspaceInfo();
   void get().loadAccountProfiles();
+  // Source control: load GitHub connection status at boot (was Settings-visit-
+  // only — the card read "not connected" until you opened Settings), then prefetch
+  // the repo list when connected so the New Workspace picker is populated + cached
+  // up front. Both best-effort.
+  void get()
+    .loadGithubStatus()
+    .then(() => {
+      if (get().githubStatus?.connected) return get().loadGithubRepos();
+    })
+    .catch(() => {});
 
   // Startup behaviors are persisted prefs; the config load races the lifecycle
   // event that triggered us, so ensure it's resolved before reading the flags.

@@ -2,6 +2,7 @@ import { motion } from "motion/react";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 import { IconBtn } from "../../components/primitives/IconBtn";
+import { Tip } from "../../components/primitives/Tip";
 import { Ico } from "../../components/primitives/icons";
 import { useResizableDock } from "../../hooks/useResizableDock";
 import { EASE } from "../../hooks/useSlideIn";
@@ -72,29 +73,30 @@ export function FilePreview({ path, onClose }: { path: string; onClose: () => vo
           }}
         >
           <span style={{ color: "var(--idle)", display: "inline-flex" }}>{Ico.diff}</span>
-          <span
-            className="mono"
-            title={path}
-            style={{
-              fontSize: 12,
-              fontWeight: 500,
-              color: "var(--fg-0)",
-              flex: 1,
-              minWidth: 0,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-              direction: "rtl",
-              textAlign: "left",
-            }}
-          >
-            {filename}
-          </span>
+          <Tip text={path}>
+            <span
+              className="mono"
+              style={{
+                fontSize: "var(--fs-12)",
+                fontWeight: 500,
+                color: "var(--fg-0)",
+                flex: 1,
+                minWidth: 0,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                direction: "rtl",
+                textAlign: "left",
+              }}
+            >
+              {filename}
+            </span>
+          </Tip>
           {ext && (
             <span
               className="mono"
               style={{
-                fontSize: 10,
+                fontSize: "var(--fs-10)",
                 color: "var(--fg-3)",
                 padding: "1px 5px",
                 borderRadius: 3,
@@ -117,7 +119,7 @@ export function FilePreview({ path, onClose }: { path: string; onClose: () => vo
             minHeight: 0,
             overflow: "auto",
             fontFamily: "var(--mono)",
-            fontSize: 11.5,
+            fontSize: "var(--fs-12)",
             lineHeight: 1.55,
             background: "var(--bg-0)",
           }}
@@ -158,7 +160,7 @@ export function FilePreview({ path, onClose }: { path: string; onClose: () => vo
             alignItems: "center",
             gap: 7,
             fontFamily: "var(--mono)",
-            fontSize: 10,
+            fontSize: "var(--fs-10)",
             color: "var(--fg-3)",
             minHeight: 28,
           }}
@@ -176,12 +178,11 @@ export function FilePreview({ path, onClose }: { path: string; onClose: () => vo
             </span>
           )}
           <span style={{ flex: 1 }} />
-          <span
-            title={dir}
-            style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
-          >
-            {dir}
-          </span>
+          <Tip text={dir}>
+            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {dir}
+            </span>
+          </Tip>
         </div>
       </div>
       <ResizeHandle edge="left" onMouseDown={beginResize} onDoubleClick={reset} />
@@ -202,7 +203,7 @@ function LineNumbers({ count }: { count: number }) {
         textAlign: "right",
         color: "var(--fg-4, var(--fg-3))",
         opacity: 0.4,
-        fontSize: 10.5,
+        fontSize: "var(--fs-11)",
         lineHeight: 1.55,
         userSelect: "none",
         borderRight: "1px solid var(--bd-soft)",
@@ -220,7 +221,12 @@ function Note({ children }: { children: ReactNode }) {
   return (
     <div
       className="mono"
-      style={{ padding: "20px 14px", fontSize: 11, color: "var(--fg-3)", lineHeight: 1.5 }}
+      style={{
+        padding: "20px 14px",
+        fontSize: "var(--fs-11)",
+        color: "var(--fg-3)",
+        lineHeight: 1.5,
+      }}
     >
       {children}
     </div>

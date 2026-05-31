@@ -1,6 +1,9 @@
 import { AgentGlyph } from "@/app/components/primitives/AgentGlyph";
 import { IconBtn } from "@/app/components/primitives/IconBtn";
+import { SearchInput } from "@/app/components/primitives/SearchInput";
+import { Segmented } from "@/app/components/primitives/Segmented";
 import { StatusDot, type StatusKey } from "@/app/components/primitives/StatusDot";
+import { Tip } from "@/app/components/primitives/Tip";
 import { Ico } from "@/app/components/primitives/icons";
 import {
   type ContainerSizing,
@@ -14,6 +17,8 @@ import { useOverlay } from "@/app/lib/overlay";
 import { containerKeyFor, useStore } from "@/app/lib/store";
 import { workspaceLeaves } from "@/app/lib/tree";
 import { Button } from "@/app/ui/button";
+import { Checkbox } from "@/app/ui/checkbox";
+import { Toggle } from "@/app/ui/toggle";
 import { useEffect, useMemo, useState } from "react";
 
 // One launcher row = one workspace you can open. Keyed by CONTAINER key (a saved
@@ -62,10 +67,6 @@ function specLabel(sz: ContainerSizing | null | undefined): string | null {
   const out = [cpu, mem].filter(Boolean).join(" · ");
   return out || null;
 }
-
-// Compact size for the card's lifecycle IconBtns (smaller than the default 26 so
-// they sit proportionally in the footer; matches the sidebar row controls).
-const LIFE_BTN = { width: 22, height: 22 } as const;
 
 const STATE_DOT: Record<ContainerState, StatusKey> = {
   running: "live",
@@ -293,7 +294,7 @@ export function Welcome({ onClose }: { onClose?: () => void } = {}) {
           <h1
             style={{
               margin: 0,
-              fontSize: 28,
+              fontSize: "var(--fs-26)",
               fontWeight: 600,
               letterSpacing: "-0.02em",
               color: "var(--fg-0)",
@@ -306,7 +307,7 @@ export function Welcome({ onClose }: { onClose?: () => void } = {}) {
             style={{
               margin: "8px 0 0",
               color: "var(--fg-2)",
-              fontSize: 13,
+              fontSize: "var(--fs-13)",
               maxWidth: 512,
               lineHeight: 1.55,
             }}
@@ -315,15 +316,16 @@ export function Welcome({ onClose }: { onClose?: () => void } = {}) {
           </p>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
-          <Button
-            onClick={() => {
-              openWizard(true);
-              onClose?.();
-            }}
-            title="Create a new workspace"
-          >
-            {Ico.plus}New workspace
-          </Button>
+          <Tip text="Create a new workspace">
+            <Button
+              onClick={() => {
+                openWizard(true);
+                onClose?.();
+              }}
+            >
+              {Ico.plus}New workspace
+            </Button>
+          </Tip>
         </div>
       </div>
 
@@ -338,120 +340,67 @@ export function Welcome({ onClose }: { onClose?: () => void } = {}) {
             flexWrap: "wrap",
           }}
         >
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              padding: "6px 12px",
-              background: "var(--bg-2)",
-              border: "1px solid var(--bd-soft)",
-              borderRadius: 8,
-              flex: 1,
-              minWidth: 200,
-              maxWidth: 360,
-            }}
-          >
-            <span style={{ color: "var(--fg-3)", display: "inline-flex" }}>{Ico.search}</span>
-            <input
-              type="text"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Filter workspaces…"
-              className="mono"
-              style={{
-                flex: 1,
-                background: "transparent",
-                border: "none",
-                outline: "none",
-                color: "var(--fg-0)",
-                fontSize: 12,
-              }}
-            />
-            {query && (
-              <button
-                type="button"
-                onClick={() => setQuery("")}
-                style={{
-                  background: "none",
-                  border: "none",
-                  color: "var(--fg-3)",
-                  cursor: "pointer",
-                  display: "inline-flex",
-                  padding: 0,
-                }}
-              >
-                {Ico.close}
-              </button>
-            )}
-          </div>
-          <div
-            style={{
-              display: "inline-flex",
-              border: "1px solid var(--bd-soft)",
-              borderRadius: 8,
-              overflow: "hidden",
-            }}
-          >
-            {(["all", "running", "stopped"] as const).map((f) => (
-              <button
-                key={f}
-                type="button"
-                onClick={() => setStatusFilter(f)}
-                className="mono"
-                style={{
-                  fontSize: 11.5,
-                  textTransform: "capitalize",
-                  padding: "6px 12px",
-                  border: "none",
-                  cursor: "pointer",
-                  background: statusFilter === f ? "var(--bg-active)" : "transparent",
-                  color: statusFilter === f ? "var(--fg-0)" : "var(--fg-2)",
-                }}
-              >
-                {f}
-              </button>
-            ))}
-          </div>
+          <SearchInput
+            value={query}
+            onChange={setQuery}
+            placeholder="Filter workspaces…"
+            onClear={() => setQuery("")}
+            style={{ flex: 1, minWidth: 200, maxWidth: 360 }}
+          />
+          <Segmented
+            value={statusFilter}
+            onChange={setStatusFilter}
+            options={[
+              { key: "all", label: "All" },
+              { key: "running", label: "Running" },
+              { key: "stopped", label: "Stopped" },
+            ]}
+          />
 
           {/* select controls — live at the filter level, right-aligned. Entering
               select mode swaps the trigger for the bulk Open/Remove/Done actions. */}
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
             {selectMode ? (
               <>
-                <span className="mono" style={{ fontSize: 12, color: "var(--fg-2)" }}>
+                <span className="mono" style={{ fontSize: "var(--fs-12)", color: "var(--fg-2)" }}>
                   {selected.size} selected
                 </span>
-                <Button
-                  variant="outline"
-                  onClick={() => void bulkOpen()}
-                  disabled={selected.size === 0}
-                  title="Open the selected workspaces"
-                >
-                  {Ico.arrowR}Open · {selected.size}
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => void bulkDelete()}
-                  disabled={selected.size === 0}
-                  title="Delete the selected workspaces (prunes containers + saved records)"
-                  style={{ color: selected.size > 0 ? "var(--err)" : undefined }}
-                >
-                  {Ico.trash}Remove · {selected.size}
-                </Button>
-                <Button variant="ghost" onClick={exitSelect} title="Exit selection">
-                  Done
-                </Button>
+                <Tip text="Open the selected workspaces">
+                  <span style={{ display: "inline-flex" }}>
+                    <Button
+                      variant="outline"
+                      onClick={() => void bulkOpen()}
+                      disabled={selected.size === 0}
+                    >
+                      {Ico.arrowR}Open · {selected.size}
+                    </Button>
+                  </span>
+                </Tip>
+                <Tip text="Delete the selected workspaces (prunes containers + saved records)">
+                  <span style={{ display: "inline-flex" }}>
+                    <Button
+                      variant="outline"
+                      onClick={() => void bulkDelete()}
+                      disabled={selected.size === 0}
+                      style={{ color: selected.size > 0 ? "var(--err)" : undefined }}
+                    >
+                      {Ico.trash}Remove · {selected.size}
+                    </Button>
+                  </span>
+                </Tip>
+                <Tip text="Exit selection">
+                  <Button variant="ghost" onClick={exitSelect}>
+                    Done
+                  </Button>
+                </Tip>
               </>
             ) : (
               entries.length > 0 && (
-                <Button
-                  variant="outline"
-                  onClick={() => setSelectMode(true)}
-                  title="Select multiple workspaces"
-                >
-                  {Ico.check}Select
-                </Button>
+                <Tip text="Select multiple workspaces">
+                  <Button variant="outline" onClick={() => setSelectMode(true)}>
+                    {Ico.check}Select
+                  </Button>
+                </Tip>
               )
             )}
           </div>
@@ -478,7 +427,7 @@ export function Welcome({ onClose }: { onClose?: () => void } = {}) {
             style={{
               padding: "32px 0",
               textAlign: "center",
-              fontSize: 12,
+              fontSize: "var(--fs-12)",
               color: "var(--fg-3)",
             }}
           >
@@ -499,7 +448,7 @@ function CardSection({
     <div style={{ marginBottom: 28 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
         <span className="lbl">{title}</span>
-        <span className="mono" style={{ fontSize: 10, color: "var(--fg-3)" }}>
+        <span className="mono" style={{ fontSize: "var(--fs-10)", color: "var(--fg-3)" }}>
           {count}
         </span>
       </div>
@@ -725,375 +674,371 @@ function WorkspaceCard({
   const sid = shortId(entry.savedId);
 
   return (
-    <div
-      className={`ch-card ws-card${clickable ? " is-clickable" : ""}${selected ? " ws-selected" : ""}`}
-      role={clickable ? "button" : undefined}
-      tabIndex={clickable ? 0 : undefined}
-      onClick={clickable ? cardClick : undefined}
-      onKeyDown={
-        clickable
-          ? (e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                cardClick();
-              }
-            }
-          : undefined
-      }
-      title={
+    <Tip
+      text={
         selectMode
           ? `${entry.name} — ${selected ? "deselect" : "select"}`
           : clickable
             ? `${entry.name} — ${action.toLowerCase()} (${stateLabel})`
             : `${entry.name} — ${stateLabel}; press Start to launch`
       }
-      style={{
-        padding: "14px 16px 14px 18px",
-        position: "relative",
-        display: "flex",
-        flexDirection: "column",
-        gap: 10,
-        borderColor: isOpen ? "var(--pri)" : undefined,
-      }}
     >
-      {/* state accent spine — left edge, color-coded by container state */}
-      <span
-        aria-hidden="true"
-        style={{
-          position: "absolute",
-          left: 0,
-          top: 8,
-          bottom: 8,
-          width: 3,
-          borderRadius: 999,
-          background: spine,
-        }}
-      />
-      {/* name row: select + pin + workspace mark + name + state badge + remove */}
-      <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-        {/* Bulk-select checkbox — rendered ONLY in select mode, so it reserves no
-            space by default (and never shifts the name). Stops propagation so
-            ticking it doesn't also open the card. */}
-        {selectMode && (
-          <button
-            type="button"
-            // biome-ignore lint/a11y/useSemanticElements: a styled <button> carries the check glyph; a bare checkbox input can't render it
-            role="checkbox"
-            aria-checked={selected}
-            title={selected ? "Deselect" : "Select"}
-            onClick={(e) => {
-              e.stopPropagation();
-              onToggleSelect();
-            }}
-            style={{
-              width: 16,
-              height: 16,
-              flexShrink: 0,
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-              borderRadius: 4,
-              border: `1.5px solid ${selected ? "var(--pri)" : "var(--bd-strong)"}`,
-              background: selected ? "var(--pri)" : "transparent",
-              color: "var(--bg-0)",
-              cursor: "pointer",
-              padding: 0,
-            }}
-          >
-            {selected && Ico.check}
-          </button>
-        )}
-        {entry.savedId && (
-          <button
-            type="button"
-            title={entry.pinned ? "Unpin" : "Pin to top"}
-            aria-pressed={entry.pinned}
-            onClick={(e) => {
-              e.stopPropagation();
-              if (entry.savedId) void togglePin(entry.savedId);
-            }}
-            style={{
-              background: "none",
-              border: "none",
-              padding: 2,
-              cursor: "pointer",
-              color: entry.pinned ? "var(--wait)" : "var(--fg-3)",
-              display: "inline-flex",
-              lineHeight: 0,
-            }}
-          >
-            <PinGlyph filled={entry.pinned} />
-          </button>
-        )}
-        {/* Workspace mark — only when there's no pin toggle, so each card carries
-            exactly one leading glyph (the pin already marks saved workspaces). */}
-        {!entry.savedId && (
-          <span style={{ color: "var(--fg-3)", display: "inline-flex", flexShrink: 0 }}>
-            {Ico.hub}
-          </span>
-        )}
-        <span
-          style={{
-            fontSize: 15,
-            fontWeight: 600,
-            color: "var(--fg-0)",
-            flex: 1,
-            minWidth: 0,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-          }}
-        >
-          {entry.name}
-        </span>
-        {/* Live agents (only when the workspace is open in a tab) sit beside the
-            identity so activity reads inline with the name. */}
-        {agents.length > 0 && (
-          <div style={{ display: "flex", gap: 3, flexShrink: 0 }}>
-            {agents.slice(0, 4).map((m, i) => (
-              <AgentGlyph
-                // biome-ignore lint/suspicious/noArrayIndexKey: positional agent indicators
-                key={i}
-                agent={m.cli}
-                size={12}
-                color={`var(--a-${m.cli})`}
-              />
-            ))}
-          </div>
-        )}
-        <span
-          title={`Container is ${stateLabel}`}
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 4,
-            fontFamily: "var(--mono)",
-            fontSize: 10,
-            color: busy
-              ? "var(--wait)"
-              : isOpen
-                ? "var(--pri)"
-                : dot === "live"
-                  ? "var(--live)"
-                  : "var(--fg-3)",
-            padding: "2px 6px",
-            borderRadius: 999,
-            background: busy
-              ? "color-mix(in oklab, var(--wait) 12%, transparent)"
-              : isOpen
-                ? "color-mix(in oklab, var(--pri) 12%, transparent)"
-                : dot === "live"
-                  ? "color-mix(in oklab, var(--live) 12%, transparent)"
-                  : "var(--bg-3)",
-          }}
-        >
-          {busy ? (
-            <span style={{ display: "inline-flex", lineHeight: 0 }}>{Ico.spinner}</span>
-          ) : (
-            <StatusDot status={isOpen ? "live" : dot} pulse={isOpen} />
-          )}
-          {stateLabel}
-        </span>
-      </div>
-
-      {/* repo pills — one row of repo NAMES (the identifier you scan for); the
-          branch is detail-on-hover (title), not inline, so two long branches can't
-          chop the names or bloat the card. Extras collapse into a "+N" chip. */}
-      <div style={{ display: "flex", gap: 5, overflow: "hidden" }}>
-        {shownChips.map((r, i) => (
-          <span
-            // biome-ignore lint/suspicious/noArrayIndexKey: positional repo chips
-            key={i}
-            title={r.branch && r.branch !== r.name ? `${r.name} · ${r.branch}` : r.name}
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 5,
-              padding: "2px 9px",
-              borderRadius: 6,
-              background: "var(--bg-3)",
-              border: "1px solid var(--bd-soft)",
-              fontFamily: "var(--mono)",
-              fontSize: 11,
-              flex: "0 1 auto",
-              minWidth: 0,
-            }}
-          >
-            <span style={{ color: "var(--fg-3)", display: "inline-flex", flexShrink: 0 }}>
-              {r.isRepo ? Ico.branch : Ico.files}
-            </span>
-            <span
-              style={{
-                color: "var(--fg-1)",
-                fontWeight: 500,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-                minWidth: 0,
-              }}
-            >
-              {r.name}
-            </span>
-          </span>
-        ))}
-        {hiddenChips.length > 0 && (
-          <span
-            title={hiddenChips
-              .map((c) => (c.branch ? `${c.name} · ${c.branch}` : c.name))
-              .join("\n")}
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              padding: "2px 9px",
-              borderRadius: 6,
-              background: "var(--bg-3)",
-              border: "1px solid var(--bd-soft)",
-              fontFamily: "var(--mono)",
-              fontSize: 11,
-              color: "var(--fg-3)",
-              flex: "0 0 auto",
-            }}
-          >
-            +{hiddenChips.length}
-          </span>
-        )}
-      </div>
-
-      {/* specs row: container sizing + last-opened age */}
       <div
+        className={`ch-card ws-card${clickable ? " is-clickable" : ""}${selected ? " ws-selected" : ""}`}
+        role={clickable ? "button" : undefined}
+        tabIndex={clickable ? 0 : undefined}
+        onClick={clickable ? cardClick : undefined}
+        onKeyDown={
+          clickable
+            ? (e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  cardClick();
+                }
+              }
+            : undefined
+        }
         style={{
+          padding: "14px 16px 14px 18px",
+          position: "relative",
           display: "flex",
-          alignItems: "center",
-          gap: 8,
-          fontFamily: "var(--mono)",
-          fontSize: 11,
-          color: "var(--fg-2)",
+          flexDirection: "column",
+          gap: 10,
+          borderColor: isOpen ? "var(--pri)" : undefined,
         }}
       >
-        {specs && (
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-            <span style={{ color: "var(--fg-3)", display: "inline-flex" }}>{Ico.container}</span>
-            {specs}
+        {/* state accent spine — left edge, color-coded by container state */}
+        <span
+          aria-hidden="true"
+          style={{
+            position: "absolute",
+            left: 0,
+            top: 8,
+            bottom: 8,
+            width: 3,
+            borderRadius: 999,
+            background: spine,
+          }}
+        />
+        {/* name row: select + pin + workspace mark + name + state badge + remove */}
+        <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+          {/* Bulk-select checkbox — rendered ONLY in select mode, so it reserves no
+            space by default (and never shifts the name). Stops propagation so
+            ticking it doesn't also open the card. */}
+          {/* Presentational checkbox — the whole card toggles selection in select
+            mode (cardClick); pointer-events-none lets the click fall through so it
+            toggles once (Radix's hidden form-input bubbles a second click that
+            stopPropagation can't catch, which would otherwise double-toggle). */}
+          {selectMode && (
+            <Checkbox
+              checked={selected}
+              tabIndex={-1}
+              aria-hidden
+              className="pointer-events-none shrink-0"
+            />
+          )}
+          {entry.savedId && (
+            <Tip text={entry.pinned ? "Unpin" : "Pin to top"}>
+              <Toggle
+                size="sm"
+                pressed={entry.pinned}
+                onPressedChange={() => {
+                  if (entry.savedId) void togglePin(entry.savedId);
+                }}
+                onClick={(e) => e.stopPropagation()}
+                aria-label={entry.pinned ? "Unpin" : "Pin to top"}
+                className="h-auto min-w-0 border-0 bg-transparent p-0.5 hover:bg-transparent data-[state=on]:bg-transparent"
+                style={{
+                  color: entry.pinned ? "var(--wait)" : "var(--fg-3)",
+                  lineHeight: 0,
+                }}
+              >
+                <PinGlyph filled={entry.pinned} />
+              </Toggle>
+            </Tip>
+          )}
+          {/* Workspace mark — only when there's no pin toggle, so each card carries
+            exactly one leading glyph (the pin already marks saved workspaces). */}
+          {!entry.savedId && (
+            <span style={{ color: "var(--fg-3)", display: "inline-flex", flexShrink: 0 }}>
+              {Ico.hub}
+            </span>
+          )}
+          <span
+            style={{
+              fontSize: "var(--fs-14)",
+              fontWeight: 600,
+              color: "var(--fg-0)",
+              flex: 1,
+              minWidth: 0,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {entry.name}
           </span>
-        )}
-        <span style={{ flex: 1 }} />
-        <span style={{ color: "var(--fg-3)" }}>{relTime(entry.lastOpened)}</span>
-      </div>
+          {/* Live agents (only when the workspace is open in a tab) sit beside the
+            identity so activity reads inline with the name. */}
+          {agents.length > 0 && (
+            <div style={{ display: "flex", gap: 3, flexShrink: 0 }}>
+              {agents.slice(0, 4).map((m, i) => (
+                <AgentGlyph
+                  // biome-ignore lint/suspicious/noArrayIndexKey: positional agent indicators
+                  key={i}
+                  agent={m.cli}
+                  size={12}
+                  color={`var(--a-${m.cli})`}
+                />
+              ))}
+            </div>
+          )}
+          <Tip text={`Container is ${stateLabel}`}>
+            <span
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 4,
+                fontFamily: "var(--mono)",
+                fontSize: "var(--fs-10)",
+                color: busy
+                  ? "var(--wait)"
+                  : isOpen
+                    ? "var(--pri)"
+                    : dot === "live"
+                      ? "var(--live)"
+                      : "var(--fg-3)",
+                padding: "2px 6px",
+                borderRadius: 999,
+                background: busy
+                  ? "color-mix(in oklab, var(--wait) 12%, transparent)"
+                  : isOpen
+                    ? "color-mix(in oklab, var(--pri) 12%, transparent)"
+                    : dot === "live"
+                      ? "color-mix(in oklab, var(--live) 12%, transparent)"
+                      : "var(--bg-3)",
+              }}
+            >
+              {busy ? (
+                <span style={{ display: "inline-flex", lineHeight: 0 }}>{Ico.spinner}</span>
+              ) : (
+                <StatusDot status={isOpen ? "live" : dot} pulse={isOpen} />
+              )}
+              {stateLabel}
+            </span>
+          </Tip>
+        </div>
 
-      {/* identity row: created date + short id — disambiguates same-named
-          workspaces (saved entries only). */}
-      {(created || sid) && (
+        {/* repo pills — one row of repo NAMES (the identifier you scan for); the
+          branch is detail-on-hover (title), not inline, so two long branches can't
+          chop the names or bloat the card. Extras collapse into a "+N" chip. */}
+        <div style={{ display: "flex", gap: 5, overflow: "hidden" }}>
+          {shownChips.map((r, i) => (
+            <Tip
+              // biome-ignore lint/suspicious/noArrayIndexKey: positional repo chips
+              key={i}
+              text={r.branch && r.branch !== r.name ? `${r.name} · ${r.branch}` : r.name}
+            >
+              <span
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 5,
+                  padding: "2px 9px",
+                  borderRadius: 6,
+                  background: "var(--bg-3)",
+                  border: "1px solid var(--bd-soft)",
+                  fontFamily: "var(--mono)",
+                  fontSize: "var(--fs-11)",
+                  flex: "0 1 auto",
+                  minWidth: 0,
+                }}
+              >
+                <span style={{ color: "var(--fg-3)", display: "inline-flex", flexShrink: 0 }}>
+                  {r.isRepo ? Ico.branch : Ico.files}
+                </span>
+                <span
+                  style={{
+                    color: "var(--fg-1)",
+                    fontWeight: 500,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                    minWidth: 0,
+                  }}
+                >
+                  {r.name}
+                </span>
+              </span>
+            </Tip>
+          ))}
+          {hiddenChips.length > 0 && (
+            <Tip
+              text={hiddenChips
+                .map((c) => (c.branch ? `${c.name} · ${c.branch}` : c.name))
+                .join("\n")}
+            >
+              <span
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  padding: "2px 9px",
+                  borderRadius: 6,
+                  background: "var(--bg-3)",
+                  border: "1px solid var(--bd-soft)",
+                  fontFamily: "var(--mono)",
+                  fontSize: "var(--fs-11)",
+                  color: "var(--fg-3)",
+                  flex: "0 0 auto",
+                }}
+              >
+                +{hiddenChips.length}
+              </span>
+            </Tip>
+          )}
+        </div>
+
+        {/* specs row: container sizing + last-opened age */}
         <div
           style={{
             display: "flex",
             alignItems: "center",
-            gap: 6,
+            gap: 8,
             fontFamily: "var(--mono)",
-            fontSize: 10,
-            color: "var(--fg-3)",
+            fontSize: "var(--fs-11)",
+            color: "var(--fg-2)",
           }}
         >
-          {created && <span>created {created}</span>}
+          {specs && (
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <span style={{ color: "var(--fg-3)", display: "inline-flex" }}>{Ico.container}</span>
+              {specs}
+            </span>
+          )}
           <span style={{ flex: 1 }} />
-          {sid && <span title="Workspace id">#{sid}</span>}
+          <span style={{ color: "var(--fg-3)" }}>{relTime(entry.lastOpened)}</span>
         </div>
-      )}
 
-      {/* footer action bar: manage controls (left) · primary CTA (right). Filling
+        {/* identity row: created date + short id — disambiguates same-named
+          workspaces (saved entries only). */}
+        {(created || sid) && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              fontFamily: "var(--mono)",
+              fontSize: "var(--fs-10)",
+              color: "var(--fg-3)",
+            }}
+          >
+            {created && <span>created {created}</span>}
+            <span style={{ flex: 1 }} />
+            {sid && (
+              <Tip text="Workspace id">
+                <span>#{sid}</span>
+              </Tip>
+            )}
+          </div>
+        )}
+
+        {/* footer action bar: manage controls (left) · primary CTA (right). Filling
           both edges is what stops the card reading as a left-stacked column — the
           big tinted CTA is the obvious click target; lifecycle + delete sit opposite.
           Start is the CTA itself, so there's no separate play control for it. */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          borderTop: "1px solid var(--bd-soft)",
-          paddingTop: 10,
-        }}
-      >
-        {busy ? (
-          // Mid-transition: hide controls + CTA so the op can't be re-fired; the
-          // spinner lives ONLY in the top state pill.
-          <span style={{ display: "inline-flex", height: 28 }} />
-        ) : (
-          <>
-            <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
-              {state === "running" && (
-                <>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            borderTop: "1px solid var(--bd-soft)",
+            paddingTop: 10,
+          }}
+        >
+          {busy ? (
+            // Mid-transition: hide controls + CTA so the op can't be re-fired; the
+            // spinner lives ONLY in the top state pill.
+            <span style={{ display: "inline-flex", height: 28 }} />
+          ) : (
+            <>
+              <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
+                {state === "running" && (
+                  <>
+                    <IconBtn
+                      title="Restart container"
+                      size={22}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void restart();
+                      }}
+                    >
+                      {Ico.restart}
+                    </IconBtn>
+                    <IconBtn
+                      title="Stop container"
+                      size={22}
+                      hoverColor="var(--err)"
+                      hoverBg="color-mix(in oklab, var(--err) 16%, transparent)"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void stop();
+                      }}
+                    >
+                      {Ico.stop}
+                    </IconBtn>
+                  </>
+                )}
+                {canRemove && (
                   <IconBtn
-                    title="Restart container"
-                    style={LIFE_BTN}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void restart();
-                    }}
-                  >
-                    {Ico.restart}
-                  </IconBtn>
-                  <IconBtn
-                    title="Stop container"
-                    style={LIFE_BTN}
+                    title={
+                      entry.container
+                        ? "Remove workspace + prune container"
+                        : "Remove from workspaces"
+                    }
+                    idleColor="var(--fg-3)"
                     hoverColor="var(--err)"
                     hoverBg="color-mix(in oklab, var(--err) 16%, transparent)"
+                    size={22}
                     onClick={(e) => {
                       e.stopPropagation();
-                      void stop();
+                      void remove();
                     }}
                   >
-                    {Ico.stop}
+                    {Ico.trash}
                   </IconBtn>
-                </>
-              )}
-              {canRemove && (
-                <IconBtn
-                  title={
-                    entry.container
-                      ? "Remove workspace + prune container"
-                      : "Remove from workspaces"
-                  }
-                  idleColor="var(--fg-3)"
-                  hoverColor="var(--err)"
-                  hoverBg="color-mix(in oklab, var(--err) 16%, transparent)"
-                  style={LIFE_BTN}
+                )}
+              </div>
+              <span style={{ flex: 1 }} />
+              <Tip text={`${action} ${entry.name}`}>
+                <button
+                  type="button"
+                  className="ws-cta"
                   onClick={(e) => {
                     e.stopPropagation();
-                    void remove();
+                    // Start is the ONLY way to boot a stopped container (the card body is
+                    // inert for those); everything else opens via the shared cardClick.
+                    if (action === "Start") void start();
+                    else cardClick();
                   }}
                 >
-                  {Ico.trash}
-                </IconBtn>
-              )}
-            </div>
-            <span style={{ flex: 1 }} />
-            <button
-              type="button"
-              className="ws-cta"
-              title={`${action} ${entry.name}`}
-              onClick={(e) => {
-                e.stopPropagation();
-                // Start is the ONLY way to boot a stopped container (the card body is
-                // inert for those); everything else opens via the shared cardClick.
-                if (action === "Start") void start();
-                else cardClick();
-              }}
-            >
-              {action === "Start" ? (
-                <>
-                  <span style={{ display: "inline-flex", lineHeight: 0 }}>{Ico.play}</span>
-                  Start
-                </>
-              ) : (
-                <>
-                  {action}
-                  <span style={{ display: "inline-flex", lineHeight: 0 }}>{Ico.arrowR}</span>
-                </>
-              )}
-            </button>
-          </>
-        )}
+                  {action === "Start" ? (
+                    <>
+                      <span style={{ display: "inline-flex", lineHeight: 0 }}>{Ico.play}</span>
+                      Start
+                    </>
+                  ) : (
+                    <>
+                      {action}
+                      <span style={{ display: "inline-flex", lineHeight: 0 }}>{Ico.arrowR}</span>
+                    </>
+                  )}
+                </button>
+              </Tip>
+            </>
+          )}
+        </div>
       </div>
-    </div>
+    </Tip>
   );
 }
 

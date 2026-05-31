@@ -1,5 +1,6 @@
 import { ContextGauge } from "../components/primitives/ContextGauge";
 import { MetricStat } from "../components/primitives/MetricStat";
+import { Tip } from "../components/primitives/Tip";
 import { Ico } from "../components/primitives/icons";
 import { fmtTokens, useCodexUsage, useSessionUsage } from "../hooks/useSessionUsage";
 import { useStore } from "../lib/store";
@@ -64,26 +65,27 @@ export function PaneFoot({ session }: { session: string }) {
         overflow: "hidden",
       }}
     >
-      <span
-        title={meta.cwd ?? wsDir ?? undefined}
-        style={{
-          display: "inline-flex",
-          alignItems: "center",
-          gap: 5,
-          minWidth: 0,
-          maxWidth: 160,
-          fontFamily: "var(--mono)",
-          fontSize: 11,
-          color: "var(--fg-2)",
-        }}
-      >
-        <span style={{ display: "inline-flex", flexShrink: 0, color: "var(--fg-3)" }}>
-          {Ico.files}
+      <Tip text={meta.cwd ?? wsDir ?? ""}>
+        <span
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 5,
+            minWidth: 0,
+            maxWidth: 160,
+            fontFamily: "var(--mono)",
+            fontSize: "var(--fs-11)",
+            color: "var(--fg-2)",
+          }}
+        >
+          <span style={{ display: "inline-flex", flexShrink: 0, color: "var(--fg-3)" }}>
+            {Ico.files}
+          </span>
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {workingDir}
+          </span>
         </span>
-        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {workingDir}
-        </span>
-      </span>
+      </Tip>
       <span className="vr" style={{ height: 14 }} />
       <ContextGauge used={u.contextUsed} max={u.contextWindow} width={64} />
       <span className="vr" style={{ height: 14 }} />

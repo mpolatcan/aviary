@@ -52,9 +52,12 @@
   --a-antigravity: oklch(0.78 0.13 200);
   --a-shell: oklch(0.8 0.13 150);
 
-  /* type */
-  --sans: "Geist", ui-sans-serif, sans-serif;
-  --mono: "Geist Mono", ui-monospace, "JetBrains Mono", monospace;
+  /* type — one family across all app chrome: JetBrains Mono (matches the
+     terminal pane face "JetBrainsMono Terminal"). --sans is kept as a token name
+     for call sites but resolves to the same mono family so every screen is one
+     consistent typeface. */
+  --sans: "JetBrains Mono", ui-monospace, monospace;
+  --mono: "JetBrains Mono", ui-monospace, monospace;
 
   /* radii */
   --r-1: 4px;
@@ -261,7 +264,7 @@
 
 /* Uppercase mini-label (loud — for section heads) */
 .lbl {
-  font-size: 10.5px;
+  font-size: var(--fs-11);
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--fg-2);
@@ -270,7 +273,7 @@
 
 .lbl-mono {
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: var(--fs-11);
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--fg-2);
@@ -279,7 +282,7 @@
 /* Quiet lowercase label (for metric stats) */
 .lbl-soft {
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: var(--fs-10);
   color: var(--fg-3);
   letter-spacing: 0;
   text-transform: none;
@@ -358,7 +361,7 @@
 /* Terminal */
 .term {
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: var(--fs-12);
   line-height: 1.55;
   color: var(--fg-1);
   background: var(--bg-0);
@@ -461,7 +464,7 @@
 
 /* Keyboard shortcut badge */
 .kbd {
-  font: 500 10.5px / 1 var(--mono);
+  font: 500 11px / 1 var(--mono);
   letter-spacing: 0.02em;
   background: var(--bg-3);
   border: 1px solid var(--bd);
@@ -588,6 +591,27 @@
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
 }
 
+/* Dashboard mount reveal — staggered fade + rise. Callers set animation-delay
+   inline to stagger tiles/sections. Honors reduced-motion. */
+.dash-rise {
+  animation: dash-rise 0.34s cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+@keyframes dash-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dash-rise {
+    animation: none;
+  }
+}
+
 /* Smooth scrollbar for custom panels */
 .scroll {
   scrollbar-width: thin;
@@ -626,6 +650,18 @@
 }
 .ws-side-row:hover {
   border-color: var(--bd);
+}
+
+/* Generic list-row hover — the reusable replacement for ad-hoc JS hover
+   (onMouseEnter/Leave background mutation) on non-button list rows (account
+   rows, sidebar session rows, etc.). The rest background stays whatever the row
+   sets inline (incl. zebra stripes); :hover overrides it to --bg-hover and
+   reverts on leave with no JS. */
+.hov-row {
+  transition: background 0.12s ease;
+}
+.hov-row:hover {
+  background: var(--bg-hover) !important;
 }
 
 /* ---- Global focus-visible ring ------------------------------------------- */
@@ -684,7 +720,7 @@ select.mono {
   border-radius: 5px;
   background: transparent;
   color: var(--fg-3);
-  font-size: 14px;
+  font-size: var(--fs-14);
   line-height: 1;
   cursor: pointer;
   padding: 0;

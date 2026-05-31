@@ -114,67 +114,68 @@ export function ColorDot({
             }}
           >
             {PANE_COLORS.map((c) => (
-              <button
-                key={c.bg}
-                type="button"
-                title={c.bg}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onPick(c.bg);
-                  setOpen(false);
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.transform = "scale(1.18)";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.transform = "scale(1)";
-                }}
-                style={{
-                  width: 18,
-                  height: 18,
-                  borderRadius: "50%",
-                  border: c.bg === selected ? "2px solid var(--fg-0)" : "1px solid var(--bd)",
-                  padding: 0,
-                  background: c.bg,
-                  cursor: "pointer",
-                  transition: "transform .1s ease",
-                }}
-              />
+              <Tip key={c.bg} text={c.bg}>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onPick(c.bg);
+                    setOpen(false);
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.transform = "scale(1.18)";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.transform = "scale(1)";
+                  }}
+                  style={{
+                    width: 18,
+                    height: 18,
+                    borderRadius: "50%",
+                    border: c.bg === selected ? "2px solid var(--fg-0)" : "1px solid var(--bd)",
+                    padding: 0,
+                    background: c.bg,
+                    cursor: "pointer",
+                    transition: "transform .1s ease",
+                  }}
+                />
+              </Tip>
             ))}
             {allowDefault && (
-              <button
-                type="button"
-                title="Default — clear the custom color"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onPick(undefined);
-                  setOpen(false);
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = "var(--bg-3)";
-                  e.currentTarget.style.color = "var(--fg-0)";
-                  e.currentTarget.style.borderColor = "var(--bd-strong)";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = "var(--bg-1)";
-                  e.currentTarget.style.color = "var(--fg-1)";
-                  e.currentTarget.style.borderColor = selected ? "var(--bd)" : "var(--fg-2)";
-                }}
-                style={{
-                  gridColumn: "1 / -1",
-                  marginTop: 2,
-                  padding: "4px 6px",
-                  fontSize: 11,
-                  borderRadius: 5,
-                  border: !selected ? "1px solid var(--fg-2)" : "1px solid var(--bd)",
-                  background: "var(--bg-1)",
-                  color: "var(--fg-1)",
-                  cursor: "pointer",
-                  transition: "background .12s ease, color .12s ease, border-color .12s ease",
-                }}
-              >
-                Default
-              </button>
+              <Tip text="Default — clear the custom color">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onPick(undefined);
+                    setOpen(false);
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = "var(--bg-3)";
+                    e.currentTarget.style.color = "var(--fg-0)";
+                    e.currentTarget.style.borderColor = "var(--bd-strong)";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = "var(--bg-1)";
+                    e.currentTarget.style.color = "var(--fg-1)";
+                    e.currentTarget.style.borderColor = selected ? "var(--bd)" : "var(--fg-2)";
+                  }}
+                  style={{
+                    gridColumn: "1 / -1",
+                    marginTop: 2,
+                    padding: "4px 6px",
+                    fontSize: "var(--fs-11)",
+                    borderRadius: 5,
+                    border: !selected ? "1px solid var(--fg-2)" : "1px solid var(--bd)",
+                    background: "var(--bg-1)",
+                    color: "var(--fg-1)",
+                    cursor: "pointer",
+                    transition: "background .12s ease, color .12s ease, border-color .12s ease",
+                  }}
+                >
+                  Default
+                </button>
+              </Tip>
             )}
           </div>,
           document.body,

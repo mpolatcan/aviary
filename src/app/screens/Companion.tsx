@@ -6,11 +6,17 @@ import {
   type CharacterKind,
 } from "../components/primitives/Character";
 import { CompanionAvatar, type CompanionStatus } from "../components/primitives/CompanionAvatar";
+import { IconBtn } from "../components/primitives/IconBtn";
+import { Segmented } from "../components/primitives/Segmented";
+import { Tip } from "../components/primitives/Tip";
 import { Ico } from "../components/primitives/icons";
 import { fmtTokens, useSessionUsage } from "../hooks/useSessionUsage";
 import { deriveLiveStatus, fmtCounters } from "../lib/activity";
 import { type PendingPrompt, type SessionActivity, ipc } from "../lib/ipc";
-import { type CompanionSize, useCompanionPrefs } from "../lib/overlay";
+import { useCompanionPrefs } from "../lib/overlay";
+import { Button } from "../ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
+import { Switch } from "../ui/switch";
 
 // Content of the always-on-top companion window (P5) AND the design-system
 // showcase for the companion avatar. It runs in its own webview (a separate JS
@@ -120,24 +126,9 @@ export function Companion() {
         <span className="lbl" data-tauri-drag-region style={{ flex: 1, letterSpacing: "0.04em" }}>
           Companion
         </span>
-        <button
-          type="button"
-          onClick={() => void ipc.closeCompanion()}
-          title="Close companion"
-          aria-label="Close companion"
-          className="rail-file"
-          style={{
-            border: "none",
-            background: "transparent",
-            cursor: "pointer",
-            color: "var(--fg-2)",
-            display: "flex",
-            padding: 2,
-            borderRadius: 4,
-          }}
-        >
+        <IconBtn title="Close companion" onClick={() => void ipc.closeCompanion()} size={22}>
           {Ico.close}
-        </button>
+        </IconBtn>
       </div>
 
       <div className="scroll" style={{ flex: 1, overflow: "auto" }}>
@@ -218,7 +209,7 @@ function FauxCompanionDesktopHero() {
           display: "flex",
           alignItems: "center",
           padding: "0 14px",
-          fontSize: 12,
+          fontSize: "var(--fs-12)",
           color: "rgba(255,255,255,0.85)",
         }}
       >
@@ -227,10 +218,10 @@ function FauxCompanionDesktopHero() {
         <span style={{ marginRight: 14 }}>Edit</span>
         <span style={{ marginRight: 14 }}>View</span>
         <span style={{ flex: 1 }} />
-        <span className="mono" style={{ marginRight: 12, fontSize: 11 }}>
+        <span className="mono" style={{ marginRight: 12, fontSize: "var(--fs-11)" }}>
           21:36
         </span>
-        <span style={{ fontSize: 11 }}>Wed 22 May</span>
+        <span style={{ fontSize: "var(--fs-11)" }}>Wed 22 May</span>
       </div>
 
       <FauxEditorWindow />
@@ -270,7 +261,7 @@ function FauxCompanionDesktopHero() {
           background: "rgba(0,0,0,0.55)",
           backdropFilter: "blur(10px)",
           color: "rgba(255,255,255,0.9)",
-          fontSize: 12,
+          fontSize: "var(--fs-12)",
           whiteSpace: "nowrap",
         }}
       >
@@ -326,7 +317,7 @@ function FauxEditorWindow() {
           style={{
             flex: 1,
             textAlign: "center",
-            fontSize: 12,
+            fontSize: "var(--fs-12)",
             color: "rgba(255,255,255,0.55)",
             fontFamily: "var(--mono)",
           }}
@@ -339,7 +330,7 @@ function FauxEditorWindow() {
           flex: 1,
           display: "flex",
           fontFamily: "var(--mono)",
-          fontSize: 11,
+          fontSize: "var(--fs-11)",
           padding: 12,
           gap: 10,
           color: "rgba(255,255,255,0.4)",
@@ -437,7 +428,7 @@ function CompanionDock() {
             justifyContent: "center",
             color: "#fff",
             fontFamily: "var(--mono)",
-            fontSize: 14,
+            fontSize: "var(--fs-14)",
             fontWeight: 600,
             boxShadow: "0 4px 8px rgba(0,0,0,0.3)",
             position: "relative",
@@ -512,33 +503,34 @@ function LiveRow({
         background: "var(--bg-2)",
       }}
     >
-      <button
-        type="button"
-        onClick={() => void ipc.focusSessionFromCompanion(act.session)}
-        title={`${name} — jump to session`}
-        aria-label={`${name} — jump to session`}
-        style={{
-          border: "none",
-          background: "transparent",
-          cursor: "pointer",
-          padding: 0,
-          display: "flex",
-          flexShrink: 0,
-        }}
-      >
-        <CompanionAvatar
-          agent={cli}
-          status={status}
-          thinking={view.thinking}
-          size={44}
-          style={{ pointerEvents: "none" }}
-        />
-      </button>
+      <Tip text={`${name} — jump to session`}>
+        <button
+          type="button"
+          onClick={() => void ipc.focusSessionFromCompanion(act.session)}
+          aria-label={`${name} — jump to session`}
+          style={{
+            border: "none",
+            background: "transparent",
+            cursor: "pointer",
+            padding: 0,
+            display: "flex",
+            flexShrink: 0,
+          }}
+        >
+          <CompanionAvatar
+            agent={cli}
+            status={status}
+            thinking={view.thinking}
+            size={44}
+            style={{ pointerEvents: "none" }}
+          />
+        </button>
+      </Tip>
       <span style={{ flex: 1, minWidth: 0 }}>
         <span
           style={{
             display: "block",
-            fontSize: 12.5,
+            fontSize: "var(--fs-13)",
             color: "var(--fg-0)",
             overflow: "hidden",
             textOverflow: "ellipsis",
@@ -547,7 +539,10 @@ function LiveRow({
         >
           {name}
         </span>
-        <span className="mono" style={{ display: "block", fontSize: 10.5, color: subColor }}>
+        <span
+          className="mono"
+          style={{ display: "block", fontSize: "var(--fs-11)", color: subColor }}
+        >
           {sub}
           {counters && <span style={{ color: "var(--fg-3)" }}>{` · ${counters}`}</span>}
           {tokens > 0 && (
@@ -577,10 +572,10 @@ function Empty() {
       }}
     >
       <span style={{ opacity: 0.5 }}>{Ico.bell}</span>
-      <p style={{ margin: 0, fontSize: 11.5, color: "var(--fg-2)", lineHeight: 1.5 }}>
+      <p style={{ margin: 0, fontSize: "var(--fs-12)", color: "var(--fg-2)", lineHeight: 1.5 }}>
         No agents running.
       </p>
-      <p style={{ margin: 0, fontSize: 10.5, color: "var(--fg-3)", lineHeight: 1.5 }}>
+      <p style={{ margin: 0, fontSize: "var(--fs-11)", color: "var(--fg-3)", lineHeight: 1.5 }}>
         Start one in CodeHub to watch it here.
       </p>
     </div>
@@ -702,8 +697,10 @@ function ShowcaseHeading({ title, note }: { title: string; note: string }) {
         flexWrap: "wrap",
       }}
     >
-      <h2 style={{ margin: 0, fontSize: 14, fontWeight: 600, color: "var(--fg-0)" }}>{title}</h2>
-      <span className="mono" style={{ fontSize: 10.5, color: "var(--fg-2)" }}>
+      <h2 style={{ margin: 0, fontSize: "var(--fs-14)", fontWeight: 600, color: "var(--fg-0)" }}>
+        {title}
+      </h2>
+      <span className="mono" style={{ fontSize: "var(--fs-11)", color: "var(--fg-2)" }}>
         {note}
       </span>
     </div>
@@ -758,9 +755,11 @@ function CompCard({
       <div>
         <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 2 }}>
           <span style={{ width: 5, height: 5, borderRadius: "50%", background: toneColor }} />
-          <span style={{ fontSize: 12, color: "var(--fg-0)", fontWeight: 500 }}>{caption}</span>
+          <span style={{ fontSize: "var(--fs-12)", color: "var(--fg-0)", fontWeight: 500 }}>
+            {caption}
+          </span>
         </div>
-        <div style={{ fontSize: 10.5, color: "var(--fg-2)" }}>{desc}</div>
+        <div style={{ fontSize: "var(--fs-11)", color: "var(--fg-2)" }}>{desc}</div>
       </div>
     </div>
   );
@@ -818,7 +817,7 @@ function CompanionRadial() {
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                fontSize: 14,
+                fontSize: "var(--fs-14)",
                 boxShadow: "0 6px 16px rgba(0,0,0,0.4)",
               }}
             >
@@ -826,7 +825,7 @@ function CompanionRadial() {
             </div>
             <span
               style={{
-                fontSize: 9.5,
+                fontSize: "var(--fs-10)",
                 color: "var(--fg-2)",
                 fontFamily: "var(--mono)",
                 textTransform: "uppercase",
@@ -868,7 +867,7 @@ function CompanionPrefsPanel() {
             padding: "1px 6px",
             borderRadius: 4,
             fontFamily: "var(--mono)",
-            fontSize: 9.5,
+            fontSize: "var(--fs-10)",
             letterSpacing: "0.06em",
             textTransform: "uppercase",
             fontWeight: 500,
@@ -881,23 +880,26 @@ function CompanionPrefsPanel() {
           desktop only
         </span>
       </div>
-      <PrefRow label="Show companion" control={<Toggle on={p.show} onChange={p.setShow} />} />
+      <PrefRow
+        label="Show companion"
+        control={<Switch checked={p.show} onCheckedChange={p.setShow} />}
+      />
       <PrefRow
         label="Hide while CodeHub window is focused"
-        control={<Toggle on={p.hideWhenFocused} onChange={p.setHideWhenFocused} />}
+        control={<Switch checked={p.hideWhenFocused} onCheckedChange={p.setHideWhenFocused} />}
       />
       <PrefRow
         label="Click-through when no events"
         sub="Mouse passes to apps underneath"
-        control={<Toggle on={p.clickThrough} onChange={p.setClickThrough} />}
+        control={<Switch checked={p.clickThrough} onCheckedChange={p.setClickThrough} />}
       />
       <PrefRow
         label="Snap to screen edges"
-        control={<Toggle on={p.snapToEdges} onChange={p.setSnapToEdges} />}
+        control={<Switch checked={p.snapToEdges} onCheckedChange={p.setSnapToEdges} />}
       />
       <PrefRow
         label="Show bubble on hover"
-        control={<Toggle on={p.bubbleOnHover} onChange={p.setBubbleOnHover} />}
+        control={<Switch checked={p.bubbleOnHover} onCheckedChange={p.setBubbleOnHover} />}
       />
       <PrefRow
         label="Character"
@@ -908,31 +910,15 @@ function CompanionPrefsPanel() {
         label="Size"
         last
         control={
-          <div style={{ display: "flex", gap: 4 }}>
-            {(["S", "M", "L"] as CompanionSize[]).map((s) => (
-              <button
-                type="button"
-                key={s}
-                onClick={() => p.setSize(s)}
-                style={{
-                  width: 24,
-                  height: 22,
-                  borderRadius: 4,
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  fontFamily: "var(--mono)",
-                  fontSize: 11,
-                  background: s === p.size ? "var(--bg-3)" : "transparent",
-                  color: s === p.size ? "var(--fg-0)" : "var(--fg-2)",
-                  border: "1px solid var(--bd)",
-                  cursor: "pointer",
-                }}
-              >
-                {s}
-              </button>
-            ))}
-          </div>
+          <Segmented
+            value={p.size}
+            onChange={p.setSize}
+            options={[
+              { key: "S", label: "S" },
+              { key: "M", label: "M" },
+              { key: "L", label: "L" },
+            ]}
+          />
         }
       />
     </div>
@@ -946,42 +932,22 @@ function CharacterSelect({
   value: CharacterKind;
   onChange: (k: CharacterKind) => void;
 }) {
-  const current = CHARACTER_KINDS.find((c) => c.kind === value);
   return (
-    <label
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 6,
-        padding: "5px 9px",
-        background: "var(--bg-3)",
-        borderRadius: 6,
-        border: "1px solid var(--bd)",
-        cursor: "pointer",
-      }}
-    >
-      <Character kind={value} expression="idle" size={18} />
-      <span style={{ fontSize: 12, color: "var(--fg-0)" }}>{current?.name ?? value}</span>
-      <span style={{ color: "var(--fg-2)", fontSize: 10 }}>▾</span>
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value as CharacterKind)}
-        aria-label="Companion character style"
-        style={{
-          position: "absolute",
-          width: 1,
-          height: 1,
-          opacity: 0,
-          pointerEvents: "auto",
-        }}
-      >
+    <Select value={value} onValueChange={(v) => onChange(v as CharacterKind)}>
+      <SelectTrigger size="sm" aria-label="Companion character style">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
         {CHARACTER_KINDS.map((c) => (
-          <option key={c.kind} value={c.kind}>
-            {c.name}
-          </option>
+          <SelectItem key={c.kind} value={c.kind}>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+              <Character kind={c.kind} expression="idle" size={16} />
+              {c.name}
+            </span>
+          </SelectItem>
         ))}
-      </select>
-    </label>
+      </SelectContent>
+    </Select>
   );
 }
 
@@ -1007,46 +973,11 @@ function PrefRow({
       }}
     >
       <div style={{ flex: 1 }}>
-        <div style={{ fontSize: 12.5, color: "var(--fg-0)" }}>{label}</div>
-        {sub && <div style={{ fontSize: 11, color: "var(--fg-2)" }}>{sub}</div>}
+        <div style={{ fontSize: "var(--fs-13)", color: "var(--fg-0)" }}>{label}</div>
+        {sub && <div style={{ fontSize: "var(--fs-11)", color: "var(--fg-2)" }}>{sub}</div>}
       </div>
       {control}
     </div>
-  );
-}
-
-function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={on}
-      onClick={() => onChange(!on)}
-      style={{
-        width: 34,
-        height: 20,
-        borderRadius: 999,
-        border: "1px solid var(--bd)",
-        background: on ? "var(--live)" : "var(--bg-3)",
-        position: "relative",
-        cursor: "pointer",
-        flexShrink: 0,
-        transition: "background 0.15s",
-      }}
-    >
-      <span
-        style={{
-          position: "absolute",
-          top: 1,
-          left: on ? 15 : 1,
-          width: 16,
-          height: 16,
-          borderRadius: "50%",
-          background: on ? "#0a0a0a" : "var(--fg-2)",
-          transition: "left 0.15s",
-        }}
-      />
-    </button>
   );
 }
 
@@ -1080,7 +1011,7 @@ function CharacterCard({
             position: "absolute",
             top: 12,
             right: 12,
-            fontSize: 9.5,
+            fontSize: "var(--fs-10)",
             padding: "2px 6px",
             borderRadius: 4,
             background: "var(--fg-0)",
@@ -1094,8 +1025,12 @@ function CharacterCard({
           active
         </span>
       )}
-      <span style={{ fontSize: 13, fontWeight: 600, color: "var(--fg-0)" }}>{name}</span>
-      <div style={{ fontSize: 11, color: "var(--fg-2)", minHeight: 30, lineHeight: 1.4 }}>
+      <span style={{ fontSize: "var(--fs-13)", fontWeight: 600, color: "var(--fg-0)" }}>
+        {name}
+      </span>
+      <div
+        style={{ fontSize: "var(--fs-11)", color: "var(--fg-2)", minHeight: 30, lineHeight: 1.4 }}
+      >
         {desc}
       </div>
       <div
@@ -1117,7 +1052,7 @@ function CharacterCard({
             <Character kind={kind} expression={exp} />
             <span
               style={{
-                fontSize: 9,
+                fontSize: "var(--fs-9)",
                 fontFamily: "var(--mono)",
                 color: "var(--fg-3)",
                 textTransform: "uppercase",
@@ -1130,14 +1065,14 @@ function CharacterCard({
         ))}
       </div>
       {!active && (
-        <button
-          type="button"
-          className="btn xs ghost"
+        <Button
+          variant="ghost"
+          size="xs"
           style={{ alignSelf: "flex-start" }}
           onClick={() => prefs.setCharacter(kind)}
         >
           Use {name}
-        </button>
+        </Button>
       )}
     </div>
   );

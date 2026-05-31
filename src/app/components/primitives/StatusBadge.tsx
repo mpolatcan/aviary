@@ -15,7 +15,7 @@ export function StatusBadge({ status = "idle", children }: StatusBadgeProps) {
         alignItems: "center",
         gap: 6,
         fontFamily: "var(--mono)",
-        fontSize: 10.5,
+        fontSize: "var(--fs-11)",
         letterSpacing: "0.05em",
         textTransform: "uppercase",
         color: s.color,

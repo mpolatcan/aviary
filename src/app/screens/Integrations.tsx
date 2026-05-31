@@ -1,173 +1,93 @@
 /**
- * Integrations — external services CodeHub connects to.
+ * Source control — the GitHub connection CodeHub uses to clone, push, and open
+ * PRs on the user's behalf. GitHub-only for now (other code hosts are out of
+ * scope); rendered as the Settings "Source control" sub-pane.
  *
- * Two real surfaces, both FACTUAL and presence-only for any credential:
+ * Everything is FACTUAL and presence-only: `github_status` reports connected/not,
+ * plus (when reachable) login / scopes / token-expiry from the GitHub API. The
+ * token VALUE is never read, returned, or rendered. The visible repo list comes
+ * from `github_repos`. Disconnect removes the stored account profile(s)
+ * (vault/env) — a shell-exported $GITHUB_TOKEN has no profile, so the UI says so
+ * honestly instead of offering an inert button.
  *
- *  1. GitHub — presence-only credential check. `github_status` reports
- *     connected/not, plus (when reachable) login / scopes / token-expiry from
- *     the GitHub API. The token VALUE is never read, returned, or rendered.
- *     The visible repo list comes from `github_repos`.
- *
- *  2. Claude config (claude_integrations) — the runtime's signed-in account
- *     (oauthAccount in ~/.claude.json, identity only) + configured MCP servers
- *     (name / transport / non-secret target). Secret-bearing MCP fields (env,
- *     headers) are never read by the backend, so never appear here.
- *
- * Everything the design mocks but CodeHub has no source for — other code hosts
- * (GitLab/Bitbucket/…), project trackers (Linear/Jira/…), observability
- * (Sentry/Datadog/…) — renders "Coming soon", never a fabricated "Connected".
- *
- * Claude-only for the agent-config surface: Codex stores auth in a sqlite db and
- * Antigravity has no readable connection config, so neither is surfaced.
+ * The runtime's Claude account + MCP servers (claude_integrations) used to live
+ * here too; that surface now lives only in Settings → Coding Agents (the agent
+ * detail view), where it belongs — it isn't source control.
  */
 import { ApiKeyDialog } from "@/app/components/ApiKeyDialog";
-import { AgentGlyph } from "@/app/components/primitives/AgentGlyph";
+import { LoginTerminalDialog } from "@/app/components/LoginTerminalDialog";
+import { Segmented } from "@/app/components/primitives/Segmented";
 import { StatusDot } from "@/app/components/primitives/StatusDot";
 import { Tag } from "@/app/components/primitives/Tag";
+import { Tip } from "@/app/components/primitives/Tip";
 import { Ico } from "@/app/components/primitives/icons";
-import { type ClaudeIntegrations, type GithubRepo, type GithubStatus, ipc } from "@/app/lib/ipc";
+import { type GithubRepo, type GithubStatus, ipc } from "@/app/lib/ipc";
 import { useStore } from "@/app/lib/store";
 import { Button } from "@/app/ui/button";
-import { useEffect, useState } from "react";
+import { Input } from "@/app/ui/input";
+import { useEffect, useMemo, useRef, useState } from "react";
 
-// Rendered as a Settings sub-pane (Settings.tsx → NAV_GROUPS "integrations"),
-// matching the design IA where Integrations lives inside the Settings shell. It
-// returns a pane fragment (header + content) — the Settings pane container
-// supplies the scroll + padding — not its own <main>.
+// Rendered as a Settings sub-pane (Settings.tsx → NAV_GROUPS "integrations" key).
+// The pane container supplies the scroll + padding, so this returns a fragment
+// (header + content), not its own <main>.
 export function IntegrationsPane() {
-  const status = useStore((s) => s.status);
-  const state = status?.state ?? "missing";
-  const running = state === "running";
-
-  // GitHub is independent of the runtime container, so it loads regardless
-  // of container state. Presence-only.
+  // GitHub is independent of the runtime container, so it loads regardless of
+  // container state. Presence-only.
   const githubStatus = useStore((s) => s.githubStatus);
   const githubRepos = useStore((s) => s.githubRepos);
   const loadGithubStatus = useStore((s) => s.loadGithubStatus);
   const loadGithubRepos = useStore((s) => s.loadGithubRepos);
+  const loadAccountProfiles = useStore((s) => s.loadAccountProfiles);
+  const connected = Boolean(githubStatus?.connected);
   useEffect(() => {
     void loadGithubStatus();
-  }, [loadGithubStatus]);
+    // Needed so the connected card can offer a real Disconnect (it removes the
+    // GitHub account profile from the vault).
+    void loadAccountProfiles();
+  }, [loadGithubStatus, loadAccountProfiles]);
   // Repos only matter once connected; fetch them when the status flips on.
   useEffect(() => {
-    if (githubStatus?.connected) void loadGithubRepos();
-  }, [githubStatus?.connected, loadGithubRepos]);
-
-  // One-shot poll (~10s) of the runtime's Claude config; it can change as the
-  // user signs in or edits MCP. Alive-guarded — a failed read clears to null so
-  // the UI shows an honest note rather than stale data.
-  const [data, setData] = useState<ClaudeIntegrations | null>(null);
-  useEffect(() => {
-    if (!running) {
-      setData(null);
-      return;
-    }
-    let alive = true;
-    const tick = () => {
-      ipc
-        .claudeIntegrations()
-        .then((d) => alive && setData(d))
-        .catch(() => alive && setData(null));
-    };
-    tick();
-    const h = setInterval(tick, 10000);
-    return () => {
-      alive = false;
-      clearInterval(h);
-    };
-  }, [running]);
+    if (connected) void loadGithubRepos();
+  }, [connected, loadGithubRepos]);
 
   return (
     <>
       <h1
         style={{
           margin: "0 0 4px",
-          fontSize: 22,
+          fontSize: "var(--fs-20)",
           fontWeight: 600,
           letterSpacing: "-0.01em",
           color: "var(--fg-0)",
         }}
       >
-        Integrations
+        Source control
       </h1>
-      <p style={{ margin: "0 0 28px", color: "var(--fg-2)", fontSize: 13 }}>
-        Connect external services so agents can read context and act on your behalf. Connections are
-        surfaced presence-only — no credential value is read or stored. GitHub uses a
-        keychain-backed token; the Claude account + MCP config is read from the runtime container.
+      <p
+        style={{
+          margin: "0 0 28px",
+          color: "var(--fg-2)",
+          fontSize: "var(--fs-13)",
+          maxWidth: 640,
+          lineHeight: 1.55,
+        }}
+      >
+        Connect GitHub so agents can clone, branch, push, and open pull requests on your behalf. The
+        connection is{" "}
+        <strong style={{ color: "var(--fg-1)", fontWeight: 600 }}>presence-only</strong> — CodeHub
+        checks that a token exists and reads what GitHub reports about it (login, scopes, expiry),
+        but never reads or stores the token value itself.
       </p>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-        {/* GitHub — presence-only */}
-        <section>
-          <SectionHead label="Source control" />
-          <GitHubCard status={githubStatus} repos={githubRepos} />
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
-              gap: 8,
-              marginTop: 8,
-            }}
-          >
-            <SoonRow name="GitLab" desc="Self-hosted or saas.gitlab.com" />
-            <SoonRow name="Bitbucket" desc="Cloud + Data Center" />
-            <SoonRow name="Gitea" desc="Self-hosted" />
-            <SoonRow name="Sourcehut" desc="git.sr.ht" />
-          </div>
-        </section>
-
-        {/* Other categories — no data source yet, honestly "Coming soon" */}
-        <section>
-          <SectionHead label="Project trackers" />
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
-              gap: 8,
-            }}
-          >
-            <SoonRow name="Linear" desc="Read issues, comment, transition status" />
-            <SoonRow name="Jira" desc="Atlassian cloud + server" />
-            <SoonRow name="Notion" desc="Read docs, append to pages" />
-            <SoonRow name="Asana" desc="Tasks & projects" />
-          </div>
-        </section>
-
-        <section>
-          <SectionHead label="Observability" />
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
-              gap: 8,
-            }}
-          >
-            <SoonRow name="Sentry" desc="Pipe runtime errors back to the agent for triage" />
-            <SoonRow name="Datadog" desc="Logs, traces, metrics" />
-            <SoonRow name="Honeycomb" desc="Distributed traces" />
-            <SoonRow name="Grafana" desc="Read panels, query Prometheus" />
-          </div>
-        </section>
-
-        {/* Runtime Claude config — account + MCP (identity / non-secret only) */}
-        <section>
-          <SectionHead label="Runtime agent config" />
-          {!running ? (
-            <ClaudeBody empty="Runtime not running — no Claude config to read." />
-          ) : data === null ? (
-            <ClaudeBody empty="Reading Claude config…" />
-          ) : (
-            <ClaudeBody data={data} />
-          )}
-        </section>
-      </div>
+      <GitHubCard status={githubStatus} repos={githubRepos} />
     </>
   );
 }
 
-// GitHub featured card. Two modes:
-//  - connected: green status, login/expiry line, scope chips, repo list.
-//  - not connected: instructional — directs to Settings to add a token.
+// ── GitHub featured card ────────────────────────────────────────────────────
+// connected: green status, login/expiry line, scope chips, capability matrix,
+// searchable repo table, and a real Disconnect. Not connected: instructional —
+// OAuth / PAT / env-var methods.
 function GitHubCard({
   status,
   repos,
@@ -175,20 +95,53 @@ function GitHubCard({
   status: GithubStatus | null;
   repos: GithubRepo[];
 }) {
-  // null = not loaded yet; render a neutral skeleton-ish state, never fake data.
+  // null = not loaded yet; render a neutral state, never fake data.
   const connected = status?.connected ?? false;
   const varName = status?.varName ?? "GITHUB_TOKEN";
-  // Manual repo refresh (design integrations.jsx "Sync"). Re-runs the real
-  // github_repos read — no fabricated data, just a fresh fetch on demand. The
-  // design's sibling "Add repo" button is omitted: granting a token access to a
-  // new repo happens on github.com, not from here, so a button would be inert.
+
   const loadGithubRepos = useStore((s) => s.loadGithubRepos);
+  const loadGithubStatus = useStore((s) => s.loadGithubStatus);
+  const loadAccountProfiles = useStore((s) => s.loadAccountProfiles);
+  const removeAccountProfile = useStore((s) => s.removeAccountProfile);
+  const githubProfiles = useStore((s) => s.accountProfiles).filter((p) => p.agent === "github");
+
+  // A shell-exported $GITHUB_TOKEN has no stored profile, so there's nothing the
+  // app can remove — only vault/env profiles are removable here.
+  const removable = githubProfiles.length > 0;
+  const methodLabel = removable
+    ? githubProfiles.some((p) => p.source === "vault")
+      ? "token in vault"
+      : `via $${varName}`
+    : `via $${varName} (shell)`;
+
   const [syncing, setSyncing] = useState(false);
   const sync = () => {
     if (syncing) return;
     setSyncing(true);
     void Promise.resolve(loadGithubRepos()).finally(() => setSyncing(false));
   };
+
+  const [disconnecting, setDisconnecting] = useState(false);
+  const disconnect = async () => {
+    if (disconnecting || !removable) return;
+    if (
+      !window.confirm(
+        "Disconnect GitHub? This removes the stored token from CodeHub's vault. Agents lose clone/push/PR access until you reconnect.",
+      )
+    )
+      return;
+    setDisconnecting(true);
+    try {
+      for (const p of githubProfiles) await removeAccountProfile(p.id);
+      await loadGithubStatus();
+      await loadAccountProfiles();
+    } finally {
+      setDisconnecting(false);
+    }
+  };
+
+  const expiry = expiryInfo(status?.tokenExpiry ?? null);
+
   return (
     <div className="ch-card" style={{ padding: 0, overflow: "hidden" }}>
       {/* header — connection status (presence-only) */}
@@ -197,77 +150,80 @@ function GitHubCard({
           display: "flex",
           alignItems: "center",
           gap: 14,
-          padding: "14px 18px",
+          padding: "16px 18px",
           borderBottom: "1px solid var(--bd-soft)",
+          background: connected
+            ? "linear-gradient(180deg, color-mix(in oklab, var(--live) 5%, var(--bg-2)), var(--bg-2))"
+            : "var(--bg-2)",
         }}
       >
-        <div
-          className="mono"
-          style={{
-            width: 40,
-            height: 40,
-            borderRadius: 8,
-            background: "var(--bg-0)",
-            border: "1px solid var(--bd)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            color: "var(--fg-0)",
-            fontWeight: 700,
-            fontSize: 17,
-          }}
-        >
-          gh
-        </div>
+        <GitHubMark connected={connected} />
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 2 }}>
-            <span style={{ fontSize: 14, fontWeight: 600, color: "var(--fg-0)" }}>GitHub</span>
-            {connected ? (
-              <span
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 5,
-                  fontSize: 11.5,
-                  color: "var(--live)",
-                }}
-              >
-                <StatusDot status="live" /> Connected
-              </span>
-            ) : (
-              <span
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 5,
-                  fontSize: 11.5,
-                  color: "var(--wait)",
-                }}
-              >
-                <StatusDot status="wait" /> Not connected
-              </span>
-            )}
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 3 }}>
+            <span style={{ fontSize: "var(--fs-16)", fontWeight: 600, color: "var(--fg-0)" }}>
+              GitHub
+            </span>
+            <ConnPill connected={connected} />
             <Tag>${varName}</Tag>
           </div>
-          <div className="mono" style={{ fontSize: 11.5, color: "var(--fg-2)" }}>
+          <div className="mono" style={{ fontSize: "var(--fs-12)", color: "var(--fg-2)" }}>
             {connected
               ? [
-                  status?.login,
+                  status?.login ? `@${status.login}` : null,
                   repos.length ? `${repos.length} repo${repos.length === 1 ? "" : "s"}` : null,
-                  status?.tokenExpiry ? `token expires ${fmtExpiry(status.tokenExpiry)}` : null,
+                  methodLabel,
                 ]
                   .filter(Boolean)
-                  .join(" · ") || "token active"
-              : "not connected — choose a method below"}
+                  .join("  ·  ") || "token active"
+              : "Not connected — choose a method below."}
           </div>
         </div>
+        {connected && expiry && <ExpiryPill text={expiry.text} soon={expiry.soon} />}
+        {connected && removable && (
+          <Tip text="Remove the stored GitHub token from CodeHub's vault">
+            <span style={{ display: "inline-flex" }}>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void disconnect()}
+                disabled={disconnecting}
+                style={{ color: "var(--err)" }}
+              >
+                {disconnecting ? "Disconnecting…" : "Disconnect"}
+              </Button>
+            </span>
+          </Tip>
+        )}
       </div>
 
       {connected ? (
         <>
+          {/* token-expiry warning — only when GitHub reported a soon-expiring token */}
+          {expiry?.soon && (
+            <div
+              className="mono"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                padding: "10px 18px",
+                borderBottom: "1px solid var(--bd-soft)",
+                background: "color-mix(in oklab, var(--wait) 8%, var(--bg-2))",
+                fontSize: "var(--fs-11)",
+                color: "var(--wait)",
+              }}
+            >
+              <span style={{ display: "inline-flex" }}>{Ico.bell}</span>
+              Token expires {expiry.text} — renew it on github.com/settings/tokens before it lapses.
+            </div>
+          )}
+
+          {/* capabilities — what agents can do, derived from reported scopes */}
+          <GitHubCapabilities status={status} />
+
           {/* scopes granted — only those the API reported; never fabricated */}
           <div style={{ padding: "14px 18px", borderBottom: "1px solid var(--bd-soft)" }}>
-            <div className="lbl" style={{ marginBottom: 8, fontSize: 11 }}>
+            <div className="lbl" style={{ marginBottom: 8, fontSize: "var(--fs-11)" }}>
               Scopes granted
             </div>
             {status && status.scopes.length > 0 ? (
@@ -277,62 +233,23 @@ function GitHubCard({
                 ))}
               </div>
             ) : (
-              <div className="mono" style={{ fontSize: 11, color: "var(--fg-3)" }}>
+              <div className="mono" style={{ fontSize: "var(--fs-11)", color: "var(--fg-3)" }}>
                 {status?.tokenExpiry === null && status?.login === null
                   ? "Token reachable, but the API didn't report scopes (fine-grained PATs don't list classic scopes)."
                   : "No scopes reported by the GitHub API for this token."}
               </div>
             )}
-            <div className="mono" style={{ marginTop: 8, fontSize: 11, color: "var(--fg-3)" }}>
+            <div
+              className="mono"
+              style={{ marginTop: 8, fontSize: "var(--fs-11)", color: "var(--fg-3)" }}
+            >
               Edit scopes on the token at github.com/settings/tokens — CodeHub never reads the
               value, only its presence.
             </div>
           </div>
 
-          {/* repos visible to the connected account */}
-          <div style={{ padding: "12px 18px" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-              <span className="lbl" style={{ fontSize: 11 }}>
-                Available repositories · {repos.length}
-              </span>
-              <span style={{ flex: 1 }} />
-              <button
-                type="button"
-                onClick={sync}
-                disabled={syncing}
-                className="mono"
-                title="Re-fetch repositories visible to this token"
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 5,
-                  padding: "3px 9px",
-                  background: "transparent",
-                  border: "1px solid var(--bd-soft)",
-                  borderRadius: 5,
-                  color: syncing ? "var(--fg-3)" : "var(--fg-2)",
-                  fontSize: 11,
-                  cursor: syncing ? "default" : "pointer",
-                }}
-              >
-                {syncing ? "Syncing…" : "Sync"}
-              </button>
-            </div>
-            {repos.length === 0 ? (
-              <div
-                className="mono"
-                style={{ fontSize: 11.5, color: "var(--fg-3)", padding: "4px 0" }}
-              >
-                No repositories returned for this token (it may lack repo scope, or the org has none
-                visible).
-              </div>
-            ) : (
-              repos.map((r, i) => (
-                <RepoRow key={r.nameWithOwner} repo={r} last={i === repos.length - 1} />
-              ))
-            )}
-          </div>
-          <GitHubCapabilityStrip status={status} />
+          {/* repositories — searchable / filterable table */}
+          <ReposPanel repos={repos} syncing={syncing} onSync={sync} />
         </>
       ) : (
         <GitHubNotConnected varName={varName} />
@@ -341,12 +258,96 @@ function GitHubCard({
   );
 }
 
+// The GitHub identity tile in the card header. A bold mono "gh" mark; a live ring
+// when connected so the status reads even before the pill.
+function GitHubMark({ connected }: { connected: boolean }) {
+  return (
+    <div
+      className="mono"
+      style={{
+        width: 46,
+        height: 46,
+        borderRadius: 10,
+        flexShrink: 0,
+        background: "var(--bg-0)",
+        border: connected
+          ? "1px solid color-mix(in oklab, var(--live) 40%, var(--bd))"
+          : "1px solid var(--bd)",
+        boxShadow: connected
+          ? "0 0 0 3px color-mix(in oklab, var(--live) 12%, transparent)"
+          : "none",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        color: "var(--fg-0)",
+        fontWeight: 700,
+        fontSize: "var(--fs-20)",
+        letterSpacing: "-0.02em",
+      }}
+    >
+      gh
+    </div>
+  );
+}
+
+function ConnPill({ connected }: { connected: boolean }) {
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 5,
+        padding: "2px 9px",
+        borderRadius: 999,
+        fontSize: "var(--fs-11)",
+        fontWeight: 600,
+        letterSpacing: "0.03em",
+        textTransform: "uppercase",
+        background: connected ? "color-mix(in oklab, var(--live) 12%, transparent)" : "var(--bg-3)",
+        color: connected ? "var(--live)" : "var(--wait)",
+        border: connected ? "1px solid transparent" : "1px solid var(--bd-soft)",
+      }}
+    >
+      <StatusDot status={connected ? "live" : "wait"} />
+      {connected ? "Connected" : "Not connected"}
+    </span>
+  );
+}
+
+function ExpiryPill({ text, soon }: { text: string; soon: boolean }) {
+  return (
+    <span
+      className="mono"
+      style={{
+        flexShrink: 0,
+        fontSize: "var(--fs-11)",
+        color: soon ? "var(--wait)" : "var(--fg-2)",
+        whiteSpace: "nowrap",
+      }}
+    >
+      expires {text}
+    </span>
+  );
+}
+
+// ── Not-connected: connection methods ───────────────────────────────────────
 function GitHubNotConnected({ varName }: { varName: string }) {
   const loadGithubStatus = useStore((s) => s.loadGithubStatus);
+  const loadGithubRepos = useStore((s) => s.loadGithubRepos);
   const loadAccountProfiles = useStore((s) => s.loadAccountProfiles);
   const [patDialog, setPatDialog] = useState(false);
   const [oauthBusy, setOauthBusy] = useState(false);
   const [oauthError, setOauthError] = useState<string | null>(null);
+  // GitHub OAuth runs `gh auth login --web` in a throwaway login container's tmux
+  // session, surfaced through the shared LoginTerminalDialog (same flow as the
+  // Claude/Codex sign-ins). The token is captured to the vault on session exit.
+  const [terminalDialog, setTerminalDialog] = useState<{
+    provider: string;
+    profileId: string;
+    sessionName: string;
+    workspace: string;
+  } | null>(null);
+  const pendingProfileId = useRef<string | null>(null);
 
   const startGithubOAuth = async () => {
     setOauthBusy(true);
@@ -359,7 +360,18 @@ function GitHubNotConnected({ varName }: { varName: string }) {
       const created = list.find((p) => !existingIds.has(p.id));
       if (!created) throw new Error("profile creation failed");
       createdId = created.id;
-      await ipc.vaultInitiateOauth("github", created.id);
+      const result = await ipc.vaultInitiateOauth("github", created.id);
+      if (result?.sessionName && result?.workspace) {
+        pendingProfileId.current = created.id;
+        setTerminalDialog({
+          provider: "github",
+          profileId: created.id,
+          sessionName: result.sessionName,
+          workspace: result.workspace,
+        });
+      } else {
+        throw new Error("login session did not start");
+      }
     } catch (e) {
       const msg = String(e).replace(/^Error:\s*/, "");
       setOauthError(msg);
@@ -371,20 +383,48 @@ function GitHubNotConnected({ varName }: { varName: string }) {
     }
   };
 
+  // Mirror Settings' OAuth completion: on capture, refresh status/repos; on
+  // cancel, keep the profile only if a token actually landed, else drop it.
+  const handleDialogDone = (result: "captured" | "cancelled") => {
+    const pendingId = pendingProfileId.current;
+    setTerminalDialog(null);
+    pendingProfileId.current = null;
+    if (result === "captured") {
+      void loadGithubStatus();
+      void loadAccountProfiles();
+      void loadGithubRepos();
+    } else if (pendingId) {
+      void (async () => {
+        try {
+          if (await ipc.vaultHasKey(pendingId)) {
+            void loadGithubStatus();
+            await loadAccountProfiles();
+          } else {
+            await useStore.getState().removeAccountProfile(pendingId);
+          }
+        } catch {
+          await useStore.getState().removeAccountProfile(pendingId);
+        }
+      })();
+    }
+  };
+
   return (
-    <div style={{ padding: "16px 18px" }}>
-      <p style={{ margin: "0 0 14px", fontSize: 12.5, color: "var(--fg-1)", lineHeight: 1.6 }}>
+    <div style={{ padding: "18px" }}>
+      <p
+        style={{
+          margin: "0 0 14px",
+          fontSize: "var(--fs-13)",
+          color: "var(--fg-1)",
+          lineHeight: 1.6,
+        }}
+      >
         Connect GitHub so agents can clone, push, and open PRs. Choose one method:
       </p>
 
       <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={oauthBusy}
-          onClick={() => void startGithubOAuth()}
-        >
-          {oauthBusy ? "Opening browser..." : "Sign in with GitHub"}
+        <Button size="sm" disabled={oauthBusy} onClick={() => void startGithubOAuth()}>
+          {oauthBusy ? "Opening browser…" : "Sign in with GitHub"}
         </Button>
         <Button variant="outline" size="sm" onClick={() => setPatDialog(true)}>
           Paste a PAT
@@ -400,7 +440,7 @@ function GitHubNotConnected({ varName }: { varName: string }) {
             borderRadius: 6,
             background: "color-mix(in oklab, var(--err) 8%, var(--bg-2))",
             border: "1px solid color-mix(in oklab, var(--err) 30%, var(--bd))",
-            fontSize: 11.5,
+            fontSize: "var(--fs-12)",
             color: "var(--err)",
           }}
         >
@@ -414,10 +454,9 @@ function GitHubNotConnected({ varName }: { varName: string }) {
           background: "var(--bg-1)",
           border: "1px solid var(--bd-soft)",
           borderRadius: 8,
-          marginBottom: 8,
         }}
       >
-        <div className="lbl" style={{ marginBottom: 6, fontSize: 10 }}>
+        <div className="lbl" style={{ marginBottom: 6, fontSize: "var(--fs-10)" }}>
           or use an environment variable
         </div>
         <div
@@ -427,17 +466,29 @@ function GitHubNotConnected({ varName }: { varName: string }) {
             background: "var(--bg-0)",
             border: "1px solid var(--bd)",
             borderRadius: 5,
-            fontSize: 11,
+            fontSize: "var(--fs-11)",
             color: "var(--fg-1)",
           }}
         >
           export {varName}=ghp_your_token_here
         </div>
-        <p className="mono" style={{ margin: "8px 0 0", fontSize: 10, color: "var(--fg-3)" }}>
+        <p
+          className="mono"
+          style={{ margin: "8px 0 0", fontSize: "var(--fs-10)", color: "var(--fg-3)" }}
+        >
           Export it in your shell before launching CodeHub. Fine-grained PAT with repo + PR access.
         </p>
       </div>
 
+      {terminalDialog && (
+        <LoginTerminalDialog
+          provider={terminalDialog.provider}
+          profileId={terminalDialog.profileId}
+          sessionName={terminalDialog.sessionName}
+          workspace={terminalDialog.workspace}
+          onDone={handleDialogDone}
+        />
+      )}
       {patDialog && (
         <ApiKeyDialog
           agent="github"
@@ -452,51 +503,69 @@ function GitHubNotConnected({ varName }: { varName: string }) {
   );
 }
 
-function GitHubCapabilityStrip({ status }: { status: GithubStatus | null }) {
+// ── Capability matrix ───────────────────────────────────────────────────────
+// What agents can actually do, derived from the scopes GitHub reported. Read
+// capabilities (clone/fetch) are always available with any valid token; write
+// ones depend on scopes.
+function GitHubCapabilities({ status }: { status: GithubStatus | null }) {
   const scopes = status?.scopes ?? [];
-  const canPush = hasGithubScope(scopes, ["repo", "public_repo", "contents"]);
-  const canPr = hasGithubScope(scopes, ["repo", "pull_request", "pull_requests"]);
-  const canIssues = hasGithubScope(scopes, ["repo", "issues"]);
+  const caps: { label: string; ok: boolean }[] = [
+    { label: "clone", ok: true },
+    { label: "fetch", ok: true },
+    { label: "push", ok: hasGithubScope(scopes, ["repo", "public_repo", "contents"]) },
+    { label: "open PR", ok: hasGithubScope(scopes, ["repo", "pull_request", "pull_requests"]) },
+    { label: "comment issues", ok: hasGithubScope(scopes, ["repo", "issues"]) },
+  ];
   return (
     <div
       style={{
-        padding: "12px 18px",
-        borderTop: "1px solid var(--bd-soft)",
-        background: "var(--bg-1)",
+        padding: "14px 18px",
+        borderBottom: "1px solid var(--bd-soft)",
         display: "flex",
         alignItems: "center",
-        gap: 14,
-        fontSize: 12,
-        color: "var(--fg-2)",
-        fontFamily: "var(--mono)",
+        gap: 8,
         flexWrap: "wrap",
       }}
     >
-      <span className="lbl" style={{ fontSize: 11 }}>
+      <span className="lbl" style={{ fontSize: "var(--fs-11)", marginRight: 4 }}>
         agents can
       </span>
-      <Capability label="clone" ok />
-      <Capability label="fetch" ok />
-      <Capability label="push" ok={canPush} />
-      <Capability label="open PR" ok={canPr} />
-      <Capability label="comment issues" ok={canIssues} />
-      <span style={{ flex: 1, minWidth: 24 }} />
-      <span style={{ color: "var(--fg-3)" }}>
-        write permissions depend on scopes reported by GitHub
+      {caps.map((c) => (
+        <CapabilityChip key={c.label} label={c.label} ok={c.ok} />
+      ))}
+      <span style={{ flex: 1, minWidth: 12 }} />
+      <span className="mono" style={{ fontSize: "var(--fs-11)", color: "var(--fg-3)" }}>
+        writes depend on scopes
       </span>
     </div>
   );
 }
 
-function Capability({ label, ok }: { label: string; ok: boolean }) {
+function CapabilityChip({ label, ok }: { label: string; ok: boolean }) {
   return (
-    <span style={{ color: ok ? "var(--fg-1)" : "var(--fg-3)", whiteSpace: "nowrap" }}>{label}</span>
+    <span
+      className="mono"
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 5,
+        padding: "3px 9px",
+        borderRadius: 999,
+        fontSize: "var(--fs-11)",
+        color: ok ? "var(--fg-1)" : "var(--fg-3)",
+        background: ok ? "color-mix(in oklab, var(--live) 9%, transparent)" : "var(--bg-1)",
+        border: ok
+          ? "1px solid color-mix(in oklab, var(--live) 26%, transparent)"
+          : "1px solid var(--bd-soft)",
+        whiteSpace: "nowrap",
+      }}
+    >
+      <span style={{ display: "inline-flex", color: ok ? "var(--live)" : "var(--fg-3)" }}>
+        {ok ? Ico.check : <span style={{ lineHeight: 1 }}>–</span>}
+      </span>
+      {label}
+    </span>
   );
-}
-
-function hasGithubScope(scopes: string[], needles: string[]): boolean {
-  const normalized = scopes.map((s) => s.toLowerCase().replace(/[\s:.-]+/g, "_"));
-  return needles.some((needle) => normalized.some((scope) => scope.includes(needle)));
 }
 
 function ScopeChip({ label }: { label: string }) {
@@ -509,7 +578,7 @@ function ScopeChip({ label }: { label: string }) {
         gap: 5,
         padding: "3px 8px",
         borderRadius: 4,
-        fontSize: 10.5,
+        fontSize: "var(--fs-11)",
         color: "var(--live)",
         background: "color-mix(in oklab, var(--live) 10%, transparent)",
         border: "1px solid color-mix(in oklab, var(--live) 30%, transparent)",
@@ -521,17 +590,169 @@ function ScopeChip({ label }: { label: string }) {
   );
 }
 
+// ── Repositories panel ──────────────────────────────────────────────────────
+// The repos visible to the connected token, with client-side search, a
+// visibility filter, and sort. All data is from `github_repos` — filtering/sort
+// is purely presentational, never fabricated.
+type Vis = "all" | "public" | "private";
+type SortKey = "active" | "name";
+
+function ReposPanel({
+  repos,
+  syncing,
+  onSync,
+}: {
+  repos: GithubRepo[];
+  syncing: boolean;
+  onSync: () => void;
+}) {
+  const [q, setQ] = useState("");
+  const [vis, setVis] = useState<Vis>("all");
+  const [sort, setSort] = useState<SortKey>("active");
+
+  const privateCount = repos.filter((r) => r.private).length;
+  const prTotal = repos.reduce((n, r) => n + (r.openPrs ?? 0), 0);
+
+  const filtered = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    const list = repos.filter((r) => {
+      if (vis === "public" && r.private) return false;
+      if (vis === "private" && !r.private) return false;
+      if (needle && !r.nameWithOwner.toLowerCase().includes(needle)) return false;
+      return true;
+    });
+    return [...list].sort((a, b) => {
+      if (sort === "name") return a.nameWithOwner.localeCompare(b.nameWithOwner);
+      const pa = a.openPrs ?? -1;
+      const pb = b.openPrs ?? -1;
+      if (pb !== pa) return pb - pa;
+      return a.nameWithOwner.localeCompare(b.nameWithOwner);
+    });
+  }, [repos, q, vis, sort]);
+
+  return (
+    <div style={{ padding: "14px 18px" }}>
+      {/* header row: title + stats + sync */}
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+        <span className="lbl" style={{ fontSize: "var(--fs-11)" }}>
+          Repositories
+        </span>
+        <span className="mono tnum" style={{ fontSize: "var(--fs-11)", color: "var(--fg-3)" }}>
+          {repos.length} total · {privateCount} private · {prTotal} open PR
+          {prTotal === 1 ? "" : "s"}
+        </span>
+        <span style={{ flex: 1 }} />
+        <Tip text="Re-fetch repositories visible to this token">
+          <span style={{ display: "inline-flex" }}>
+            <Button
+              variant="outline"
+              size="xs"
+              onClick={onSync}
+              disabled={syncing}
+              className="font-mono"
+            >
+              {syncing ? "Syncing…" : "Sync"}
+            </Button>
+          </span>
+        </Tip>
+      </div>
+
+      {/* toolbar: search + visibility + sort */}
+      {repos.length > 0 && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            marginBottom: 4,
+            flexWrap: "wrap",
+          }}
+        >
+          <div style={{ position: "relative", flex: "1 1 200px", minWidth: 160 }}>
+            <span
+              aria-hidden="true"
+              style={{
+                position: "absolute",
+                left: 9,
+                top: "50%",
+                transform: "translateY(-50%)",
+                color: "var(--fg-3)",
+                display: "inline-flex",
+                pointerEvents: "none",
+              }}
+            >
+              {Ico.search}
+            </span>
+            <Input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Filter repositories…"
+              spellCheck={false}
+              className="font-mono h-auto"
+              style={{ paddingLeft: 30, fontSize: "var(--fs-12)" }}
+            />
+          </div>
+          <Segmented<Vis>
+            value={vis}
+            onChange={setVis}
+            options={[
+              { key: "all", label: "All" },
+              { key: "public", label: "Public" },
+              { key: "private", label: "Private" },
+            ]}
+          />
+          <Segmented<SortKey>
+            value={sort}
+            onChange={setSort}
+            options={[
+              { key: "active", label: "Active" },
+              { key: "name", label: "Name" },
+            ]}
+          />
+        </div>
+      )}
+
+      {/* list */}
+      {repos.length === 0 ? (
+        <div
+          className="mono"
+          style={{ fontSize: "var(--fs-12)", color: "var(--fg-3)", padding: "8px 0" }}
+        >
+          No repositories returned for this token (it may lack repo scope, or the org has none
+          visible).
+        </div>
+      ) : filtered.length === 0 ? (
+        <div
+          className="mono"
+          style={{ fontSize: "var(--fs-12)", color: "var(--fg-3)", padding: "8px 0" }}
+        >
+          No repositories match “{q}”.
+        </div>
+      ) : (
+        <div style={{ marginTop: 4 }}>
+          {filtered.map((r, i) => (
+            <RepoRow key={r.nameWithOwner} repo={r} last={i === filtered.length - 1} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function RepoRow({ repo, last }: { repo: GithubRepo; last: boolean }) {
   const [owner, name] = repo.nameWithOwner.includes("/")
     ? repo.nameWithOwner.split(/\/(.+)/)
     : ["", repo.nameWithOwner];
   return (
     <div
+      className="hov-row"
       style={{
         display: "flex",
         alignItems: "center",
         gap: 14,
-        padding: "10px 0",
+        padding: "10px 8px",
+        margin: "0 -8px",
+        borderRadius: 6,
         borderBottom: last ? "none" : "1px solid var(--bd-soft)",
       }}
     >
@@ -553,14 +774,14 @@ function RepoRow({ repo, last }: { repo: GithubRepo; last: boolean }) {
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "baseline", gap: 6, minWidth: 0 }}>
           {owner && (
-            <span className="mono" style={{ fontSize: 12, color: "var(--fg-2)" }}>
+            <span className="mono" style={{ fontSize: "var(--fs-12)", color: "var(--fg-2)" }}>
               {owner}/
             </span>
           )}
           <span
             className="mono"
             style={{
-              fontSize: 12.5,
+              fontSize: "var(--fs-13)",
               color: "var(--fg-0)",
               fontWeight: 500,
               overflow: "hidden",
@@ -573,14 +794,28 @@ function RepoRow({ repo, last }: { repo: GithubRepo; last: boolean }) {
           {repo.private && <Tag>private</Tag>}
         </div>
         {repo.defaultBranch && (
-          <div className="mono" style={{ fontSize: 11, color: "var(--fg-3)" }}>
-            default: {repo.defaultBranch}
+          <div
+            className="mono"
+            style={{
+              fontSize: "var(--fs-11)",
+              color: "var(--fg-3)",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 4,
+            }}
+          >
+            <span style={{ display: "inline-flex", transform: "scale(0.85)" }}>{Ico.branch}</span>
+            {repo.defaultBranch}
           </div>
         )}
       </div>
       <span
         className="mono tnum"
-        style={{ fontSize: 11, color: "var(--fg-2)", whiteSpace: "nowrap" }}
+        style={{
+          fontSize: "var(--fs-11)",
+          color: repo.openPrs ? "var(--fg-1)" : "var(--fg-3)",
+          whiteSpace: "nowrap",
+        }}
       >
         {repo.openPrs == null ? "— PRs" : `${repo.openPrs} PR${repo.openPrs === 1 ? "" : "s"} open`}
       </span>
@@ -588,234 +823,19 @@ function RepoRow({ repo, last }: { repo: GithubRepo; last: boolean }) {
   );
 }
 
-// A category row CodeHub can't connect yet. Honest "Coming soon" — never a faked
-// connected/disconnected state and never a non-functional "Connect" button.
-function SoonRow({ name, desc }: { name: string; desc: string }) {
-  return (
-    <div
-      className="ch-card"
-      style={{ padding: 12, display: "flex", alignItems: "center", gap: 12, opacity: 0.55 }}
-    >
-      <span
-        className="mono"
-        style={{
-          width: 28,
-          height: 28,
-          borderRadius: 6,
-          background: "var(--bg-3)",
-          border: "1px solid var(--bd)",
-          color: "var(--fg-2)",
-          fontWeight: 700,
-          fontSize: 13,
-          display: "inline-flex",
-          alignItems: "center",
-          justifyContent: "center",
-          flexShrink: 0,
-        }}
-      >
-        {name[0]}
-      </span>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 12.5, color: "var(--fg-1)", fontWeight: 500 }}>{name}</div>
-        <div style={{ fontSize: 11, color: "var(--fg-2)" }}>{desc}</div>
-      </div>
-      <span className="mono" style={{ fontSize: 10.5, color: "var(--fg-3)", whiteSpace: "nowrap" }}>
-        Coming soon
-      </span>
-    </div>
-  );
-}
-
-// The runtime's Claude config — account (identity only) + MCP servers (name /
-// transport / non-secret target). Either renders real data or an honest note.
-function ClaudeBody({ data, empty }: { data?: ClaudeIntegrations; empty?: string }) {
-  if (!data) {
-    return (
-      <div className="ch-card" style={{ padding: 0 }}>
-        <Note>{empty ?? "—"}</Note>
-      </div>
-    );
-  }
-  const acct = data.account;
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-      {/* connected account — identity only */}
-      <Card title="Connected Claude account">
-        {acct ? (
-          <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "14px 16px" }}>
-            <AgentGlyph agent="claude" size={20} color="var(--a-claude)" />
-            <div style={{ minWidth: 0, flex: 1 }}>
-              <div style={{ fontSize: 14, fontWeight: 500, color: "var(--fg-0)" }}>
-                {acct.name ?? acct.email ?? "Claude"}
-              </div>
-              <div className="mono" style={{ fontSize: 11.5, color: "var(--fg-2)" }}>
-                {acct.email ?? "—"}
-              </div>
-            </div>
-            <div style={{ display: "flex", gap: 18, flexShrink: 0 }}>
-              <Field label="plan" value={acct.plan} />
-              <Field label="org" value={acct.org} />
-              <Field label="role" value={acct.role} />
-            </div>
-          </div>
-        ) : (
-          <Empty>Not signed in — no Claude account found in the runtime's config.</Empty>
-        )}
-      </Card>
-
-      {/* MCP servers — name / transport / non-secret target */}
-      <Card title="MCP servers" count={data.mcpServers.length}>
-        {data.mcpServers.length === 0 ? (
-          <Empty>
-            No MCP servers configured. Add them to ~/.claude.json or a workspace .mcp.json and they
-            appear here.
-          </Empty>
-        ) : (
-          <div style={{ padding: "4px 8px" }}>
-            {data.mcpServers.map((s) => (
-              <div
-                key={`${s.scope}/${s.name}`}
-                className="rail-file"
-                style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 8px" }}
-              >
-                <span
-                  style={{ fontSize: 12.5, fontWeight: 500, color: "var(--fg-0)", flexShrink: 0 }}
-                >
-                  {s.name}
-                </span>
-                <Chip>{s.transport}</Chip>
-                <Chip muted>{s.scope}</Chip>
-                <span
-                  className="mono"
-                  style={{
-                    flex: 1,
-                    minWidth: 0,
-                    textAlign: "right",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                    fontSize: 11,
-                    color: "var(--fg-3)",
-                  }}
-                  title={s.target ?? undefined}
-                >
-                  {s.target ?? "—"}
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
-      </Card>
-
-      <p className="mono" style={{ margin: "2px 4px", fontSize: 10.5, color: "var(--fg-3)" }}>
-        Claude-only: Codex and Antigravity have no readable connection config, so they're not shown
-        here rather than guessed.
-      </p>
-    </div>
-  );
-}
-
-// Format a token-expiry string for the header. Accepts RFC3339 / ISO; falls back
-// to the raw string when it isn't a parseable date (never invents one).
-function fmtExpiry(s: string): string {
+// ── Token-expiry helper ─────────────────────────────────────────────────────
+// Accepts RFC3339 / ISO; falls back to the raw string when unparseable (never
+// invents a date). `soon` = within a week, used to surface a renewal nudge.
+function expiryInfo(s: string | null): { text: string; soon: boolean } | null {
+  if (!s) return null;
   const t = Date.parse(s);
-  if (Number.isNaN(t)) return s;
-  return new Date(t).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  if (Number.isNaN(t)) return { text: s, soon: false };
+  const days = Math.ceil((t - Date.now()) / 86_400_000);
+  const text = new Date(t).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  return { text, soon: days <= 7 };
 }
 
-// ── small presentational helpers ──────────────────────────────────────────
-
-function SectionHead({ label }: { label: string }) {
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "0 0 12px" }}>
-      <span className="lbl" style={{ color: "var(--fg-1)", fontSize: 11 }}>
-        {label}
-      </span>
-      <span style={{ flex: 1, height: 1, background: "var(--bd-soft)" }} />
-    </div>
-  );
-}
-
-function Card({
-  title,
-  count,
-  children,
-}: {
-  title: string;
-  count?: number;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="ch-card" style={{ padding: 0, minWidth: 0 }}>
-      <div
-        style={{
-          padding: "12px 16px",
-          borderBottom: "1px solid var(--bd-soft)",
-          display: "flex",
-          alignItems: "center",
-          gap: 10,
-        }}
-      >
-        <span style={{ fontSize: 13, fontWeight: 500, color: "var(--fg-0)" }}>{title}</span>
-        <span style={{ flex: 1 }} />
-        {count !== undefined && (
-          <span className="mono tnum" style={{ fontSize: 10.5, color: "var(--fg-3)" }}>
-            {count}
-          </span>
-        )}
-      </div>
-      {children}
-    </div>
-  );
-}
-
-function Field({ label, value }: { label: string; value: string | null }) {
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 2, textAlign: "right" }}>
-      <span className="lbl">{label}</span>
-      <span className="mono" style={{ fontSize: 12, color: "var(--fg-0)" }}>
-        {value ?? "—"}
-      </span>
-    </div>
-  );
-}
-
-function Chip({ children, muted }: { children: React.ReactNode; muted?: boolean }) {
-  return (
-    <span
-      className="mono"
-      style={{
-        flexShrink: 0,
-        fontSize: 9.5,
-        padding: "1px 6px",
-        borderRadius: 4,
-        border: "1px solid var(--bd-soft)",
-        color: muted ? "var(--fg-3)" : "var(--fg-2)",
-      }}
-    >
-      {children}
-    </span>
-  );
-}
-
-function Empty({ children }: { children: React.ReactNode }) {
-  return (
-    <div
-      className="mono"
-      style={{ padding: "20px 16px", fontSize: 11.5, color: "var(--fg-3)", lineHeight: 1.6 }}
-    >
-      {children}
-    </div>
-  );
-}
-
-function Note({ children }: { children: React.ReactNode }) {
-  return (
-    <div
-      className="mono"
-      style={{ padding: "28px 16px", textAlign: "center", fontSize: 12, color: "var(--fg-3)" }}
-    >
-      {children}
-    </div>
-  );
+function hasGithubScope(scopes: string[], needles: string[]): boolean {
+  const normalized = scopes.map((s) => s.toLowerCase().replace(/[\s:.-]+/g, "_"));
+  return needles.some((needle) => normalized.some((scope) => scope.includes(needle)));
 }

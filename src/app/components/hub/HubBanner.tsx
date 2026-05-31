@@ -41,7 +41,7 @@ export function HubBanner({ tone = "warn", icon, title, message, actions }: HubB
         display: "flex",
         alignItems: "center",
         gap: 10,
-        fontSize: 13,
+        fontSize: "var(--fs-13)",
       }}
     >
       {icon && <span style={{ color: toneColor, display: "inline-flex" }}>{icon}</span>}
