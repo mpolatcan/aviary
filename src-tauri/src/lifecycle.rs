@@ -105,7 +105,7 @@ pub fn auth_env_with(extra: &[String]) -> Vec<String> {
 #[serde(rename_all = "camelCase")]
 pub struct KeyStatus {
     pub present: bool,
-    /// Always "env": keys come from the host environment, not a keychain.
+    /// Always "env": keys come from the host environment, not the vault.
     pub source: &'static str,
     /// Name of the env var that satisfied the check, if any. Name only.
     pub var_name: Option<String>,
@@ -342,22 +342,42 @@ impl Lifecycle {
         }
     }
 
+    /// The `SavedWorkspace` this container represents, matched by `workspace_label`.
+    /// The label is the frontend CONTAINER key, which for a saved workspace is
+    /// `<name-slug>-<id>` (or just `<id>` when the name slugs to nothing). Ids are
+    /// globally unique, so an id-suffix match identifies the workspace without
+    /// re-deriving the lossy slug in Rust. `None` for ad-hoc tabs / unsaved
+    /// containers (no label, or no matching saved entry).
+    fn saved_workspace(&self) -> Option<crate::config::SavedWorkspace> {
+        let key = self.workspace_label.as_ref()?;
+        self.config
+            .get()
+            .saved_workspaces
+            .into_iter()
+            .find(|w| *key == w.id || key.ends_with(&format!("-{}", w.id)))
+    }
+
     /// Resolve container resource limits: per-workspace override (from
     /// SavedWorkspace.sizing) → global default_sizing → hardcoded default.
     fn resolve_sizing(&self) -> crate::config::ContainerSizing {
-        let cfg = self.config.get();
-        if let Some(key) = &self.workspace_label {
-            if let Some(ws) = cfg
-                .saved_workspaces
-                .iter()
-                .find(|w| w.dir == *key || w.id == *key)
-            {
-                if let Some(sizing) = &ws.sizing {
-                    return sizing.clone();
-                }
-            }
+        if let Some(sizing) = self.saved_workspace().and_then(|w| w.sizing) {
+            return sizing;
         }
-        cfg.default_sizing.clone()
+        self.config.get().default_sizing
+    }
+
+    /// Extra host dirs bind-mounted alongside `/workspace`, from this container's
+    /// SavedWorkspace (`additional_dirs`). Each lands at `/workspace/<basename>`.
+    /// Empty for ad-hoc tabs / unsaved containers. Read at create-time, so adding
+    /// a repo to an existing workspace takes effect on the next container recreate.
+    fn resolve_additional_dirs(&self) -> Vec<PathBuf> {
+        self.saved_workspace()
+            .map(|w| w.additional_dirs)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|d| !d.trim().is_empty())
+            .map(PathBuf::from)
+            .collect()
     }
 
     /// Env var NAMES referenced by env-backed account profiles, so they get
@@ -491,19 +511,49 @@ impl Lifecycle {
         // hooks, transcripts under /config/{claude,codex,…} — is DELIBERATELY NOT
         // mounted from the host: the container is a clean sandbox seeded from the
         // image. The only host→container flow is credentials (OAuth tokens, API
-        // keys, custom model providers), injected per-launch from the keychain
-        // vault as env (see account_launch_script / provider_session_env), never
+        // keys, custom model providers), injected per-launch from the vault as
+        // env (see account_launch_script / provider_session_env), never
         // via a config bind mount. Configs/transcripts are therefore container-
         // local and ephemeral; persistence of credentials lives in the vault.
         let workspace_dir = self.workspace_dir();
-        std::fs::create_dir_all(&workspace_dir)?;
+        let additional = self.resolve_additional_dirs();
+        let mut mounts = Vec::new();
 
-        let mounts = vec![Mount {
-            target: Some("/workspace".into()),
-            source: Some(workspace_dir.to_string_lossy().to_string()),
-            typ: Some(MountTypeEnum::BIND),
-            ..Default::default()
-        }];
+        if additional.is_empty() {
+            // Single-repo workspace: bind it at the /workspace ROOT. The git-status
+            // poll and the default agent cwd both read /workspace, so a lone repo
+            // must live there (and every pre-existing workspace already does).
+            std::fs::create_dir_all(&workspace_dir)?;
+            mounts.push(Mount {
+                target: Some("/workspace".into()),
+                source: Some(workspace_dir.to_string_lossy().to_string()),
+                typ: Some(MountTypeEnum::BIND),
+                ..Default::default()
+            });
+        } else {
+            // Multi-repo workspace: /workspace is the PARENT, and EVERY repo —
+            // the primary included — mounts at /workspace/<basename>, so they read
+            // consistently and the repo picker lists them the same way. Docker
+            // creates the /workspace mount point itself (image WORKDIR). Dedupe by
+            // target so repos sharing a basename can't collide (first wins).
+            let mut seen_targets = std::collections::HashSet::new();
+            for dir in std::iter::once(workspace_dir).chain(additional) {
+                let Some(base) = dir.file_name().and_then(|n| n.to_str()) else {
+                    continue;
+                };
+                let target = format!("/workspace/{base}");
+                if !seen_targets.insert(target.clone()) {
+                    continue;
+                }
+                std::fs::create_dir_all(&dir)?;
+                mounts.push(Mount {
+                    target: Some(target),
+                    source: Some(dir.to_string_lossy().to_string()),
+                    typ: Some(MountTypeEnum::BIND),
+                    ..Default::default()
+                });
+            }
+        }
 
         let sizing = self.resolve_sizing();
         let host_config = HostConfig {
@@ -525,7 +575,7 @@ impl Lifecycle {
         // can remap its CLI's canonical var by NAME. Values never touch the logs.
         let mut env = docker::base_container_env();
         env.extend(auth_env_with(&self.profile_env_vars()));
-        // Vault-backed secrets are not injected here. Keychain reads happen only
+        // Vault-backed secrets are not injected here. Vault reads happen only
         // when the user explicitly launches/uses an account that needs them.
         env.extend(self.vault_env.iter().cloned());
 

@@ -798,20 +798,47 @@ body.dragging .divider::after {
    the workspace card reveals its remove affordance only on hover so the resting
    card stays clean. */
 .ws-card {
-  cursor: pointer;
-  transition: border-color 0.12s ease, background 0.12s ease;
+  transition: border-color 0.12s ease, background 0.12s ease, transform 0.12s ease, box-shadow 0.12s
+    ease;
 }
-.ws-card:hover {
+/* Only cards that actually open something are interactive — a stopped container's
+   card is inert (boot it with its Start button). Pointer + hover-lift gate on that. */
+.ws-card.is-clickable {
+  cursor: pointer;
+}
+.ws-card.is-clickable:hover {
   border-color: var(--bd-strong);
   background: var(--bg-3);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-2);
 }
 .ws-card .ws-remove {
-  opacity: 0;
-  transition: opacity 0.12s ease;
-}
-.ws-card:hover .ws-remove,
-.ws-card:focus-within .ws-remove {
   opacity: 1;
+  transition: opacity 0.12s ease, color 0.12s ease;
+}
+.ws-card .ws-remove:hover {
+  color: var(--err);
+}
+/* Workspace card primary CTA (Open / Resume / Start). Lives bottom-right of the
+   card footer; primary-tinted so it reads as the obvious click target. */
+.ws-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 7px;
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  color: var(--pri);
+  border: 1px solid color-mix(in oklab, var(--pri) 35%, transparent);
+  background: color-mix(in oklab, var(--pri) 10%, transparent);
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.ws-cta:hover {
+  background: color-mix(in oklab, var(--pri) 20%, transparent);
+  border-color: color-mix(in oklab, var(--pri) 55%, transparent);
 }
 .tmpl-card {
   cursor: pointer;
@@ -820,6 +847,24 @@ body.dragging .divider::after {
 .tmpl-card:not([aria-disabled="true"]):hover {
   border-color: var(--bd-strong);
   background: var(--bg-3);
+}
+
+/* Spinner glyph (Ico.spinner) — used while a container lifecycle op is in flight */
+.spin {
+  animation: ch-spin 0.7s linear infinite;
+}
+@keyframes ch-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Bulk-select on the Welcome workspace cards. The per-card checkbox is rendered
+   only in select mode (so it reserves no space otherwise); a selected card gets a
+   primary-tinted frame. */
+.ws-card.ws-selected {
+  border-color: var(--pri);
+  background: color-mix(in oklab, var(--pri) 8%, var(--bg-2));
 }
 
 /* Auto-hide activity rail at narrow widths so the hub grid isn't squeezed */

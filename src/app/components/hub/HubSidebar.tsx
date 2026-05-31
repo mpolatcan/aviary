@@ -13,10 +13,19 @@ import { useOverlay } from "../../lib/overlay";
 import { confirmCloseRunningSession, useStore } from "../../lib/store";
 import { type Group, leavesList, workspaceLeaves, workspaceTitle } from "../../lib/tree";
 
-function dirName(path: string | undefined): string | null {
-  if (!path) return null;
-  return path.split("/").filter(Boolean).pop() ?? null;
+// Compact a host mount path to its last two segments ("…/Desktop/my-projects") so
+// the workspace card shows the real mount WITH parent context — not just the
+// basename, which usually already names the workspace.
+function mountPath(path: string | undefined): string {
+  if (!path) return "workspace";
+  const parts = path.split("/").filter(Boolean);
+  if (parts.length <= 2) return `/${parts.join("/")}`;
+  return `…/${parts.slice(-2).join("/")}`;
 }
+
+// Compact size for the workspace row's lifecycle IconBtns (restart/stop/start) —
+// smaller than the default 26 so two fit the dense 264px sidebar row.
+const LIFE_BTN = { width: 22, height: 22 } as const;
 
 // Left sidebar — ported 1:1 from design/components.jsx `AppSidebar`. Two forms:
 // an expanded 264px panel and a collapsed 52px icon rail (⌘B / header chevron
@@ -253,12 +262,46 @@ function WorkspaceSideRow({ workspaceId }: { workspaceId: string }) {
   const activeId = useStore((s) => s.activeWorkspaceId);
   const switchWorkspace = useStore((s) => s.switchWorkspace);
   const git = useStore((s) => s.gitStatus);
+  const containers = useStore((s) => s.workspaceContainers);
+  // Shared container lifecycle actions + in-flight flag (also used by the Welcome
+  // card), so the row shows a spinner + disables its controls while an op runs.
+  const lcStart = useStore((s) => s.startContainer);
+  const lcStop = useStore((s) => s.stopContainer);
+  const lcRestart = useStore((s) => s.restartContainer);
+  const busy = useStore((s) => (ws ? s.containerBusy[ws.containerKey] : undefined));
   if (!ws) return null;
   const open = ws.id === activeId;
   const sessions = workspaceLeaves(ws);
   const title = workspaceTitle(ws);
-  const repoLabel =
-    open && git?.isRepo ? (git.branch ?? "detached") : (dirName(ws.dir) ?? "workspace");
+  // Container lifecycle, mirrored from the Welcome card. Restart/stop kill every
+  // attached tmux session (the bollard execs die with the container), so both
+  // confirm + name how many go. Hover-revealed (like the session close button).
+  const state = containers?.find((c) => c.key === ws.containerKey)?.status.state;
+  const killClause =
+    sessions.length > 0
+      ? ` This kills ${sessions.length} attached session${sessions.length === 1 ? "" : "s"}.`
+      : "";
+  const restartContainer = async () => {
+    if (busy) return;
+    if (!window.confirm(`Restart the "${title}" workspace container?${killClause}`)) return;
+    await lcRestart(ws.containerKey);
+  };
+  const stopContainer = async () => {
+    if (busy) return;
+    if (!window.confirm(`Stop the "${title}" workspace container?${killClause}`)) return;
+    await lcStop(ws.containerKey);
+  };
+  const startContainer = async () => {
+    if (busy) return;
+    await lcStart(ws.containerKey);
+  };
+  // The mounted directory, shown right under the name with parent context
+  // ("…/Desktop/my-projects") so it reads as a real path, not the redundant
+  // basename. A repo mount (live git, open workspace) also gets a branch chip;
+  // a plain-directory mount never fakes one.
+  const isRepo = open && !!git?.isRepo;
+  const path = mountPath(ws.dir);
+  const branch = isRepo ? (git?.branch ?? "detached") : null;
   // Show a group sublabel only when the workspace has more than one group
   // (a single default group is just noise).
   const showGroupLabels = ws.groups.length > 1;
@@ -273,61 +316,179 @@ function WorkspaceSideRow({ workspaceId }: { workspaceId: string }) {
         border: `1px solid ${open ? "var(--bd-soft)" : "transparent"}`,
       }}
     >
-      <button
-        type="button"
-        onClick={() => switchWorkspace(ws.id)}
+      <div
         style={{
           display: "flex",
           alignItems: "center",
-          gap: 6,
-          padding: "4px 6px 6px",
-          width: "100%",
-          background: "transparent",
-          border: "none",
-          borderBottom: open ? "1px solid var(--bd-soft)" : "none",
-          marginBottom: open ? 4 : 0,
-          cursor: "pointer",
-          color: "inherit",
+          gap: 4,
+          padding: "4px 6px 1px",
         }}
       >
-        <span style={{ display: "inline-flex", color: open ? "var(--pri)" : "var(--fg-2)" }}>
-          {open ? Ico.hub : Ico.container}
+        <button
+          type="button"
+          onClick={() => switchWorkspace(ws.id)}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            flex: 1,
+            minWidth: 0,
+            background: "transparent",
+            border: "none",
+            padding: 0,
+            cursor: "pointer",
+            color: "inherit",
+          }}
+        >
+          <span
+            style={{
+              display: "inline-flex",
+              color: open ? "var(--pri)" : "var(--fg-2)",
+              flexShrink: 0,
+            }}
+          >
+            {open ? Ico.hub : Ico.container}
+          </span>
+          <span
+            className="mono"
+            style={{
+              fontSize: 12.5,
+              color: open ? "var(--fg-0)" : "var(--fg-1)",
+              fontWeight: 600,
+              flex: 1,
+              textAlign: "left",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {title}
+          </span>
+        </button>
+        {busy ? (
+          <span
+            title={`${busy}…`}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              color: "var(--wait)",
+              flexShrink: 0,
+            }}
+          >
+            {Ico.spinner}
+          </span>
+        ) : (
+          <>
+            {state === "running" && (
+              <span style={{ display: "inline-flex", gap: 1 }}>
+                <IconBtn
+                  title="Restart container"
+                  style={LIFE_BTN}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void restartContainer();
+                  }}
+                >
+                  {Ico.restart}
+                </IconBtn>
+                <IconBtn
+                  title="Stop container"
+                  style={LIFE_BTN}
+                  hoverColor="var(--err)"
+                  hoverBg="color-mix(in oklab, var(--err) 16%, transparent)"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void stopContainer();
+                  }}
+                >
+                  {Ico.stop}
+                </IconBtn>
+              </span>
+            )}
+            {state === "stopped" && (
+              <IconBtn
+                title="Start container"
+                style={LIFE_BTN}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void startContainer();
+                }}
+              >
+                {Ico.play}
+              </IconBtn>
+            )}
+          </>
+        )}
+        {sessions.length > 0 && (
+          <span
+            className="mono tnum"
+            title={`${sessions.length} pane${sessions.length === 1 ? "" : "s"}`}
+            style={{
+              fontSize: 10,
+              fontWeight: 600,
+              color: open ? "var(--fg-1)" : "var(--fg-2)",
+              background: "var(--bg-3)",
+              borderRadius: 5,
+              padding: "1px 6px",
+              flexShrink: 0,
+            }}
+          >
+            {sessions.length}
+          </span>
+        )}
+      </div>
+
+      {/* mounted directory — proper path, right under the name; a repo also gets a
+          branch chip. Divider + spacing live here so name+path read as one block. */}
+      <div
+        title={branch ? `${ws.dir ?? path} · ${branch}` : (ws.dir ?? path)}
+        style={{
+          fontFamily: "var(--mono)",
+          fontSize: 11,
+          color: "var(--fg-2)",
+          padding: "0 6px 6px",
+          borderBottom: open ? "1px solid var(--bd-soft)" : "none",
+          marginBottom: open ? 5 : 0,
+          display: "flex",
+          alignItems: "center",
+          gap: 5,
+        }}
+      >
+        <span style={{ display: "inline-flex", flexShrink: 0, color: "var(--fg-3)" }}>
+          {Ico.files}
         </span>
         <span
-          className="mono"
           style={{
-            fontSize: 11,
-            color: "var(--fg-1)",
-            fontWeight: 500,
-            flex: 1,
-            textAlign: "left",
+            flex: branch ? "0 1 auto" : 1,
             overflow: "hidden",
             textOverflow: "ellipsis",
             whiteSpace: "nowrap",
           }}
         >
-          {title}
+          {path}
         </span>
-        <span className="mono" style={{ fontSize: 10, color: "var(--fg-3)" }}>
-          {sessions.length}
-        </span>
-      </button>
-
-      <div
-        style={{
-          fontFamily: "var(--mono)",
-          fontSize: 10,
-          color: "var(--fg-3)",
-          padding: "0 6px 4px",
-          display: "flex",
-          alignItems: "center",
-          gap: 4,
-        }}
-      >
-        {Ico.branch}
-        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {repoLabel}
-        </span>
+        {branch && (
+          <span
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 3,
+              flexShrink: 0,
+              maxWidth: "45%",
+              padding: "0 5px",
+              borderRadius: 4,
+              background: "var(--bg-3)",
+              color: "var(--fg-1)",
+            }}
+          >
+            <span style={{ display: "inline-flex", flexShrink: 0, color: "var(--fg-3)" }}>
+              {Ico.branch}
+            </span>
+            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {branch}
+            </span>
+          </span>
+        )}
       </div>
 
       {open && (
@@ -394,6 +555,13 @@ function SessionRow({
   const claudeUsage = useSessionUsage(claudeId ?? null);
   const codexUsage = useCodexUsage(codexId ?? null);
   const usage = claudeUsage ?? codexUsage;
+  // The workspace's mount dir — fallback label when the pane runs at the mount
+  // root (or for a restored session whose cwd wasn't kept). Selected unconditionally
+  // (above the meta guard) so the hook count never changes when a row closes.
+  const wsDir = useStore((s) => {
+    const m = s.sessionMeta[session];
+    return m ? s.workspaces.find((w) => w.id === m.workspaceId)?.dir : undefined;
+  });
   if (!meta) return null;
   const spec = SPEC_BY_CLI[meta.cli];
   const badge = MODE_BY_ID[meta.mode].badge;
@@ -416,8 +584,23 @@ function SessionRow({
         ? "var(--done)"
         : working
           ? "var(--live)"
-          : "var(--fg-3)";
+          : "var(--fg-2)";
   const isAgent = meta.cli !== "shell";
+  // Working dir this pane targets: the cwd basename when pinned to a sub-dir,
+  // else the workspace mount's own folder name (the "mount root").
+  const dirBase = (p: string) => p.split("/").filter(Boolean).pop() ?? p;
+  const workingDir =
+    meta.cwd && meta.cwd !== "/workspace"
+      ? dirBase(meta.cwd)
+      : wsDir
+        ? dirBase(wsDir)
+        : "workspace";
+  // Full host path of the working dir, for the truncation tooltip: the mount path
+  // plus whatever sub-path the agent was pinned to under /workspace.
+  const fullDir =
+    meta.cwd?.startsWith("/workspace") && wsDir
+      ? `${wsDir}${meta.cwd.slice("/workspace".length)}`
+      : (wsDir ?? meta.cwd ?? workingDir);
 
   return (
     <div
@@ -443,17 +626,18 @@ function SessionRow({
       }}
       onClick={() => focusSession(session)}
     >
-      <div style={{ display: "flex", alignItems: "center", paddingTop: 1 }}>
+      <div style={{ display: "flex", alignItems: "center", alignSelf: "center" }}>
         <StatusDot status={status} pulse={working} />
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 2 }}>
-          <AgentGlyph agent={meta.cli} size={11} color={`var(--a-${meta.cli})`} />
+        {/* line 1: agent identity + live status (right) */}
+        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 2 }}>
+          <AgentGlyph agent={meta.cli} size={12} color={`var(--a-${meta.cli})`} />
           <span
             className="mono"
             style={{
-              fontSize: 11.5,
-              fontWeight: 500,
+              fontSize: 12,
+              fontWeight: 600,
               color: "var(--fg-0)",
               overflow: "hidden",
               textOverflow: "ellipsis",
@@ -463,7 +647,8 @@ function SessionRow({
             {meta.alias}
           </span>
           {badge && <span className={`mode-badge badge-${meta.mode}`}>{badge}</span>}
-          {isWait && (
+          <span style={{ flex: 1 }} />
+          {isWait ? (
             <span
               className="mono"
               style={{
@@ -479,53 +664,80 @@ function SessionRow({
             >
               INPUT
             </span>
+          ) : (
+            <span
+              className="mono"
+              style={{
+                fontSize: 10,
+                color: statusColor,
+                fontWeight: working ? 600 : 400,
+                flexShrink: 0,
+                whiteSpace: "nowrap",
+              }}
+            >
+              {label}
+            </span>
           )}
-          <span style={{ flex: 1 }} />
-          <button
-            type="button"
-            className="session-close"
-            aria-label="close"
-            onClick={(e) => {
-              e.stopPropagation();
-              if (!confirmCloseRunningSession(session)) return;
-              void closeSession(session);
-            }}
+        </div>
+        {/* line 2: working dir + token meter, one muted meta line */}
+        {isAgent && (
+          <div
+            className="mono"
             style={{
-              background: "transparent",
-              border: "none",
-              color: "var(--fg-3)",
-              cursor: "pointer",
-              fontSize: 13,
-              lineHeight: 1,
-              padding: 0,
-              opacity: 0,
-              transition: "opacity .15s",
+              display: "flex",
+              alignItems: "center",
+              gap: 4,
+              fontSize: 10.5,
+              color: "var(--fg-2)",
             }}
           >
-            ×
-          </button>
-        </div>
-        <div
-          className="mono tnum"
-          style={{
-            fontSize: 10.5,
-            color: statusColor,
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-          }}
-        >
-          <span style={working ? { fontWeight: 500 } : undefined}>{label}</span>
-          {isAgent && usage && (
-            <>
-              <span style={{ color: "var(--fg-3)" }}>·</span>
-              <span style={{ color: "var(--fg-3)" }}>
-                {usage.turns}t · {fmtTokens(usage.tokensIn + usage.tokensOut)} tok
+            <span
+              style={{
+                display: "inline-flex",
+                flexShrink: 0,
+                transform: "scale(0.82)",
+                color: "var(--fg-3)",
+              }}
+            >
+              {Ico.files}
+            </span>
+            <span
+              title={fullDir}
+              style={{
+                flexShrink: 1,
+                minWidth: 0,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {workingDir}
+            </span>
+            {usage && (
+              <span
+                className="tnum"
+                style={{ flexShrink: 0, color: "var(--fg-3)", whiteSpace: "nowrap" }}
+              >
+                · {usage.turns}t · {fmtTokens(usage.tokensIn + usage.tokensOut)} tok
               </span>
-            </>
-          )}
-        </div>
+            )}
+          </div>
+        )}
       </div>
+      {/* close — absolutely centered on the card's right edge (see .session-close);
+          revealed on row hover, red on its own hover. */}
+      <button
+        type="button"
+        className="session-close"
+        aria-label="close"
+        onClick={(e) => {
+          e.stopPropagation();
+          if (!confirmCloseRunningSession(session)) return;
+          void closeSession(session);
+        }}
+      >
+        ×
+      </button>
     </div>
   );
 }

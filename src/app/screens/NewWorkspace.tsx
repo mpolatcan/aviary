@@ -109,7 +109,15 @@ export function NewWorkspace() {
     setLaunchError(null);
     try {
       const title = name.trim() || dirName(dir) || "Untitled workspace";
-      const id = savedWorkspaceIdRef.current ?? (await saveWorkspace(title, dir));
+      // `dir` is the primary repo (mounts at /workspace); extraDirs mount beside
+      // it at /workspace/<basename>. Skip any that duplicate the primary.
+      const id =
+        savedWorkspaceIdRef.current ??
+        (await saveWorkspace(
+          title,
+          dir,
+          extraDirs.filter((d) => d !== dir),
+        ));
       savedWorkspaceIdRef.current = id;
       await openSavedWorkspace(id); // marks lastOpened + ensures the mount points here
       await newPlate(agent, mode, undefined, undefined, selectedAccount, {
@@ -721,7 +729,9 @@ function RepoStep({
                     {isGh ? "github" : "local"}
                   </span>
                   <span style={{ color: "var(--fg-3)", flexShrink: 0 }}>
-                    → /workspace/{basename}
+                    {/* One repo → mounts at the root; two or more → every repo
+                        (the first included) nests under /workspace. */}
+                    {allDirs.length > 1 ? `→ /workspace/${basename}` : "→ /workspace"}
                   </span>
                   <button
                     type="button"
@@ -844,7 +854,9 @@ function RepoStep({
       </FormRow>
 
       <div className="mono" style={{ fontSize: 10.5, color: "var(--fg-3)", padding: "0 4px" }}>
-        Each repo mounts at /workspace/&#123;repo-name&#125; inside the container.
+        {allDirs.length > 1
+          ? "Each repo mounts at /workspace/{repo-name}; /workspace is the shared parent."
+          : "A single repo mounts directly at /workspace."}
       </div>
     </>
   );

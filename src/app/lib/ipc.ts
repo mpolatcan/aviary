@@ -125,6 +125,16 @@ export interface RepoInfo {
   branch: string | null;
 }
 
+// One immediate subdirectory of a /workspace path (working-dir browser).
+// `isRepo` is true when it holds a .git; `branch` is its current branch when
+// known. The browser drills one level at a time, so repos at ANY depth are
+// reachable (unlike RepoInfo discovery, capped at depth 2).
+export interface DirEntry {
+  name: string;
+  isRepo: boolean;
+  branch: string | null;
+}
+
 // Persisted UI preferences (config::Settings in the backend). Mirrors the Rust
 // struct field-for-field; every field is always present (the backend fills
 // defaults), so this is never partial.
@@ -225,10 +235,13 @@ export interface SavedWorkspace {
   pinned: boolean;
   // Epoch-ms of the last open, or null if not opened since it was saved.
   lastOpened: number | null;
+  // Epoch-ms the workspace was created, or null for entries saved before this
+  // field existed. Disambiguates two workspaces that share a name.
+  createdAt?: number | null;
   // Per-workspace container resource limits override.
   sizing?: ContainerSizing | null;
   // Additional host directories to mount alongside /workspace. Each mounts at
-  // /workspace/<basename>. Requires backend multi-mount support (lifecycle.rs).
+  // /workspace/<basename> (backend multi-mount in lifecycle.rs::ensure_container).
   additionalDirs?: string[];
 }
 
@@ -840,6 +853,10 @@ export const ipc = {
   // `workspace` targets the workspace's container.
   containerListDir: (path: string, workspace?: string) =>
     invoke<FileEntry[]>("container_list_dir", { path, workspace }),
+  // Immediate subdirectories of a /workspace path, each flagged if it's a git
+  // repo (working-dir picker for agent spawn). Empty path → the mount root.
+  containerBrowseDirs: (path: string, workspace?: string) =>
+    invoke<DirEntry[]>("container_browse_dirs", { path, workspace }),
   // First 256 KiB of a /workspace file, UTF-8-lossy (Files browser preview).
   containerReadFile: (path: string, workspace?: string) =>
     invoke<string>("container_read_file", { path, workspace }),

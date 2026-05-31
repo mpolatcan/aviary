@@ -42,9 +42,12 @@ uuid = { version = "1", features = ["v4"] }
 once_cell = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-# OS-keychain credential vault for built-in agent accounts + GitHub.
-keyring = { version = "3", features = ["apple-native", "windows-native", "linux-native"] }
-# GitHub device flow for the keychain-backed GitHub connector.
+# Encrypted-file credential vault for built-in agent accounts + GitHub.
+# (Replaces the OS keychain — unsigned/ad-hoc open-source builds have no stable
+# code signature, so the macOS Keychain ACL re-prompts on every launch.)
+chacha20poly1305 = "0.10"
+getrandom = "0.2"
+# GitHub device flow for the vault-backed GitHub connector.
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 open = "5"
 

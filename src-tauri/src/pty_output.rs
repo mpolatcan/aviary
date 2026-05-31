@@ -2,6 +2,12 @@ pub struct PtyOutputNormalizer {
     carry: String,
 }
 
+impl Default for PtyOutputNormalizer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PtyOutputNormalizer {
     pub fn new() -> Self {
         Self {
@@ -24,7 +30,7 @@ impl PtyOutputNormalizer {
                     None => {
                         self.carry.push_str(&input[idx..]);
                         break;
-                    }
+                    },
                     Some((_, '[')) => {
                         let _ = iter.next();
                         let params_start = idx + 2;
@@ -48,8 +54,8 @@ impl PtyOutputNormalizer {
                             output.push_str(&input[idx..final_pos + final_ch.len_utf8()]);
                         }
                         continue;
-                    }
-                    _ => {}
+                    },
+                    _ => {},
                 }
             }
 
@@ -84,7 +90,7 @@ impl PtyOutputNormalizer {
                     next.push(parts[i + 1].to_string());
                     next.push(parts[i + 2].to_string());
                     i += 2;
-                }
+                },
                 Some(38)
                     if parts.get(i + 1) == Some(&"2")
                         && parts.get(i + 2).is_some()
@@ -97,21 +103,18 @@ impl PtyOutputNormalizer {
                     next.push(parts[i + 3].to_string());
                     next.push(parts[i + 4].to_string());
                     i += 4;
-                }
-                Some(48)
-                    if parts.get(i + 1) == Some(&"5")
-                        && parts.get(i + 2) == Some(&"16") =>
-                {
+                },
+                Some(48) if parts.get(i + 1) == Some(&"5") && parts.get(i + 2) == Some(&"16") => {
                     next.push("49".to_string());
                     changed = true;
                     i += 2;
-                }
+                },
                 Some(48) if parts.get(i + 1) == Some(&"5") && parts.get(i + 2).is_some() => {
                     next.push(raw.to_string());
                     next.push(parts[i + 1].to_string());
                     next.push(parts[i + 2].to_string());
                     i += 2;
-                }
+                },
                 Some(48)
                     if parts.get(i + 1) == Some(&"2")
                         && parts.get(i + 2).is_some()
@@ -124,7 +127,7 @@ impl PtyOutputNormalizer {
                     next.push(parts[i + 3].to_string());
                     next.push(parts[i + 4].to_string());
                     i += 4;
-                }
+                },
                 _ => next.push(raw.to_string()),
             }
 

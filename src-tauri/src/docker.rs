@@ -210,6 +210,18 @@ pub struct FileEntry {
     pub size: i64,
 }
 
+/// One immediate subdirectory of a `/workspace` path (working-dir browser).
+/// `is_repo` is true when the folder holds a `.git`; `branch` is its current
+/// branch when known. The browser drills one level at a time, so it reaches
+/// repos at ANY depth — unlike [`RepoInfo`] discovery, which is capped at 2.
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DirEntry {
+    pub name: String,
+    pub is_repo: bool,
+    pub branch: Option<String>,
+}
+
 /// Cumulative token counts. Every field is a real sum from the `usage` block of
 /// `assistant` lines in Claude Code's session transcripts — never estimated.
 #[derive(Debug, Serialize, Clone, Default, PartialEq, Eq)]
@@ -1913,6 +1925,26 @@ rm -f /tmp/codehub-pr.json"#,
         Ok(parse_find(&raw))
     }
 
+    /// Immediate subdirectories of a `/workspace` path, each flagged if it is a
+    /// git repo (with its branch). Powers the agent-pane working-directory
+    /// browser: a multi-repo mount nests repos arbitrarily deep, so the user
+    /// drills the tree one level at a time instead of relying on the depth-2
+    /// [`container_repos`](Self::container_repos) discovery. One `bash` pass, so
+    /// a level costs a single exec. Capped at [`DIR_ENTRIES_CAP`].
+    pub async fn browse_dirs(&self, path: &str) -> Result<Vec<DirEntry>, DockerError> {
+        self.require_running().await?;
+        let dir = workspace_path(path)?;
+        // For each immediate child directory print `R|D<TAB>branch<TAB>name`:
+        // `R` when it holds a `.git` (with its branch), else `D`. stderr is
+        // dropped so a `git` call on a non-repo can't pollute the listing. `*/`
+        // skips dotfiles; the `[ -d ]` guard handles the no-match literal glob.
+        let script = "cd \"$1\" 2>/dev/null || exit 0; for d in */; do [ -d \"$d\" ] || continue; n=\"${d%/}\"; if [ -e \"$n/.git\" ]; then b=$(git -C \"$n\" branch --show-current 2>/dev/null); printf 'R\\t%s\\t%s\\n' \"$b\" \"$n\"; else printf 'D\\t\\t%s\\n' \"$n\"; fi; done";
+        let raw = self
+            .exec_capture(vec!["bash", "-c", script, "_", &dir])
+            .await?;
+        Ok(parse_browse_dirs(&raw))
+    }
+
     /// First [`FILE_READ_CAP`] bytes of a `/workspace` file (Files browser
     /// preview). `path` is confined to `/workspace`. `head -c` caps the read at
     /// the source so a huge file never streams into memory; the bytes are
@@ -1995,9 +2027,12 @@ rm -f /tmp/codehub-pr.json"#,
         self.require_running().await?;
         // `id` is validated to `[0-9A-Za-z-]`, so it is safe to interpolate into
         // this fixed `find` expression. Account-backed Claude sessions may use a
-        // per-profile config dir under `/config/claude-profiles`.
+        // per-profile config dir under `/config/claude-profiles`. The project dir
+        // is slugged from the agent's CWD (`/workspace/foo` → `-workspace-foo`),
+        // so match the id under ANY project dir — a sub-dir agent's transcript is
+        // NOT under `-workspace`. The id is a unique uuid, so this can't collide.
         let script = format!(
-            "find /config/claude/projects /config/claude-profiles/*/projects -path '*/projects/-workspace/{id}.jsonl' -exec cat {{}} + 2>/dev/null || true"
+            "find /config/claude/projects /config/claude-profiles/*/projects -path '*/projects/*/{id}.jsonl' -exec cat {{}} + 2>/dev/null || true"
         );
         let raw = self.exec_capture(vec!["sh", "-c", &script]).await?;
         let u = parse_claude_usage(&raw);
@@ -3061,6 +3096,33 @@ fn parse_find(raw: &str) -> Vec<FileEntry> {
         })
         .take(DIR_ENTRIES_CAP)
         .collect()
+}
+
+/// Parse `browse_dirs` output: each line is `R|D<TAB>branch<TAB>name`. `R` = git
+/// repo, `D` = plain dir; branch is empty for `D` (and for a repo on a detached
+/// HEAD). Lines that don't split into three fields are skipped. Sorted by name,
+/// capped at [`DIR_ENTRIES_CAP`].
+fn parse_browse_dirs(raw: &str) -> Vec<DirEntry> {
+    let mut out: Vec<DirEntry> = raw
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.splitn(3, '\t');
+            let tag = parts.next()?;
+            let branch = parts.next()?;
+            let name = parts.next()?;
+            if name.is_empty() {
+                return None;
+            }
+            Some(DirEntry {
+                name: name.to_string(),
+                is_repo: tag == "R",
+                branch: (!branch.is_empty()).then(|| branch.to_string()),
+            })
+        })
+        .collect();
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    out.truncate(DIR_ENTRIES_CAP);
+    out
 }
 
 /// Cap on changed paths returned to the UI; the rail only renders a short list.
@@ -4256,9 +4318,9 @@ mod tests {
     use super::{
         account_launch_script, clip_title, commit_success_line, count_session_edits, is_env_name,
         is_session_id, is_synthetic_prompt, is_version_like, latest_context_used,
-        parse_agent_config, parse_claude_integrations, parse_claude_sessions, parse_claude_usage,
-        parse_find, parse_frontmatter, parse_git_log, parse_git_status, parse_tools_field,
-        parse_top, workspace_path, Cli,
+        parse_agent_config, parse_browse_dirs, parse_claude_integrations, parse_claude_sessions,
+        parse_claude_usage, parse_find, parse_frontmatter, parse_git_log, parse_git_status,
+        parse_tools_field, parse_top, workspace_path, Cli,
     };
 
     #[test]
@@ -4471,6 +4533,22 @@ mod tests {
         assert_eq!(entries[1].kind, "file");
         assert_eq!(entries[1].size, 128);
         assert_eq!(entries[2].name, "my notes.txt");
+    }
+
+    #[test]
+    fn browse_dirs_flags_repos_and_sorts() {
+        // `R` rows carry a branch; `D` rows don't. A repo on detached HEAD has an
+        // empty branch field → None. Output is sorted by name; malformed dropped.
+        let raw = "R\tmain\trepoB\nD\t\tassets\nR\t\tdetached\nbogus\n";
+        let dirs = parse_browse_dirs(raw);
+        assert_eq!(dirs.len(), 3);
+        assert_eq!(dirs[0].name, "assets");
+        assert!(!dirs[0].is_repo);
+        assert_eq!(dirs[1].name, "detached");
+        assert!(dirs[1].is_repo);
+        assert_eq!(dirs[1].branch, None);
+        assert_eq!(dirs[2].name, "repoB");
+        assert_eq!(dirs[2].branch.as_deref(), Some("main"));
     }
 
     #[test]

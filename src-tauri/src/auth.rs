@@ -37,8 +37,8 @@ pub fn login_spec(provider: &str) -> Option<(Vec<&'static str>, &'static str)> {
         "codex" => Some((
             // Codex writes auth under $CODEX_HOME (=/config/codex). /config is NOT
             // mounted, so this is container-local — we read it here, right after
-            // login, and store it in the vault; the vault (keychain) is what
-            // persists, re-injected per launch by account_launch_script.
+            // login, and store it in the vault; the vault is what persists,
+            // re-injected per launch by account_launch_script.
             vec!["codex", "login", "--device-auth"],
             "/config/codex/auth.json",
         )),
@@ -337,7 +337,7 @@ const CREDENTIAL_SYNC_INTERVAL: std::time::Duration = std::time::Duration::from_
 /// stored credential current with the token the CLI refreshes *in place* inside
 /// the container.
 ///
-/// Why this exists: login captures a one-time snapshot into the keychain, and
+/// Why this exists: login captures a one-time snapshot into the vault, and
 /// every session launch restores that snapshot. The CLI then refreshes the
 /// short-lived access token in place, but the refresh is never written back — so
 /// the vault's tokens stay frozen at login and eventually 401 once the refresh
@@ -565,7 +565,7 @@ pub fn store_credential(
             url: None,
             user_code: None,
             message: Some(format!(
-                "{} credentials stored in keychain",
+                "{} credentials stored in the vault",
                 provider_label(provider)
             )),
         },

@@ -85,6 +85,10 @@ async function httpInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
       return jget(
         `/container-list-dir?path=${encodeURIComponent(String(args.path ?? ""))}${wsAmp}`,
       ) as Promise<T>;
+    case "container_browse_dirs":
+      return jget(
+        `/container-browse-dirs?path=${encodeURIComponent(String(args.path ?? ""))}${wsAmp}`,
+      ) as Promise<T>;
     case "container_read_file":
       return jget(
         `/container-read-file?path=${encodeURIComponent(String(args.path ?? ""))}${wsAmp}`,

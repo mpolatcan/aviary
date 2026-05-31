@@ -371,6 +371,11 @@ export const Ico = {
       <rect x="4" y="4" width="8" height="8" rx="1.5" />
     </svg>
   ),
+  play: (
+    <svg aria-hidden="true" width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
+      <path d="M4.5 3.2l8 4.8-8 4.8z" />
+    </svg>
+  ),
   check: (
     <svg
       aria-hidden="true"
@@ -450,6 +455,23 @@ export const Ico = {
     >
       <circle cx="8" cy="8" r="5.5" />
       <path d="M8 4.5V8l2.5 1.5" />
+    </svg>
+  ),
+  // Spinner — a ¾ ring; add the `.spin` class (panes.css) to animate it. Used by
+  // the workspace cards/rows while a container start/stop/restart is in flight.
+  spinner: (
+    <svg
+      aria-hidden="true"
+      className="spin"
+      width="13"
+      height="13"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+    >
+      <path d="M8 1.8a6.2 6.2 0 1 1-6.2 6.2" />
     </svg>
   ),
 } as const;

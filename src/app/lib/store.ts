@@ -232,6 +232,18 @@ interface CodeHubState {
   // the launcher after a lifecycle action (stop-idle / prune-stopped / card
   // remove) so the cards + counts reflect the change without a full reboot.
   refreshWorkspaceContainers: () => Promise<void>;
+  // Per-container lifecycle op in flight, keyed by containerKey → the verb. Set
+  // by start/stop/restartContainer while the docker call runs; the Welcome cards
+  // and sidebar rows read it to show an inline spinner + disable their controls.
+  // Cleared (and the fleet refreshed) when the op settles.
+  containerBusy: Record<string, "starting" | "stopping" | "restarting">;
+  // Container lifecycle, shared by the Welcome launcher card + the sidebar
+  // workspace row so both show the same in-flight state. Each manages
+  // `containerBusy` and refreshes the fleet after; callers confirm destructive
+  // ops (stop/restart kill the container's sessions) BEFORE calling.
+  startContainer: (key: string) => Promise<void>;
+  stopContainer: (key: string) => Promise<void>;
+  restartContainer: (key: string) => Promise<void>;
   setGitStatus: (g: GitStatus | null) => void;
   ensureDockedShell: () => Promise<string | null>;
   createExtraShell: () => Promise<string | null>;
@@ -344,7 +356,7 @@ interface CodeHubState {
   // container. saveWorkspace returns the new id. openSavedWorkspace touches lastOpened and
   // points the /workspace mount at its dir (the caller then opens the spawn
   // launcher to start the first agent).
-  saveWorkspace: (name: string, dir: string) => Promise<string>;
+  saveWorkspace: (name: string, dir: string, additionalDirs?: string[]) => Promise<string>;
   removeSavedWorkspace: (id: string) => Promise<void>;
   toggleWorkspacePin: (id: string) => Promise<void>;
   openSavedWorkspace: (id: string) => Promise<void>;
@@ -400,8 +412,13 @@ function resetGridOverlays() {
 // which workspace it belongs to — in the UI pane head AND the tmux `#W` status
 // bar (the alias is passed as the tmux window name at create time, so both read
 // identically).
-function aliasFor(label: string, cli: Cli, num: number): string {
-  return `${label} · ${SPEC_BY_CLI[cli].alias} ${num}`;
+// Session label / pane title: just the agent + its per-workspace sequence
+// ("Claude 1"). The workspace is already shown by the tab + sidebar header and the
+// working dir by the pane footer / sidebar dir line, so it is NOT repeated here.
+// `_workspace` stays on the signature for call-site compatibility (every spawn
+// path passes the workspace title); the label simply omits it.
+function aliasFor(_workspace: string, cli: Cli, num: number): string {
+  return `${SPEC_BY_CLI[cli].alias} ${num}`;
 }
 
 // Next per-(workspace, cli) sequence number: existing sessions of that CLI in
@@ -483,6 +500,7 @@ export const useStore = create<CodeHubState>((set, get) => {
     containerKey: string,
     alias: string,
     claudeId?: string,
+    cwd?: string,
   ) => {
     const meta: SessionMeta = {
       cli,
@@ -493,6 +511,7 @@ export const useStore = create<CodeHubState>((set, get) => {
       groupId,
       claudeId,
       containerKey,
+      cwd,
       // Restore a persisted pane color (survives reload / session adoption).
       color: recallPaneColor(name),
     };
@@ -552,6 +571,7 @@ export const useStore = create<CodeHubState>((set, get) => {
     dockerRuntime: null,
     keyStatus: null,
     workspaceContainers: null,
+    containerBusy: {},
     agentVersions: null,
     config: null,
     workspaceInfo: null,
@@ -669,6 +689,11 @@ export const useStore = create<CodeHubState>((set, get) => {
         // best-effort — keep the last snapshot rather than blanking the launcher
       }
     },
+
+    startContainer: async (key) => runContainerOp(get, set, key, "starting", ipc.containerStart),
+    stopContainer: async (key) => runContainerOp(get, set, key, "stopping", ipc.containerStop),
+    restartContainer: async (key) =>
+      runContainerOp(get, set, key, "restarting", ipc.containerRestart),
 
     setGitStatus: (gitStatus) => set({ gitStatus }),
 
@@ -847,7 +872,7 @@ export const useStore = create<CodeHubState>((set, get) => {
         );
         await registry.spawnPane(name, containerKey);
         prefillPrompt(name, initialPrompt);
-        registerMeta(name, cli, mode, ws.id, grp.id, containerKey, alias, claudeId);
+        registerMeta(name, cli, mode, ws.id, grp.id, containerKey, alias, claudeId, cwd);
 
         set((s) => ({
           workspaces: updateWs(s.workspaces, ws.id, (w) =>
@@ -1172,6 +1197,7 @@ export const useStore = create<CodeHubState>((set, get) => {
           ws.containerKey,
           alias,
           claudeId,
+          draft.cwd,
         );
         // A NEW-workspace draft created the container just now → refresh status.
         const status = draft.workspaceDir
@@ -1478,7 +1504,7 @@ export const useStore = create<CodeHubState>((set, get) => {
       );
       await registry.spawnPane(name, containerKey);
       prefillPrompt(name, initialPrompt);
-      registerMeta(name, cli, mode, ws.id, grp.id, containerKey, alias, claudeId);
+      registerMeta(name, cli, mode, ws.id, grp.id, containerKey, alias, claudeId, cwd);
       set((s) => ({
         workspaces: updateWs(s.workspaces, wsId, (w) =>
           updateGroup(w, groupId, (g) => ({
@@ -1583,7 +1609,7 @@ export const useStore = create<CodeHubState>((set, get) => {
     // All mutations route through updateConfig (optimistic + reverts on failure)
     // — a saved workspace lives in settings.json alongside the other prefs, so
     // there's no separate command to wire.
-    saveWorkspace: async (name, dir) => {
+    saveWorkspace: async (name, dir, additionalDirs) => {
       const id = `sw-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
       const entry: SavedWorkspace = {
         id,
@@ -1591,6 +1617,10 @@ export const useStore = create<CodeHubState>((set, get) => {
         dir,
         pinned: false,
         lastOpened: null,
+        createdAt: Date.now(),
+        // Extra repos this workspace mounts beside `dir` (each at
+        // /workspace/<basename>); omit the key entirely when there are none.
+        ...(additionalDirs?.length ? { additionalDirs } : {}),
       };
       const list = get().config?.savedWorkspaces ?? [];
       await get().updateConfig({ savedWorkspaces: [...list, entry] });
@@ -1764,6 +1794,33 @@ function applyDensity(density: string) {
   else delete document.documentElement.dataset.density;
 }
 
+// Run a container lifecycle op (start/stop/restart) with shared in-flight state:
+// flag `containerBusy[key]` for the duration so every surface (Welcome card,
+// sidebar row) shows a spinner + disables its controls, then refresh the fleet
+// and clear the flag. Swallows errors (logs them) so a failed op still settles
+// the busy flag rather than wedging the spinner forever.
+async function runContainerOp(
+  get: Get,
+  set: Set,
+  key: string,
+  verb: "starting" | "stopping" | "restarting",
+  op: (workspace: string) => Promise<unknown>,
+) {
+  set((s) => ({ containerBusy: { ...s.containerBusy, [key]: verb } }));
+  try {
+    await op(key);
+  } catch (e) {
+    console.warn(`container ${verb} (${key}) failed:`, e);
+  } finally {
+    await get().refreshWorkspaceContainers();
+    set((s) => {
+      const containerBusy = { ...s.containerBusy };
+      delete containerBusy[key];
+      return { containerBusy };
+    });
+  }
+}
+
 function removeWorkspace(get: Get, set: Set, id: string) {
   const list = get().workspaces;
   const idx = list.findIndex((w) => w.id === id);
@@ -1892,6 +1949,7 @@ type RegisterMeta = (
   containerKey: string,
   alias: string,
   claudeId?: string,
+  cwd?: string,
 ) => void;
 
 // Adopt one container's surviving tmux sessions into a workspace tab — the unit
@@ -1975,20 +2033,7 @@ async function adoptWorkspace(
   return ws.id;
 }
 
-async function bootstrap(
-  get: Get,
-  set: Set,
-  registerMeta: (
-    name: string,
-    cli: Cli,
-    mode: Mode,
-    workspaceId: string,
-    groupId: string,
-    containerKey: string,
-    alias: string,
-    claudeId?: string,
-  ) => void,
-) {
+async function bootstrap(get: Get, set: Set, registerMeta: RegisterMeta) {
   // Tier-1 reads: daemon info, per-CLI version + key presence.
   // dockerInfo, dockerRuntime, workspaceContainers are loaded eagerly in
   // initLifecycle (they don't need a running container). Refresh them here too

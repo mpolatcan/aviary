@@ -668,10 +668,36 @@ select.mono {
   opacity: 1 !important;
 }
 
-/* Sidebar session — reveal close button on hover */
+/* Sidebar session close button — a flex item that reserves its own slot at the
+   card's right edge (so it can NEVER overlap the status / token text), vertically
+   centered. Always visible (dim at rest), brighter on row hover, red on its own
+   hover. */
+.session-close {
+  align-self: center;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--fg-3);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+  opacity: 0.6;
+  transition: opacity 0.15s ease, background 0.12s ease, color 0.12s ease;
+}
 .side-item:hover .session-close,
 .side-item:focus-within .session-close {
-  opacity: 1 !important;
+  opacity: 1;
+}
+.session-close:hover {
+  color: var(--err);
+  background: color-mix(in oklab, var(--err) 16%, transparent);
 }
 
 /* ---- Tab close affordance ------------------------------------------------ */

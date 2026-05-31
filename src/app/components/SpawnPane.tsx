@@ -2,14 +2,17 @@
  * SpawnPane — the "New agent · configuring" pane (design hub configuring state).
  * Rendered IN the grid for a configuring leaf (a `__spawn-N` placeholder with a
  * draft but no tmux session yet). A centered card of horizontal rows — Agent /
- * Mode / Repo / Account — then "Spawn agent" commits the draft (creates the
+ * Mode / Dir / Account — then "Spawn agent" commits the draft (creates the
  * session, swaps this slot for the live terminal). No head bar: the card titles
  * itself and carries its own cancel. The container isn't shown — it's always
  * inherited from the workspace (CodeHub runs one container per workspace).
  *
- * REPO is real: for an existing workspace it selects the working repo/dir inside
- * the mounted /workspace; for a NEW workspace (no container yet) it opens the
- * native folder picker to choose the host repo that gets mounted at /workspace.
+ * DIR is the agent's working directory (cwd). For an existing workspace it's a
+ * folder BROWSER over the mounted /workspace — a multi-repo mount nests repos at
+ * arbitrary depth, so the user drills the tree one level at a time (git repos
+ * badged with their branch) instead of a flat depth-2 repo list. For a NEW
+ * workspace (no container yet) it opens the native folder picker to choose the
+ * host repo that gets mounted at /workspace.
  */
 import { AGENT_META, AgentGlyph } from "@/app/components/primitives/AgentGlyph";
 import {
@@ -20,13 +23,13 @@ import {
   providerTargetAgent,
 } from "@/app/lib/accounts";
 import { CLIS, MODE_BY_ID, modesFor } from "@/app/lib/catalog";
-import { type Cli, type Mode, type RepoInfo, ipc } from "@/app/lib/ipc";
+import { type Cli, type DirEntry, type Mode, ipc } from "@/app/lib/ipc";
 import { useStore } from "@/app/lib/store";
 import { Button } from "@/app/ui/button";
+import { Popover, PopoverContent, PopoverTrigger } from "@/app/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "@/app/ui/select";
-import { type ReactNode, useEffect, useState } from "react";
+import { type CSSProperties, type ReactNode, useEffect, useState } from "react";
 import { Ico } from "./primitives/icons";
-import { MODEL_HINT } from "./spawn-form";
 
 const WORKSPACE_ROOT = "/workspace";
 
@@ -34,8 +37,11 @@ function dirName(path: string): string {
   return path.split("/").filter(Boolean).pop() ?? path;
 }
 
+// h-9 matches shadcn SelectTrigger's pinned height (its `data-[size]:h-9` resists
+// override), so the raw-button rows (Dir browser, new-ws picker) line up with the
+// Agent/Mode/Account Selects. text-sm likewise matches their value font size.
 const ROW =
-  "w-full h-11 px-3 gap-2.5 justify-start bg-[var(--bg-1)] border-[var(--bd)] rounded-lg text-[var(--fg-0)] hover:bg-[var(--bg-hover)] hover:border-[var(--bd-strong)]";
+  "w-full h-9 px-3 flex items-center gap-2.5 justify-start text-sm bg-[var(--bg-1)] border border-[var(--bd)] rounded-lg text-[var(--fg-0)] hover:bg-[var(--bg-hover)] hover:border-[var(--bd-strong)]";
 const ITEM = "text-[var(--fg-1)] focus:bg-[var(--bg-hover)] focus:text-[var(--fg-0)]";
 const POPOVER = "bg-[var(--bg-2)] border-[var(--bd-strong)]";
 
@@ -92,24 +98,11 @@ export function SpawnPane({ id }: { id: string }) {
   const loadProviders = useStore((s) => s.loadProviders);
 
   const [accountChoice, setAccountChoice] = useState<string>(AUTO_ACCOUNT);
-  const [repos, setRepos] = useState<RepoInfo[]>([]);
 
   const workspaceKey = ws?.containerKey;
-  // A NEW-workspace draft has no container yet (the repo it picks becomes the
-  // /workspace mount); an existing workspace lists the repos inside its mount.
+  // A NEW-workspace draft has no container yet (the dir it picks becomes the
+  // /workspace mount); an existing workspace browses the dirs inside its mount.
   const isNewWs = !!draft?.workspaceDir;
-
-  useEffect(() => {
-    if (!workspaceKey || isNewWs) return;
-    let alive = true;
-    ipc
-      .containerRepos(workspaceKey)
-      .then((r) => alive && setRepos(r))
-      .catch(() => {});
-    return () => {
-      alive = false;
-    };
-  }, [workspaceKey, isNewWs]);
 
   useEffect(() => {
     void loadAccountProfiles();
@@ -175,23 +168,9 @@ export function SpawnPane({ id }: { id: string }) {
   ];
   const accountActive = accountOptions.find((o) => o.value === effectiveAccountChoice);
 
-  // Repo row presentation.
-  const repoLabel = (r: RepoInfo): string => {
-    const name =
-      r.path === WORKSPACE_ROOT ? (ws?.dir ? dirName(ws.dir) : "workspace") : dirName(r.path);
-    return r.branch ? `${name} · ${r.branch}` : name;
-  };
-  const cwdRepo = repos.find((r) => r.path === cwd);
-  const repoValue = isNewWs
-    ? draft.workspaceDir
-      ? dirName(draft.workspaceDir)
-      : "Choose a repo…"
-    : cwdRepo
-      ? repoLabel(cwdRepo)
-      : ws?.dir
-        ? dirName(ws.dir)
-        : "/workspace";
-  const repoOptions = repos.length ? repos : [{ path: WORKSPACE_ROOT, branch: null }];
+  // NEW-workspace DIR row: the host folder the native picker chose, to be mounted
+  // at /workspace. (Existing workspaces use the WorkdirBrowser instead.)
+  const newWsValue = draft.workspaceDir ? dirName(draft.workspaceDir) : "Choose a folder…";
 
   return (
     <div
@@ -270,7 +249,7 @@ export function SpawnPane({ id }: { id: string }) {
               </>
             ) : (
               <>
-                Pick the agent, repo, and mode. <span className="kbd">⏎</span> to spawn.
+                Pick the agent, folder, and mode. <span className="kbd">⏎</span> to spawn.
               </>
             )}
           </span>
@@ -285,10 +264,7 @@ export function SpawnPane({ id }: { id: string }) {
                 icon={<AgentGlyph agent={agent} size={15} color="var(--fg-2)" />}
                 label="Agent"
               />
-              <RowValue
-                value={AGENT_META[agent]?.name ?? agent}
-                meta={agent === "shell" ? undefined : MODEL_HINT[agent]}
-              />
+              <RowValue value={AGENT_META[agent]?.name ?? agent} />
             </SelectTrigger>
             <SelectContent position="popper" sideOffset={6} className={POPOVER}>
               {CLIS.map((c, i) => (
@@ -318,36 +294,28 @@ export function SpawnPane({ id }: { id: string }) {
             </SelectContent>
           </Select>
 
-          {/* REPO — pick the working repo, or the host dir to mount for a new ws */}
+          {/* DIR — the agent's cwd. New ws: pick the host folder to mount.
+              Existing ws: browse the mounted /workspace tree. */}
           {isNewWs ? (
             <button type="button" className={ROW} onClick={pickMount}>
-              <RowHead icon={Ico.branch} label="Repo" />
-              <RowValue value={repoValue} meta="browse" />
+              <RowHead icon={Ico.files} label="Dir" />
+              <RowValue value={newWsValue} meta="browse" />
               <span style={{ display: "inline-flex", color: "var(--fg-2)", flexShrink: 0 }}>
                 {Ico.chevD}
               </span>
             </button>
+          ) : workspaceKey ? (
+            <WorkdirBrowser
+              workspaceKey={workspaceKey}
+              rootLabel={ws?.dir ? dirName(ws.dir) : "workspace"}
+              value={cwd}
+              onChange={(p) => update(id, { cwd: p })}
+            />
           ) : (
-            <Select value={cwd} onValueChange={(v) => update(id, { cwd: v })}>
-              <SelectTrigger className={ROW} aria-label="Repo">
-                <RowHead icon={Ico.branch} label="Repo" />
-                <RowValue value={repoValue} />
-              </SelectTrigger>
-              <SelectContent position="popper" sideOffset={6} className={POPOVER}>
-                {repoOptions.map((r) => (
-                  <SelectItem key={r.path} value={r.path} className={ITEM}>
-                    <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-                      <span>{repoLabel(r)}</span>
-                      {r.path === WORKSPACE_ROOT && (
-                        <span className="mono" style={{ fontSize: 10, color: "var(--fg-3)" }}>
-                          mount root
-                        </span>
-                      )}
-                    </span>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <div className={ROW} style={{ cursor: "default", opacity: 0.6 }}>
+              <RowHead icon={Ico.files} label="Dir" />
+              <RowValue value="workspace" meta="root" />
+            </div>
           )}
 
           {/* ACCOUNT */}
@@ -417,5 +385,282 @@ export function SpawnPane({ id }: { id: string }) {
         </div>
       </div>
     </div>
+  );
+}
+
+// One folder row inside the WorkdirBrowser popover. Mirrors shadcn SelectItem
+// (rounded-sm · py-1.5 · px-2 · text-sm · hover bg-hover) so the browser reads as
+// the same surface as the Agent/Mode/Account dropdowns.
+const BROWSE_ROW =
+  "w-full flex items-center gap-2 rounded-sm py-1.5 px-2 text-sm text-left text-[var(--fg-1)] hover:bg-[var(--bg-hover)] cursor-pointer";
+
+function crumbStyle(active: boolean): CSSProperties {
+  return {
+    background: "none",
+    border: "none",
+    padding: "1px 3px",
+    fontSize: 11,
+    cursor: "pointer",
+    color: active ? "var(--fg-0)" : "var(--fg-2)",
+    fontWeight: active ? 600 : 400,
+  };
+}
+
+/**
+ * Working-directory browser for an EXISTING workspace. A multi-repo mount nests
+ * repos at arbitrary depth, so instead of a flat repo dropdown the user drills
+ * the /workspace tree one level at a time (git repos badged with their branch)
+ * and commits the folder the agent should start in as its cwd. Backed by the
+ * `container_browse_dirs` IPC (one exec per level).
+ */
+function WorkdirBrowser({
+  workspaceKey,
+  rootLabel,
+  value,
+  onChange,
+}: {
+  workspaceKey: string;
+  rootLabel: string;
+  value: string;
+  onChange: (path: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [nav, setNav] = useState(value); // dir currently being browsed
+  const [navBranch, setNavBranch] = useState<string | null>(null);
+  const [selBranch, setSelBranch] = useState<string | null>(null);
+  const [entries, setEntries] = useState<DirEntry[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    setLoading(true);
+    ipc
+      .containerBrowseDirs(nav, workspaceKey)
+      .then((e) => alive && setEntries(e))
+      .catch(() => alive && setEntries([]))
+      .finally(() => {
+        if (alive) setLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [open, nav, workspaceKey]);
+
+  const rel = (p: string) => (p === WORKSPACE_ROOT ? "" : p.slice(WORKSPACE_ROOT.length + 1));
+  const crumbs = nav === WORKSPACE_ROOT ? [] : rel(nav).split("/");
+
+  // Start each browse from the current selection.
+  const toggle = (o: boolean) => {
+    setOpen(o);
+    if (o) {
+      setNav(value);
+      setNavBranch(selBranch);
+    }
+  };
+  // depth -1 → root; else /workspace/<crumbs[0..=depth]>. A jumped-to ancestor's
+  // repo branch is unknown until re-entered from its parent listing → null.
+  const jumpCrumb = (depth: number) => {
+    setNav(
+      depth < 0 ? WORKSPACE_ROOT : `${WORKSPACE_ROOT}/${crumbs.slice(0, depth + 1).join("/")}`,
+    );
+    setNavBranch(null);
+  };
+  const drill = (e: DirEntry) => {
+    setNav(`${nav}/${e.name}`);
+    setNavBranch(e.branch);
+  };
+  const useFolder = () => {
+    onChange(nav);
+    setSelBranch(navBranch);
+    setOpen(false);
+  };
+
+  const triggerName = value === WORKSPACE_ROOT ? rootLabel : dirName(value);
+  const triggerMeta = value === WORKSPACE_ROOT ? "mount root" : `/${rel(value)}`;
+
+  return (
+    <Popover open={open} onOpenChange={toggle}>
+      <PopoverTrigger asChild>
+        <button type="button" className={ROW} aria-label="Working directory">
+          <RowHead icon={Ico.files} label="Dir" />
+          <span
+            style={{
+              flex: 1,
+              minWidth: 0,
+              display: "inline-flex",
+              alignItems: "baseline",
+              gap: 8,
+              textAlign: "left",
+            }}
+          >
+            <span
+              style={{
+                color: "var(--fg-0)",
+                fontWeight: 500,
+                flexShrink: 0,
+                maxWidth: "55%",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {triggerName}
+            </span>
+            <span
+              className="mono"
+              style={{
+                fontSize: 10.5,
+                color: "var(--fg-3)",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {selBranch ?? triggerMeta}
+            </span>
+          </span>
+          <span style={{ display: "inline-flex", color: "var(--fg-2)", flexShrink: 0 }}>
+            {Ico.chevD}
+          </span>
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="start"
+        sideOffset={6}
+        className="p-0 w-[var(--radix-popover-trigger-width)] overflow-hidden bg-[var(--bg-2)] border-[var(--bd-strong)]"
+      >
+        {/* breadcrumb */}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 2,
+            flexWrap: "wrap",
+            padding: "8px 12px",
+            borderBottom: "1px solid var(--bd)",
+          }}
+        >
+          <button
+            type="button"
+            className="mono"
+            onClick={() => jumpCrumb(-1)}
+            style={crumbStyle(crumbs.length === 0)}
+          >
+            workspace
+          </button>
+          {crumbs.map((c, i) => (
+            <span
+              key={crumbs.slice(0, i + 1).join("/")}
+              style={{ display: "inline-flex", alignItems: "center", gap: 2, minWidth: 0 }}
+            >
+              <span style={{ color: "var(--fg-3)" }}>/</span>
+              <button
+                type="button"
+                className="mono"
+                onClick={() => jumpCrumb(i)}
+                style={crumbStyle(i === crumbs.length - 1)}
+              >
+                {c}
+              </button>
+            </span>
+          ))}
+        </div>
+
+        {/* listing — click a folder to drill in */}
+        <div className="scroll" style={{ maxHeight: 240, overflow: "auto", padding: 4 }}>
+          {loading ? (
+            <div
+              className="mono"
+              style={{ padding: "10px 8px", fontSize: 11, color: "var(--fg-3)" }}
+            >
+              Loading…
+            </div>
+          ) : entries.length === 0 ? (
+            <div
+              className="mono"
+              style={{ padding: "10px 8px", fontSize: 11, color: "var(--fg-3)" }}
+            >
+              No subfolders
+            </div>
+          ) : (
+            entries.map((e) => (
+              <button key={e.name} type="button" onClick={() => drill(e)} className={BROWSE_ROW}>
+                <span style={{ display: "inline-flex", color: "var(--fg-2)", flexShrink: 0 }}>
+                  {Ico.files}
+                </span>
+                <span
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                    textAlign: "left",
+                    color: "var(--fg-0)",
+                    fontWeight: 500,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {e.name}
+                </span>
+                {e.isRepo && (
+                  <span
+                    className="mono"
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 3,
+                      fontSize: 10.5,
+                      color: "var(--fg-3)",
+                      flexShrink: 0,
+                      maxWidth: 120,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    <span style={{ display: "inline-flex", flexShrink: 0 }}>{Ico.branch}</span>
+                    {e.branch ?? "git"}
+                  </span>
+                )}
+                <span style={{ display: "inline-flex", color: "var(--fg-3)", flexShrink: 0 }}>
+                  {Ico.chevR}
+                </span>
+              </button>
+            ))
+          )}
+        </div>
+
+        {/* commit the folder currently being browsed as the cwd */}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "8px 12px",
+            borderTop: "1px solid var(--bd)",
+          }}
+        >
+          <span
+            className="mono"
+            title={nav}
+            style={{
+              flex: 1,
+              minWidth: 0,
+              fontSize: 10.5,
+              color: "var(--fg-2)",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {nav}
+          </span>
+          <Button variant="outline" size="xs" onClick={useFolder}>
+            Use this folder
+          </Button>
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }

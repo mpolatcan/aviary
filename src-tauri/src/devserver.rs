@@ -42,7 +42,7 @@ struct AppState {
     events: Arc<EventsTracker>,
     stats_history: Arc<crate::stats_history::StatsHistory>,
     tx: broadcast::Sender<String>,
-    /// Dev-only stand-in for the OS keychain: which provider ids have a token
+    /// Dev-only stand-in for the vault: which provider ids have a token
     /// "stored". The browser bridge has no vault, so this lets the Settings UI
     /// reflect token presence during visual verification.
     provider_tokens: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
@@ -278,6 +278,7 @@ pub async fn serve() {
         .route("/container-image", get(container_image))
         .route("/container-health", get(container_health))
         .route("/container-list-dir", get(container_list_dir))
+        .route("/container-browse-dirs", get(container_browse_dirs))
         .route("/container-read-file", get(container_read_file))
         .route("/container-git-status", get(container_git_status))
         .route("/container-git-diff", get(container_git_diff))
@@ -340,7 +341,7 @@ pub async fn serve() {
         .route("/panes/:id/write", post(write))
         .route("/panes/:id/resize", post(resize))
         .route("/panes/:id", delete(detach))
-        // Vault: Tauri-only (OS keychain). Stub 501 for browser dev bridge.
+        // Vault: Tauri-only (encrypted file vault). Stub 501 for browser dev bridge.
         .route("/vault-store-key", post(vault_not_supported))
         .route("/vault-delete-key", post(vault_not_supported))
         .route("/vault-has-key", get(vault_has_key_not_supported))
@@ -755,6 +756,18 @@ async fn container_list_dir(
     let ws = workspace_required(q.workspace)?;
     docker_container_for(&st, &ws)
         .list_dir(&q.path.unwrap_or_default())
+        .await
+        .map(Json)
+        .map_err(err)
+}
+
+async fn container_browse_dirs(
+    State(st): State<AppState>,
+    Query(q): Query<PathQuery>,
+) -> Result<impl IntoResponse, ApiError> {
+    let ws = workspace_required(q.workspace)?;
+    docker_container_for(&st, &ws)
+        .browse_dirs(&q.path.unwrap_or_default())
         .await
         .map(Json)
         .map_err(err)

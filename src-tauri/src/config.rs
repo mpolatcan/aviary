@@ -39,9 +39,9 @@ fn default_companion_size() -> String {
 ///
 /// - `Env`: credential comes from a host environment variable by NAME (the
 ///   legacy model — CodeHub never stores the value, only forwards it).
-/// - `Vault`: credential stored in the OS keychain, keyed by the profile's id.
-///   CodeHub reads it from the vault at container-create time and injects it as
-///   an env var.
+/// - `Vault`: credential stored in the encrypted vault, keyed by the profile's
+///   id. CodeHub reads it from the vault at container-create time and injects it
+///   as an env var.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "source", rename_all = "camelCase")]
 pub enum CredentialSource {
@@ -51,7 +51,7 @@ pub enum CredentialSource {
         #[serde(rename = "varName")]
         var_name: String,
     },
-    /// Credential stored in the OS keychain vault.
+    /// Credential stored in the encrypted vault.
     #[serde(rename = "vault")]
     Vault,
 }
@@ -60,7 +60,7 @@ pub enum CredentialSource {
 ///
 /// 1. **Env-backed** (legacy): `var_name` is the NAME of a host env var.
 ///    CodeHub forwards the value into the container but never stores it.
-/// 2. **Vault-backed** (new): the secret lives in the OS keychain, keyed by
+/// 2. **Vault-backed** (new): the secret lives in the encrypted vault, keyed by
 ///    the profile id. CodeHub reads it at container-create time.
 ///
 /// The `credential` field is a tagged union that serializes as `{ "source":
@@ -173,7 +173,7 @@ impl<'de> Deserialize<'de> for AccountProfile {
 
 /// An account profile plus live presence status.
 /// For env-backed: whether the host env var is present.
-/// For vault-backed: whether the keychain entry exists.
+/// For vault-backed: whether the vault entry exists.
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct AccountProfileStatus {
@@ -192,8 +192,8 @@ pub struct AccountProfileStatus {
 
 /// Map stored profiles to their live presence status.
 /// For env-backed: presence-probes the host env var (value never bound).
-/// For vault-backed: checks keychain metadata without reading the secret, so
-/// missing profiles can be shown accurately without prompting for access.
+/// For vault-backed: checks vault metadata without decrypting the secret, so
+/// missing profiles can be shown accurately without touching credential bytes.
 pub fn profile_statuses(
     profiles: Vec<AccountProfile>,
     vault: Option<&crate::vault::Vault>,
@@ -271,9 +271,20 @@ pub struct SavedWorkspace {
     /// Epoch-ms of the last time it was opened (`None` = not opened since saved).
     #[serde(default)]
     pub last_opened: Option<i64>,
+    /// Epoch-ms the workspace was created. `None` for pre-existing entries saved
+    /// before this field landed (the UI falls back to "—"). Distinguishes two
+    /// workspaces that happen to share a name.
+    #[serde(default)]
+    pub created_at: Option<i64>,
     /// Per-workspace container resource limits override.
     #[serde(default)]
     pub sizing: Option<ContainerSizing>,
+    /// Extra host directories bind-mounted alongside `dir`. Each is mounted at
+    /// `/workspace/<basename>` inside the container (the primary `dir` stays at
+    /// `/workspace`), so one workspace can hold several repos. Resolved at
+    /// container-create time in `Lifecycle::ensure_container`.
+    #[serde(default)]
+    pub additional_dirs: Vec<String>,
 }
 
 /// All persisted preferences. Serialized to the frontend (and the dev bridge) as
@@ -404,7 +415,7 @@ pub struct PromptTemplate {
 /// launched under a provider, CodeHub injects its endpoint + model + vault-stored
 /// token into the pane as the Claude/OpenAI harness env vars (see
 /// [`provider_session_env`]). The secret token itself is NOT stored here — it
-/// lives in the OS keychain vault, keyed by the provider `id` (same as a
+/// lives in the encrypted vault, keyed by the provider `id` (same as a
 /// vault-backed account profile), and is read just-in-time at session create.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -448,8 +459,8 @@ pub struct ModelProviderStatus {
     pub has_token: bool,
 }
 
-/// Map stored providers to their token presence (metadata-only vault check, so
-/// no Keychain prompt). `vault` is `None` in the dev bridge — every provider then
+/// Map stored providers to their token presence (metadata-only vault check, no
+/// secret decrypted). `vault` is `None` in the dev bridge — every provider then
 /// reports `has_token: false`.
 pub fn provider_statuses(
     providers: Vec<ModelProvider>,

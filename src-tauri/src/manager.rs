@@ -240,9 +240,9 @@ impl LifecycleManager {
     }
 
     /// Vault-backed secrets are intentionally not injected at container-create
-    /// time. Reading them here would prompt macOS Keychain while merely opening a
-    /// workspace. Agent credentials are read just-in-time by `create_session`;
-    /// GitHub operations should do the same when they need the token.
+    /// time — they're read just-in-time by `create_session`, so merely opening a
+    /// workspace never decrypts a credential it won't use. GitHub operations
+    /// should do the same when they need the token.
     fn build_vault_env(&self) -> Vec<String> {
         let _vault_configured = self.vault.is_some();
         Vec::new()

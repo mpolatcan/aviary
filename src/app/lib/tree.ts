@@ -87,6 +87,10 @@ export interface SessionMeta {
   // the id it resumed). Lets the Hub read this session's own transcript for a
   // live token tally. Only set for Claude sessions.
   claudeId?: string;
+  // Working directory the agent was launched in (a path under /workspace), so the
+  // sidebar can show which repo/dir this pane targets. Undefined → the mount root
+  // (/workspace); in-memory only (a restored session falls back to the ws dir).
+  cwd?: string;
 }
 
 let nodeCounter = 0;

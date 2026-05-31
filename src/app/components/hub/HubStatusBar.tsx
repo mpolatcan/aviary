@@ -1,11 +1,10 @@
 import { motion } from "motion/react";
-import type { ReactNode } from "react";
 import { IconBtn } from "../../components/primitives/IconBtn";
 import { Spark } from "../../components/primitives/Spark";
 import { StatusDot } from "../../components/primitives/StatusDot";
 import { Ico } from "../../components/primitives/icons";
 import { deriveLiveStatus } from "../../lib/activity";
-import { type ContainerState, ipc } from "../../lib/ipc";
+import type { ContainerState } from "../../lib/ipc";
 import { deriveNetRate, netRateSeries } from "../../lib/metrics";
 import { useOverlay } from "../../lib/overlay";
 import { activeWorkspace, useStore } from "../../lib/store";
@@ -207,106 +206,6 @@ function ExpandChevron() {
   );
 }
 
-// Small text+icon button sized for the bar.
-function BarBtn({
-  children,
-  onClick,
-  title,
-  danger,
-}: {
-  children: ReactNode;
-  onClick: () => void;
-  title: string;
-  danger?: boolean;
-}) {
-  const base = danger ? "var(--err)" : "var(--fg-1)";
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      title={title}
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 5,
-        height: 22,
-        padding: "0 9px",
-        flexShrink: 0,
-        borderRadius: 5,
-        border: `1px solid ${danger ? "color-mix(in oklab, var(--err) 40%, transparent)" : "var(--bd-soft)"}`,
-        background: danger ? "color-mix(in oklab, var(--err) 10%, transparent)" : "transparent",
-        color: base,
-        font: "inherit",
-        fontSize: 11,
-        cursor: "pointer",
-        transition: "background .12s, border-color .12s",
-      }}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.background = danger
-          ? "color-mix(in oklab, var(--err) 18%, transparent)"
-          : "var(--bg-2)";
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.background = danger
-          ? "color-mix(in oklab, var(--err) 10%, transparent)"
-          : "transparent";
-      }}
-    >
-      {children}
-    </button>
-  );
-}
-
-// Lifecycle controls for the active workspace's container, always visible at the
-// left of the bar. Stop/Restart kill every attached tmux session (the bollard
-// execs die with the container), so both confirm + name how many go with it.
-function LifecycleControls() {
-  const ws = useStore(activeWorkspace);
-  const status = useStore((s) => s.status);
-  const containerKey = ws?.containerKey;
-  const state: ContainerState = status?.state ?? "missing";
-  if (!containerKey) return null;
-
-  const sessionCount = ws ? workspaceLeaves(ws).length : 0;
-  const clause =
-    sessionCount > 0
-      ? ` This kills ${sessionCount} attached session${sessionCount === 1 ? "" : "s"}.`
-      : "";
-  const restart = () => {
-    if (window.confirm(`Restart the workspace container?${clause}`))
-      void ipc.containerRestart(containerKey);
-  };
-  const stop = () => {
-    if (window.confirm(`Stop the workspace container?${clause}`))
-      void ipc.containerStop(containerKey);
-  };
-  const start = () => void ipc.containerStart(containerKey);
-
-  if (state === "running") {
-    return (
-      <span style={{ display: "inline-flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
-        <BarBtn title="Restart container" onClick={restart}>
-          {Ico.restart}Restart
-        </BarBtn>
-        <BarBtn title="Stop container" onClick={stop} danger>
-          {Ico.stop}Stop
-        </BarBtn>
-      </span>
-    );
-  }
-  if (state === "stopped" || state === "missing") {
-    return (
-      <BarBtn
-        title={state === "missing" ? "Create & start the container" : "Start the container"}
-        onClick={start}
-      >
-        {state === "missing" ? "Create & start" : "Start"}
-      </BarBtn>
-    );
-  }
-  return null;
-}
-
 export function HubStatusBar({ variant = "tabs" }: { variant?: "tabs" | "grid" }) {
   const details = useOverlay((s) => s.details);
   return (
@@ -340,8 +239,6 @@ function TabsStatusLine() {
   return (
     <div style={lineStyle}>
       <RuntimeIndicator />
-      {vr}
-      <LifecycleControls />
 
       {/* inline metric sparklines — only when collapsed; when expanded the
           full-size graphs below replace them (no duplication) */}
@@ -449,9 +346,6 @@ function GridStatusLine() {
           <StatusDot status="wait" /> <span className="tnum">{awaitingCount}</span> awaiting
         </span>
       </span>
-
-      {vr}
-      <LifecycleControls />
 
       {!details && (
         <>
