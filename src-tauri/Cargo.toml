@@ -52,7 +52,7 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 open = "5"
 
 # Dev bridge only — optional, pulled in by the `devserver` feature.
-axum = { version = "0.7", features = ["ws"], optional = true }
+axum = { version = "0.8", features = ["ws"], optional = true }
 
 [features]
 default = ["custom-protocol"]
